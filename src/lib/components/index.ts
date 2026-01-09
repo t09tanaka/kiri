@@ -10,3 +10,6 @@ export type { FileEntry } from './filetree';
 
 // Terminal components
 export { Terminal } from './terminal';
+
+// Editor components
+export { Editor, getLanguageExtension, getLanguageName } from './editor';

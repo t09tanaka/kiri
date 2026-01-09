@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ViewMode } from '@/lib/stores/appStore';
   import { Terminal } from '@/lib/components/terminal';
+  import { Editor } from '@/lib/components/editor';
 
   interface Props {
     mode?: ViewMode;
@@ -21,10 +22,7 @@
     {#if mode === 'terminal'}
       <Terminal />
     {:else}
-      <p class="placeholder">Editor will be here</p>
-      {#if currentFile}
-        <p class="file-path">{currentFile}</p>
-      {/if}
+      <Editor filePath={currentFile} />
     {/if}
   </div>
 </main>
@@ -63,17 +61,5 @@
   .content-area {
     flex: 1;
     overflow: hidden;
-  }
-
-  .placeholder {
-    padding: 16px;
-    color: var(--text-secondary);
-    font-style: italic;
-  }
-
-  .file-path {
-    padding: 0 16px;
-    color: var(--text-secondary);
-    font-size: 12px;
   }
 </style>
