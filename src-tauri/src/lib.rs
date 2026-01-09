@@ -1,10 +1,15 @@
 mod commands;
 
-use commands::{get_home_directory, read_directory};
+use commands::{
+    close_terminal, create_terminal, get_home_directory, read_directory, resize_terminal,
+    write_terminal, TerminalState,
+};
+use std::sync::{Arc, Mutex};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(Arc::new(Mutex::new(commands::TerminalManager::new())) as TerminalState)
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -15,7 +20,14 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![read_directory, get_home_directory])
+        .invoke_handler(tauri::generate_handler![
+            read_directory,
+            get_home_directory,
+            create_terminal,
+            write_terminal,
+            resize_terminal,
+            close_terminal,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

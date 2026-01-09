@@ -13,7 +13,7 @@
 <div class="app-layout">
   <div class="app-body">
     <Sidebar width={$appStore.sidebarWidth} onFileSelect={handleFileSelect} />
-    <MainContent mode={$appStore.currentMode} />
+    <MainContent mode={$appStore.currentMode} currentFile={$appStore.currentFile} />
   </div>
   <StatusBar mode={$appStore.currentMode} currentFile={$appStore.currentFile} />
 </div>

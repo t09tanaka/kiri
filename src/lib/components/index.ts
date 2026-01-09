@@ -7,3 +7,6 @@ export { default as StatusBar } from './layout/StatusBar.svelte';
 // FileTree components
 export { FileTree, FileTreeItem } from './filetree';
 export type { FileEntry } from './filetree';
+
+// Terminal components
+export { Terminal } from './terminal';
