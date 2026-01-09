@@ -1,25 +1,28 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { appStore } from '@/lib/stores/appStore';
+  import { tabStore } from '@/lib/stores/tabStore';
   import Sidebar from '@/lib/components/layout/Sidebar.svelte';
   import MainContent from '@/lib/components/layout/MainContent.svelte';
   import StatusBar from '@/lib/components/layout/StatusBar.svelte';
 
   function handleFileSelect(path: string) {
-    appStore.setCurrentFile(path);
-    appStore.setMode('editor');
-  }
-
-  function toggleMode() {
-    const newMode = $appStore.currentMode === 'terminal' ? 'editor' : 'terminal';
-    appStore.setMode(newMode);
+    tabStore.addEditorTab(path);
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-    // Ctrl/Cmd + ` to toggle mode
+    // Ctrl/Cmd + ` to add new terminal
     if ((e.ctrlKey || e.metaKey) && e.key === '`') {
       e.preventDefault();
-      toggleMode();
+      tabStore.addTerminalTab();
+    }
+    // Ctrl/Cmd + W to close current tab
+    if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
+      e.preventDefault();
+      const activeId = $tabStore.activeTabId;
+      if (activeId) {
+        tabStore.closeTab(activeId);
+      }
     }
   }
 
@@ -35,17 +38,9 @@
 <div class="app-layout">
   <div class="app-body">
     <Sidebar width={$appStore.sidebarWidth} onFileSelect={handleFileSelect} />
-    <MainContent
-      mode={$appStore.currentMode}
-      currentFile={$appStore.currentFile}
-      onModeToggle={toggleMode}
-    />
+    <MainContent />
   </div>
-  <StatusBar
-    mode={$appStore.currentMode}
-    currentFile={$appStore.currentFile}
-    onModeToggle={toggleMode}
-  />
+  <StatusBar />
 </div>
 
 <style>

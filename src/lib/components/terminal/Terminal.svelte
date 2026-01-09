@@ -5,12 +5,19 @@
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import { WebLinksAddon } from '@xterm/addon-web-links';
+  import { tabStore } from '@/lib/stores/tabStore';
   import '@xterm/xterm/css/xterm.css';
 
   interface TerminalOutput {
     id: number;
     data: string;
   }
+
+  interface Props {
+    tabId: string;
+  }
+
+  let { tabId }: Props = $props();
 
   let terminalContainer: HTMLDivElement;
   let terminal: Terminal | null = null;
@@ -59,6 +66,9 @@
     // Create PTY
     try {
       terminalId = await invoke<number>('create_terminal', { cwd: null });
+
+      // Store terminal ID in tab store
+      tabStore.setTerminalId(tabId, terminalId);
 
       // Listen for terminal output
       unlisten = await listen<TerminalOutput>('terminal-output', (event) => {

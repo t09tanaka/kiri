@@ -11,15 +11,23 @@
   interface Props {
     filePath: string | null;
     onSave?: () => void;
+    onModifiedChange?: (modified: boolean) => void;
   }
 
-  let { filePath, onSave }: Props = $props();
+  let { filePath, onSave, onModifiedChange }: Props = $props();
 
   let editorContainer: HTMLDivElement;
   let view: EditorView | null = null;
   let loading = $state(true);
   let error = $state<string | null>(null);
   let modified = $state(false);
+
+  function setModified(value: boolean) {
+    if (modified !== value) {
+      modified = value;
+      onModifiedChange?.(value);
+    }
+  }
 
   async function loadFile() {
     if (!filePath) {
@@ -29,7 +37,7 @@
 
     loading = true;
     error = null;
-    modified = false;
+    setModified(false);
 
     try {
       const content = await invoke<string>('read_file', { path: filePath });
@@ -48,7 +56,7 @@
     try {
       const content = view.state.doc.toString();
       await invoke('write_file', { path: filePath, content });
-      modified = false;
+      setModified(false);
       onSave?.();
     } catch (e) {
       console.error('Failed to save file:', e);
@@ -80,7 +88,7 @@
       ]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
-          modified = true;
+          setModified(true);
         }
       }),
       EditorView.theme({
@@ -142,9 +150,6 @@
   {:else if !filePath}
     <div class="no-file">No file selected</div>
   {:else}
-    {#if modified}
-      <div class="modified-indicator">● Modified</div>
-    {/if}
     <div class="editor-container" bind:this={editorContainer}></div>
   {/if}
 </div>
@@ -179,14 +184,5 @@
     justify-content: center;
     height: 100%;
     font-style: italic;
-  }
-
-  .modified-indicator {
-    position: absolute;
-    top: 8px;
-    right: 16px;
-    font-size: 12px;
-    color: var(--accent-color);
-    z-index: 10;
   }
 </style>
