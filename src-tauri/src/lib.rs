@@ -10,6 +10,8 @@ use std::sync::{Arc, Mutex};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .manage(Arc::new(Mutex::new(commands::TerminalManager::new())) as TerminalState)
         .setup(|app| {
             if cfg!(debug_assertions) {

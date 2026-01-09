@@ -13,3 +13,6 @@ export { Terminal } from './terminal';
 
 // Editor components
 export { Editor, getLanguageExtension, getLanguageName } from './editor';
+
+// Start screen components
+export { StartScreen } from './start';

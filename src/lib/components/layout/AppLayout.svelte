@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { appStore } from '@/lib/stores/appStore';
   import { tabStore } from '@/lib/stores/tabStore';
+  import { currentProjectPath } from '@/lib/stores/projectStore';
   import Sidebar from '@/lib/components/layout/Sidebar.svelte';
   import MainContent from '@/lib/components/layout/MainContent.svelte';
   import StatusBar from '@/lib/components/layout/StatusBar.svelte';
@@ -37,7 +38,11 @@
 
 <div class="app-layout">
   <div class="app-body">
-    <Sidebar width={$appStore.sidebarWidth} onFileSelect={handleFileSelect} />
+    <Sidebar
+      width={$appStore.sidebarWidth}
+      rootPath={$currentProjectPath ?? ''}
+      onFileSelect={handleFileSelect}
+    />
     <MainContent />
   </div>
   <StatusBar />
