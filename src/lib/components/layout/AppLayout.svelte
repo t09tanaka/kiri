@@ -3,11 +3,16 @@
   import Sidebar from '@/lib/components/layout/Sidebar.svelte';
   import MainContent from '@/lib/components/layout/MainContent.svelte';
   import StatusBar from '@/lib/components/layout/StatusBar.svelte';
+
+  function handleFileSelect(path: string) {
+    appStore.setCurrentFile(path);
+    appStore.setMode('editor');
+  }
 </script>
 
 <div class="app-layout">
   <div class="app-body">
-    <Sidebar width={$appStore.sidebarWidth} />
+    <Sidebar width={$appStore.sidebarWidth} onFileSelect={handleFileSelect} />
     <MainContent mode={$appStore.currentMode} />
   </div>
   <StatusBar mode={$appStore.currentMode} currentFile={$appStore.currentFile} />

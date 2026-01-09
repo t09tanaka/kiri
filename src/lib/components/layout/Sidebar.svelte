@@ -1,9 +1,13 @@
 <script lang="ts">
+  import { FileTree } from '@/lib/components/filetree';
+
   interface Props {
     width?: number;
+    rootPath?: string;
+    onFileSelect?: (path: string) => void;
   }
 
-  let { width = 200 }: Props = $props();
+  let { width = 200, rootPath = '', onFileSelect }: Props = $props();
 </script>
 
 <aside class="sidebar" style="width: {width}px">
@@ -11,7 +15,7 @@
     <span class="title">EXPLORER</span>
   </div>
   <div class="sidebar-content">
-    <p class="placeholder">File tree will be here</p>
+    <FileTree {rootPath} {onFileSelect} />
   </div>
 </aside>
 
@@ -40,13 +44,6 @@
 
   .sidebar-content {
     flex: 1;
-    overflow-y: auto;
-    padding: 8px 0;
-  }
-
-  .placeholder {
-    padding: 8px 12px;
-    color: var(--text-secondary);
-    font-style: italic;
+    overflow: hidden;
   }
 </style>
