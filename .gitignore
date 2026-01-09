@@ -2,6 +2,9 @@
 CLAUDE.md
 .claude/
 
+# Documentation (local only)
+docs/
+
 # Logs
 logs
 *.log
