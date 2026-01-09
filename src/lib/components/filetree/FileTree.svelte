@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import FileTreeItem from './FileTreeItem.svelte';
   import type { FileEntry } from './types';
+  import { gitStore, gitStatusMap } from '@/lib/stores/gitStore';
 
   interface Props {
     rootPath?: string;
@@ -27,6 +28,8 @@
       }
 
       entries = await invoke<FileEntry[]>('read_directory', { path });
+
+      gitStore.refresh(path);
     } catch (e) {
       error = String(e);
       console.error('Failed to load directory:', e);
@@ -61,7 +64,13 @@
     <div class="empty">Empty directory</div>
   {:else}
     {#each entries as entry (entry.path)}
-      <FileTreeItem {entry} {selectedPath} onSelect={handleSelect} />
+      <FileTreeItem
+        {entry}
+        {selectedPath}
+        onSelect={handleSelect}
+        gitStatusMap={$gitStatusMap}
+        repoRoot={$gitStore.repoInfo?.root ?? ''}
+      />
     {/each}
   {/if}
 </div>

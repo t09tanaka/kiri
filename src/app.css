@@ -8,6 +8,15 @@
   --border-color: #3c3c3c;
   --accent-color: #0078d4;
 
+  /* Git Status Colors */
+  --git-modified: #e2c08d;
+  --git-added: #73c991;
+  --git-deleted: #f14c4c;
+  --git-renamed: #4fc1ff;
+  --git-untracked: #808080;
+  --git-ignored: #5a5a5a;
+  --git-conflicted: #f14c4c;
+
   /* Sizing */
   --sidebar-width: 200px;
   --sidebar-min-width: 150px;

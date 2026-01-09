@@ -39,10 +39,13 @@
 <div class="tab-bar">
   <div class="tabs-container">
     {#each tabs as tab (tab.id)}
-      <button
+      <div
         class="tab"
         class:active={tab.id === activeTabId}
         onclick={() => handleTabClick(tab)}
+        onkeydown={(e) => e.key === 'Enter' && handleTabClick(tab)}
+        role="tab"
+        tabindex="0"
         title={tab.type === 'editor' ? tab.filePath : tab.title}
       >
         <span class="tab-icon">{getTabIcon(tab)}</span>
@@ -58,7 +61,7 @@
         >
           ×
         </button>
-      </button>
+      </div>
     {/each}
   </div>
   <button

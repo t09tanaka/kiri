@@ -1,15 +1,25 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import type { FileEntry } from './types';
+  import { type GitFileStatus, getStatusIcon, getStatusColor } from '@/lib/stores/gitStore';
 
   interface Props {
     entry: FileEntry;
     depth?: number;
     selectedPath?: string | null;
     onSelect?: (path: string) => void;
+    gitStatusMap?: Map<string, GitFileStatus>;
+    repoRoot?: string;
   }
 
-  let { entry, depth = 0, selectedPath = null, onSelect }: Props = $props();
+  let {
+    entry,
+    depth = 0,
+    selectedPath = null,
+    onSelect,
+    gitStatusMap = new Map(),
+    repoRoot = '',
+  }: Props = $props();
 
   let expanded = $state(false);
   let children = $state<FileEntry[]>([]);
@@ -18,6 +28,14 @@
 
   const isSelected = $derived(selectedPath === entry.path);
   const paddingLeft = $derived(12 + depth * 16);
+
+  const gitStatus = $derived(() => {
+    if (!repoRoot || !entry.path.startsWith(repoRoot)) return null;
+    const relativePath = entry.path.slice(repoRoot.length + 1);
+    return gitStatusMap.get(relativePath) ?? null;
+  });
+  const statusIcon = $derived(gitStatus() ? getStatusIcon(gitStatus()!) : '');
+  const statusColor = $derived(gitStatus() ? getStatusColor(gitStatus()!) : '');
 
   async function toggleExpand() {
     if (!entry.is_dir) return;
@@ -102,6 +120,9 @@
   >
     <span class="icon">{getFileIcon(entry)}</span>
     <span class="name">{entry.name}</span>
+    {#if statusIcon}
+      <span class="git-status" style="color: {statusColor}">{statusIcon}</span>
+    {/if}
     {#if loading}
       <span class="loading">...</span>
     {/if}
@@ -110,7 +131,14 @@
   {#if expanded && children.length > 0}
     <div class="children">
       {#each children as child (child.path)}
-        <svelte:self entry={child} depth={depth + 1} {selectedPath} {onSelect} />
+        <svelte:self
+          entry={child}
+          depth={depth + 1}
+          {selectedPath}
+          {onSelect}
+          {gitStatusMap}
+          {repoRoot}
+        />
       {/each}
     </div>
   {/if}
@@ -169,6 +197,14 @@
   .loading {
     color: var(--text-secondary);
     font-size: 11px;
+  }
+
+  .git-status {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: bold;
+    margin-left: auto;
+    padding-right: 4px;
   }
 
   .children {

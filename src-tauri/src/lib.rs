@@ -1,8 +1,8 @@
 mod commands;
 
 use commands::{
-    close_terminal, create_terminal, get_home_directory, read_directory, read_file,
-    resize_terminal, write_file, write_terminal, TerminalState,
+    close_terminal, create_terminal, get_git_file_status, get_git_status, get_home_directory,
+    read_directory, read_file, resize_terminal, write_file, write_terminal, TerminalState,
 };
 use std::sync::{Arc, Mutex};
 
@@ -29,6 +29,8 @@ pub fn run() {
             close_terminal,
             read_file,
             write_file,
+            get_git_status,
+            get_git_file_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
