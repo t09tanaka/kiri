@@ -6,17 +6,32 @@
   interface Props {
     mode?: ViewMode;
     currentFile?: string | null;
+    onModeToggle?: () => void;
   }
 
-  let { mode = 'terminal', currentFile = null }: Props = $props();
+  let { mode = 'terminal', currentFile = null, onModeToggle }: Props = $props();
 </script>
 
 <main class="main-content">
   <div class="content-header">
-    <span class="mode-indicator">{mode === 'terminal' ? 'TERMINAL' : 'EDITOR'}</span>
-    {#if mode === 'editor' && currentFile}
-      <span class="file-name">{currentFile.split('/').pop()}</span>
-    {/if}
+    <div class="header-left">
+      <button
+        class="mode-tab"
+        class:active={mode === 'terminal'}
+        onclick={() => mode !== 'terminal' && onModeToggle?.()}
+      >
+        ⌨ Terminal
+      </button>
+      {#if currentFile}
+        <button
+          class="mode-tab"
+          class:active={mode === 'editor'}
+          onclick={() => mode !== 'editor' && onModeToggle?.()}
+        >
+          📄 {currentFile.split('/').pop()}
+        </button>
+      {/if}
+    </div>
   </div>
   <div class="content-area">
     {#if mode === 'terminal'}
@@ -38,24 +53,43 @@
 
   .content-header {
     height: 35px;
-    padding: 0 12px;
+    padding: 0;
     display: flex;
-    align-items: center;
-    gap: 12px;
-    background-color: var(--bg-secondary);
+    align-items: stretch;
+    background-color: var(--bg-tertiary);
     border-bottom: 1px solid var(--border-color);
   }
 
-  .mode-indicator {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    color: var(--text-secondary);
+  .header-left {
+    display: flex;
+    align-items: stretch;
   }
 
-  .file-name {
+  .mode-tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 16px;
+    background: none;
+    border: none;
+    color: var(--text-secondary);
     font-size: 13px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition:
+      background-color 0.15s,
+      color 0.15s;
+  }
+
+  .mode-tab:hover {
+    background-color: var(--bg-secondary);
     color: var(--text-primary);
+  }
+
+  .mode-tab.active {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    border-bottom-color: var(--accent-color);
   }
 
   .content-area {
