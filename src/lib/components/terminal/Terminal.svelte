@@ -15,9 +15,10 @@
 
   interface Props {
     tabId: string;
+    cwd?: string | null;
   }
 
-  let { tabId }: Props = $props();
+  let { tabId, cwd = null }: Props = $props();
 
   let terminalContainer: HTMLDivElement;
   let terminal: Terminal | null = null;
@@ -65,7 +66,7 @@
 
     // Create PTY
     try {
-      terminalId = await invoke<number>('create_terminal', { cwd: null });
+      terminalId = await invoke<number>('create_terminal', { cwd });
 
       // Store terminal ID in tab store
       tabStore.setTerminalId(tabId, terminalId);

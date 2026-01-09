@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tabStore, activeTab } from '@/lib/stores/tabStore';
+  import { currentProjectPath } from '@/lib/stores/projectStore';
   import { Terminal } from '@/lib/components/terminal';
   import { Editor } from '@/lib/components/editor';
   import TabBar from './TabBar.svelte';
@@ -15,7 +16,7 @@
     {#if $activeTab}
       {#if $activeTab.type === 'terminal'}
         {#key $activeTab.id}
-          <Terminal tabId={$activeTab.id} />
+          <Terminal tabId={$activeTab.id} cwd={$currentProjectPath} />
         {/key}
       {:else if $activeTab.type === 'editor'}
         {#key $activeTab.id}
@@ -36,6 +37,7 @@
 
 <style>
   .main-content {
+    flex: 1;
     height: 100%;
     background-color: var(--bg-primary);
     display: flex;
