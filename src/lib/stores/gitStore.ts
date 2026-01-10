@@ -15,6 +15,12 @@ export interface GitStatusEntry {
   status: GitFileStatus;
 }
 
+export interface GitFileDiff {
+  path: string;
+  status: GitFileStatus;
+  diff: string;
+}
+
 export interface GitRepoInfo {
   root: string;
   branch: string | null;
@@ -25,6 +31,9 @@ interface GitStoreState {
   repoInfo: GitRepoInfo | null;
   isLoading: boolean;
   error: string | null;
+  allDiffs: GitFileDiff[];
+  isDiffsLoading: boolean;
+  currentVisibleFile: string | null;
 }
 
 function createGitStore() {
@@ -32,6 +41,9 @@ function createGitStore() {
     repoInfo: null,
     isLoading: false,
     error: null,
+    allDiffs: [],
+    isDiffsLoading: false,
+    currentVisibleFile: null,
   });
 
   return {
@@ -57,12 +69,66 @@ function createGitStore() {
       }
     },
 
+    async loadAllDiffs() {
+      let repoRoot: string | null = null;
+
+      update((state) => {
+        repoRoot = state.repoInfo?.root ?? null;
+        return { ...state, isDiffsLoading: true, error: null };
+      });
+
+      if (!repoRoot) {
+        update((state) => ({
+          ...state,
+          isDiffsLoading: false,
+          error: 'Repository root not found',
+        }));
+        return;
+      }
+
+      try {
+        const allDiffs = await invoke<GitFileDiff[]>('get_all_git_diffs', {
+          repoPath: repoRoot,
+        });
+        update((state) => ({
+          ...state,
+          allDiffs,
+          isDiffsLoading: false,
+        }));
+      } catch (error) {
+        update((state) => ({
+          ...state,
+          allDiffs: [],
+          isDiffsLoading: false,
+          error: error instanceof Error ? error.message : String(error),
+        }));
+      }
+    },
+
     clear() {
       set({
         repoInfo: null,
         isLoading: false,
         error: null,
+        allDiffs: [],
+        isDiffsLoading: false,
       });
+    },
+
+    clearDiffs() {
+      update((state) => ({
+        ...state,
+        allDiffs: [],
+        isDiffsLoading: false,
+        currentVisibleFile: null,
+      }));
+    },
+
+    setCurrentVisibleFile(path: string | null) {
+      update((state) => ({
+        ...state,
+        currentVisibleFile: path,
+      }));
     },
   };
 }
