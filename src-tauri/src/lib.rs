@@ -25,6 +25,8 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+                app.handle()
+                    .plugin(tauri_plugin_mcp_bridge::init())?;
             }
             Ok(())
         })
