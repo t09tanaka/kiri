@@ -90,6 +90,15 @@
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(new WebLinksAddon());
 
+    // Handle Shift+Enter BEFORE opening terminal
+    // This prevents xterm from processing Enter when Shift is held
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey) {
+        return false; // Prevent xterm from processing this key
+      }
+      return true;
+    });
+
     terminal.open(terminalContainer);
 
     // Delay fit to ensure container is properly sized
@@ -134,6 +143,22 @@
       terminal.textarea?.addEventListener('blur', () => {
         isFocused = false;
       });
+
+      // Handle Shift+Enter to send literal newline (like VSCode)
+      // Using capture phase on textarea to intercept before xterm processes it
+      terminal.textarea?.addEventListener(
+        'keydown',
+        (event) => {
+          if (event.key === 'Enter' && event.shiftKey) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (terminalId !== null) {
+              invoke('write_terminal', { id: terminalId, data: '\n' });
+            }
+          }
+        },
+        { capture: true }
+      );
     } catch (error) {
       console.error('Failed to create terminal:', error);
       terminal.write(`\r\n\x1b[31mError: Failed to create terminal: ${error}\x1b[0m\r\n`);
