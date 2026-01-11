@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { tabStore, activeTab } from '@/lib/stores/tabStore';
+  import { tabStore, activeTab, getAllPaneIds } from '@/lib/stores/tabStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
   import { appStore } from '@/lib/stores/appStore';
-  import { Terminal } from '@/lib/components/terminal';
+  import { TerminalContainer } from '@/lib/components/terminal';
   import { Editor } from '@/lib/components/editor';
   import DiffView from '@/lib/components/git/DiffView.svelte';
   import TabBar from './TabBar.svelte';
@@ -24,7 +24,12 @@
     {:else if $activeTab}
       {#if $activeTab.type === 'terminal'}
         {#key $activeTab.id}
-          <Terminal tabId={$activeTab.id} cwd={$currentProjectPath} />
+          <TerminalContainer
+            tabId={$activeTab.id}
+            pane={$activeTab.rootPane}
+            cwd={$currentProjectPath}
+            isOnlyPane={getAllPaneIds($activeTab.rootPane).length === 1}
+          />
         {/key}
       {:else if $activeTab.type === 'editor'}
         {#key $activeTab.id}

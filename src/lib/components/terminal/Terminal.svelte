@@ -5,6 +5,7 @@
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import { WebLinksAddon } from '@xterm/addon-web-links';
+  import { CanvasAddon } from '@xterm/addon-canvas';
   import { tabStore } from '@/lib/stores/tabStore';
   import '@xterm/xterm/css/xterm.css';
 
@@ -15,11 +16,25 @@
 
   interface Props {
     tabId: string;
+    paneId: string;
     cwd?: string | null;
+    showControls?: boolean;
+    onSplitHorizontal?: () => void;
+    onSplitVertical?: () => void;
+    onClose?: () => void;
   }
 
-  let { tabId, cwd = null }: Props = $props();
+  let {
+    tabId,
+    paneId,
+    cwd = null,
+    showControls = true,
+    onSplitHorizontal,
+    onSplitVertical,
+    onClose,
+  }: Props = $props();
 
+  let terminalWrapper: HTMLDivElement;
   let terminalContainer: HTMLDivElement;
   let terminal: Terminal | null = null;
   let fitAddon: FitAddon | null = null;
@@ -72,11 +87,11 @@
       cursorBlink: true,
       cursorStyle: 'bar',
       cursorWidth: 2,
-      fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Geist Mono', monospace",
+      fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Menlo', monospace",
       fontSize: 13,
       fontWeight: '400',
       fontWeightBold: '500',
-      lineHeight: 1.6,
+      lineHeight: 1.4,
       letterSpacing: 0,
       allowTransparency: true,
       theme: mistTheme,
@@ -89,6 +104,7 @@
     fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(new WebLinksAddon());
+    terminal.loadAddon(new CanvasAddon());
 
     // Handle Shift+Enter BEFORE opening terminal
     // This prevents xterm from processing Enter when Shift is held
@@ -102,10 +118,19 @@
     terminal.open(terminalContainer);
 
     // Delay fit to ensure container is properly sized
-    requestAnimationFrame(() => {
-      fitAddon?.fit();
-      // Auto-focus the terminal after initialization
+    // Use multiple RAFs and setTimeout to ensure layout is complete
+    const doFit = () => {
+      fitTerminalToContainer();
       terminal?.focus();
+    };
+
+    // Wait for fonts to load, then fit
+    document.fonts.ready.then(() => {
+      setTimeout(() => {
+        requestAnimationFrame(() => {
+          doFit();
+        });
+      }, 50);
     });
 
     // Create PTY
@@ -113,7 +138,7 @@
       terminalId = await invoke<number>('create_terminal', { cwd });
 
       // Store terminal ID in tab store
-      tabStore.setTerminalId(tabId, terminalId);
+      tabStore.setTerminalId(tabId, paneId, terminalId);
 
       // Listen for terminal output
       unlisten = await listen<TerminalOutput>('terminal-output', (event) => {
@@ -135,6 +160,13 @@
           invoke('resize_terminal', { id: terminalId, cols, rows });
         }
       });
+
+      // Force initial resize notification after fit
+      setTimeout(() => {
+        if (terminal && terminalId !== null) {
+          invoke('resize_terminal', { id: terminalId, cols: terminal.cols, rows: terminal.rows });
+        }
+      }, 100);
 
       // Track focus state for visual feedback
       terminal.textarea?.addEventListener('focus', () => {
@@ -167,24 +199,27 @@
 
   let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
+  function fitTerminalToContainer() {
+    if (!fitAddon || !terminal) return;
+    try {
+      fitAddon.fit();
+    } catch (e) {
+      console.warn('FitAddon.fit() error:', e);
+    }
+  }
+
   function handleResize() {
-    if (fitAddon && terminal) {
+    if (terminal) {
       // Debounce resize to avoid rapid calls during window resize
       if (resizeTimeout) {
         clearTimeout(resizeTimeout);
       }
       resizeTimeout = setTimeout(() => {
-        // Double RAF to ensure layout is complete
+        // RAF to ensure layout is complete
         requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            try {
-              fitAddon?.fit();
-            } catch (e) {
-              console.warn('FitAddon.fit() error:', e);
-            }
-          });
+          fitTerminalToContainer();
         });
-      }, 50);
+      }, 16); // ~1 frame at 60fps
     }
   }
 
@@ -199,10 +234,24 @@
         handleResize();
       }
     });
-    resizeObserver.observe(terminalContainer);
+    // Observe the wrapper element which is the direct child of the split pane
+    resizeObserver.observe(terminalWrapper);
 
     // Also listen for window resize as a fallback
     window.addEventListener('resize', handleResize);
+
+    // Listen for custom terminal-resize event (dispatched when pane sizes change)
+    const handleTerminalResize = () => {
+      // Force immediate resize without debounce
+      requestAnimationFrame(() => {
+        fitTerminalToContainer();
+      });
+    };
+    window.addEventListener('terminal-resize', handleTerminalResize);
+
+    return () => {
+      window.removeEventListener('terminal-resize', handleTerminalResize);
+    };
   });
 
   onDestroy(() => {
@@ -230,7 +279,67 @@
   });
 </script>
 
-<div class="terminal-wrapper" class:focused={isFocused}>
+<div class="terminal-wrapper" class:focused={isFocused} bind:this={terminalWrapper}>
+  {#if showControls}
+    <div class="terminal-controls">
+      <button
+        class="control-btn"
+        onclick={onSplitVertical}
+        title="Split Vertically"
+        aria-label="Split Vertically"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <line x1="12" y1="3" x2="12" y2="21" />
+        </svg>
+      </button>
+      <button
+        class="control-btn"
+        onclick={onSplitHorizontal}
+        title="Split Horizontally"
+        aria-label="Split Horizontally"
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <line x1="3" y1="12" x2="21" y2="12" />
+        </svg>
+      </button>
+      {#if onClose}
+        <button
+          class="control-btn close-btn"
+          onclick={onClose}
+          title="Close Terminal"
+          aria-label="Close Terminal"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      {/if}
+    </div>
+  {/if}
   <div class="terminal-padding">
     <div class="terminal-container" bind:this={terminalContainer}></div>
   </div>
@@ -243,6 +352,8 @@
 <style>
   .terminal-wrapper {
     position: relative;
+    display: flex;
+    flex-direction: column;
     width: 100%;
     height: 100%;
     background: linear-gradient(180deg, #0a0c10 0%, #0c0e14 100%);
@@ -257,6 +368,42 @@
     to {
       opacity: 1;
     }
+  }
+
+  /* Terminal controls */
+  .terminal-controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    background: rgba(10, 12, 16, 0.8);
+    border-bottom: 1px solid rgba(125, 211, 252, 0.1);
+    z-index: 10;
+  }
+
+  .control-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .control-btn:hover {
+    background: rgba(125, 211, 252, 0.1);
+    color: var(--accent-color);
+  }
+
+  .control-btn.close-btn:hover {
+    background: rgba(248, 113, 113, 0.1);
+    color: #f87171;
   }
 
   /* Ambient corner glow */
@@ -289,10 +436,11 @@
   }
 
   .terminal-padding {
-    width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     padding: 12px 16px;
     box-sizing: border-box;
+    overflow: hidden;
   }
 
   .terminal-container {
@@ -351,6 +499,18 @@
   .terminal-container :global(.xterm) {
     width: 100%;
     height: 100%;
+  }
+
+  .terminal-container :global(.xterm-screen) {
+    width: 100% !important;
+  }
+
+  .terminal-container :global(.xterm-rows) {
+    width: 100% !important;
+  }
+
+  .terminal-container :global(.xterm-rows > div) {
+    width: 100% !important;
   }
 
   .terminal-container :global(.xterm-viewport) {
