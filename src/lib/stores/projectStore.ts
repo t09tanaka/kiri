@@ -42,7 +42,9 @@ function createProjectStore() {
 
   async function loadRecentProjects(): Promise<RecentProject[]> {
     try {
+      // Always reload store from disk to get fresh data (for multi-window support)
       const s = await getStore();
+      await s.reload();
       const projects = await s.get<RecentProject[]>('recentProjects');
       return projects ?? [];
     } catch (error) {

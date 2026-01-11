@@ -3,8 +3,8 @@ mod commands;
 use commands::{
     close_terminal, create_terminal, create_window, get_all_git_diffs, get_git_diff,
     get_git_file_status, get_git_status, get_home_directory, read_directory, read_file,
-    resize_terminal, reveal_in_finder, search_content, search_files, write_file, write_terminal,
-    TerminalState,
+    resize_terminal, reveal_in_finder, search_content, search_files, setup_menu, write_file,
+    write_terminal, TerminalState,
 };
 use std::sync::{Arc, Mutex};
 
@@ -15,6 +15,9 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(Arc::new(Mutex::new(commands::TerminalManager::new())) as TerminalState)
         .setup(|app| {
+            // Setup menu bar
+            setup_menu(app)?;
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

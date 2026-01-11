@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { open } from '@tauri-apps/plugin-dialog';
   import { AppLayout, StartScreen } from '@/lib/components';
   import QuickOpen from '@/lib/components/search/QuickOpen.svelte';
@@ -87,10 +88,19 @@
     tabStore.openFile(path);
   }
 
-  onMount(() => {
+  onMount(async () => {
     projectStore.init();
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+
+    // Listen for menu events from Rust
+    const unlisten = await listen('menu-open', () => {
+      handleOpenDirectory();
+    });
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      unlisten();
+    };
   });
 </script>
 
