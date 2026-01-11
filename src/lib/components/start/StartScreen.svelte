@@ -616,6 +616,28 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
+    max-height: 280px;
+    overflow-y: auto;
+    padding-right: var(--space-2);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(125, 211, 252, 0.15) transparent;
+  }
+
+  .recent-list::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  .recent-list::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .recent-list::-webkit-scrollbar-thumb {
+    background: rgba(125, 211, 252, 0.15);
+    border-radius: 3px;
+  }
+
+  .recent-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(125, 211, 252, 0.25);
   }
 
   .project-wrapper {
