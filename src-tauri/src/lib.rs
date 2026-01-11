@@ -2,9 +2,9 @@ mod commands;
 
 use commands::{
     close_terminal, create_terminal, create_window, get_all_git_diffs, get_git_diff,
-    get_git_file_status, get_git_status, get_home_directory, read_directory, read_file,
-    resize_terminal, reveal_in_finder, search_content, search_files, setup_menu, write_file,
-    write_terminal, TerminalState,
+    get_git_file_status, get_git_status, get_home_directory, get_window_geometry, read_directory,
+    read_file, resize_terminal, reveal_in_finder, search_content, search_files, set_window_geometry,
+    setup_menu, write_file, write_terminal, TerminalState,
 };
 use std::sync::{Arc, Mutex};
 
@@ -43,6 +43,8 @@ pub fn run() {
             search_files,
             search_content,
             create_window,
+            get_window_geometry,
+            set_window_geometry,
             reveal_in_finder,
         ])
         .run(tauri::generate_context!())

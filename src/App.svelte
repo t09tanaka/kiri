@@ -18,6 +18,7 @@
     clearOtherWindows,
     removeOtherWindow,
     type PersistedWindowState,
+    type PersistedWindowGeometry,
   } from '@/lib/services/persistenceService';
 
   let showShortcuts = $state(false);
@@ -26,12 +27,33 @@
   let nextWindowIndex = $state(0); // Track next index for new windows (main only)
 
   /**
+   * Get current window geometry (position and size)
+   */
+  async function getWindowGeometry(): Promise<PersistedWindowGeometry | undefined> {
+    try {
+      const result = await invoke<[number, number, number, number]>('get_window_geometry', {
+        label: windowLabel,
+      });
+      return {
+        x: result[0],
+        y: result[1],
+        width: result[2],
+        height: result[3],
+      };
+    } catch (error) {
+      console.error('Failed to get window geometry:', error);
+      return undefined;
+    }
+  }
+
+  /**
    * Get current window state for persistence
    */
-  function getCurrentWindowState(): PersistedWindowState {
+  async function getCurrentWindowState(): Promise<PersistedWindowState> {
     const currentPath = projectStore.getCurrentPath();
     const { tabs, activeTabId } = tabStore.getStateForPersistence();
     const ui = appStore.getUIForPersistence();
+    const geometry = await getWindowGeometry();
 
     return {
       label: windowLabel,
@@ -39,6 +61,7 @@
       tabs,
       activeTabId,
       ui,
+      geometry,
     };
   }
 
@@ -51,24 +74,44 @@
       return;
     }
 
-    const state = getCurrentWindowState();
+    const state = await getCurrentWindowState();
 
-    // Don't save empty windows (no project and no tabs)
-    if (!state.currentProject && state.tabs.length === 0) {
-      return;
-    }
-
+    // For main window, always save (to preserve geometry even on start screen)
+    // For other windows, only save if they have content
     if (windowLabel === 'main') {
       await saveMainWindowState(state);
     } else if (windowIndex >= 0) {
+      // Don't save empty non-main windows (no project and no tabs)
+      if (!state.currentProject && state.tabs.length === 0) {
+        return;
+      }
       await saveOtherWindowState(windowIndex, state);
+    }
+  }
+
+  /**
+   * Restore window geometry (position and size)
+   */
+  async function restoreWindowGeometry(geometry: PersistedWindowGeometry) {
+    try {
+      // Delay to ensure window is fully initialized
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await invoke('set_window_geometry', {
+        label: windowLabel,
+        x: geometry.x,
+        y: geometry.y,
+        width: geometry.width,
+        height: geometry.height,
+      });
+    } catch (error) {
+      console.error('Failed to restore window geometry:', error);
     }
   }
 
   /**
    * Restore window state from persisted data
    */
-  function restoreWindowState(state: PersistedWindowState) {
+  async function restoreWindowState(state: PersistedWindowState, restoreGeometry = false) {
     // Restore UI settings
     if (state.ui) {
       appStore.restoreUI(state.ui);
@@ -82,6 +125,11 @@
     // Restore tabs
     if (state.tabs && state.tabs.length > 0) {
       tabStore.restoreState(state.tabs, state.activeTabId);
+    }
+
+    // Restore window geometry (only for main window, other windows get geometry at creation)
+    if (restoreGeometry && state.geometry) {
+      await restoreWindowGeometry(state.geometry);
     }
   }
 
@@ -110,16 +158,23 @@
     // Clear other windows to start fresh
     await clearOtherWindows();
 
-    // Restore main window state
+    // Restore main window state (including geometry)
     if (session.mainWindow) {
-      restoreWindowState(session.mainWindow);
+      await restoreWindowState(session.mainWindow, true);
     }
 
     // Create and restore other windows (with new sequential indices)
     for (let i = 0; i < otherWindowsData.length; i++) {
       const winState = otherWindowsData[i];
       try {
-        await invoke('create_window');
+        // Create window with geometry if available
+        const geometry = winState.geometry;
+        await invoke('create_window', {
+          x: geometry?.x ?? null,
+          y: geometry?.y ?? null,
+          width: geometry?.width ?? null,
+          height: geometry?.height ?? null,
+        });
         // Send state and index to the new window after a short delay
         setTimeout(async () => {
           await emit('restore-window-state', { index: i, state: winState });
@@ -236,10 +291,10 @@
       // Listen for state restore (when app starts)
       unlistenRestore = await listen<{ index: number; state: Omit<PersistedWindowState, 'label'> }>(
         'restore-window-state',
-        (event) => {
+        async (event) => {
           // Receive index and state
           windowIndex = event.payload.index;
-          restoreWindowState({ ...event.payload.state, label: windowLabel });
+          await restoreWindowState({ ...event.payload.state, label: windowLabel });
         }
       );
       // Listen for index assignment (when created at runtime)
@@ -308,6 +363,10 @@
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
+    // Save when window is resized or moved (debounced)
+    const unlistenResized = await currentWindow.onResized(debouncedSave);
+    const unlistenMoved = await currentWindow.onMoved(debouncedSave);
+
     // Listen for menu events from Rust
     const unlistenMenu = await listen('menu-open', () => {
       handleOpenDirectory();
@@ -322,6 +381,8 @@
       window.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       unlistenCloseRequested();
+      unlistenResized();
+      unlistenMoved();
       unlistenMenu();
     };
   });

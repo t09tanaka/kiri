@@ -19,6 +19,14 @@ export interface PersistedUI {
   sidebarMode: SidebarMode;
 }
 
+// Window geometry (position and size)
+export interface PersistedWindowGeometry {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 // Single window state
 export interface PersistedWindowState {
   label: string;
@@ -26,6 +34,7 @@ export interface PersistedWindowState {
   tabs: PersistedTab[];
   activeTabId: string | null;
   ui: PersistedUI;
+  geometry?: PersistedWindowGeometry; // Window position and size
   closed?: boolean; // Mark window as closed (for filtering on restore)
 }
 
@@ -181,11 +190,18 @@ async function validateWindowTabs(
 }
 
 /**
- * Check if a window state has meaningful data
+ * Check if a window state has meaningful data (content or geometry)
  */
-function hasWindowData(win: Omit<PersistedWindowState, 'label'> | null): boolean {
+function hasWindowData(
+  win: Omit<PersistedWindowState, 'label'> | null,
+  includeGeometry = false
+): boolean {
   if (!win) return false;
-  return win.tabs.length > 0 || win.currentProject !== null;
+  // Content-based check
+  if (win.tabs.length > 0 || win.currentProject !== null) return true;
+  // Geometry-based check (for main window)
+  if (includeGeometry && win.geometry) return true;
+  return false;
 }
 
 /**
@@ -201,8 +217,9 @@ export async function loadMultiWindowSession(): Promise<PersistedSession | null>
     // Check if session has new structure
     if (session && (session.mainWindow || session.otherWindows)) {
       // Validate main window tabs
+      // Include geometry for main window (always restore main window geometry)
       let mainWindow: PersistedWindowState | null = null;
-      if (session.mainWindow && hasWindowData(session.mainWindow)) {
+      if (session.mainWindow && hasWindowData(session.mainWindow, true)) {
         const { tabs, activeTabId } = await validateWindowTabs(session.mainWindow.tabs || []);
         mainWindow = {
           ...session.mainWindow,
