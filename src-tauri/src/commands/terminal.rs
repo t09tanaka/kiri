@@ -45,13 +45,20 @@ pub fn create_terminal(
     app: AppHandle,
     state: tauri::State<'_, TerminalState>,
     cwd: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
 ) -> Result<u32, String> {
     let pty_system = native_pty_system();
 
+    // Use provided size or fallback to reasonable defaults
+    // Getting the correct initial size is critical for Ink-based apps like Claude Code
+    let initial_cols = cols.unwrap_or(120);
+    let initial_rows = rows.unwrap_or(30);
+
     let pair = pty_system
         .openpty(PtySize {
-            rows: 24,
-            cols: 80,
+            rows: initial_rows,
+            cols: initial_cols,
             pixel_width: 0,
             pixel_height: 0,
         })
@@ -60,6 +67,11 @@ pub fn create_terminal(
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     let mut cmd = CommandBuilder::new(&shell);
     cmd.arg("-l"); // Login shell
+
+    // Set TERM to enable proper ANSI escape sequence handling
+    // This is critical for CLI tools like Claude Code that use cursor movement
+    // and line clearing for progress indicators
+    cmd.env("TERM", "xterm-256color");
 
     if let Some(dir) = cwd {
         cmd.cwd(dir);

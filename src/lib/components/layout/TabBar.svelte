@@ -29,10 +29,22 @@
   function handleCloseClick(e: MouseEvent, tab: Tab) {
     e.stopPropagation();
     tabStore.closeTab(tab.id);
+    // Trigger terminal resize after tab close
+    // Use multiple dispatches to ensure terminals catch the new size after layout settles
+    setTimeout(() => {
+      window.dispatchEvent(new Event('terminal-resize'));
+    }, 50);
+    setTimeout(() => {
+      window.dispatchEvent(new Event('terminal-resize'));
+    }, 150);
   }
 
   function handleAddTerminal() {
     tabStore.addTerminalTab();
+    // Trigger terminal resize after adding tab
+    setTimeout(() => {
+      window.dispatchEvent(new Event('terminal-resize'));
+    }, 100);
   }
 </script>
 

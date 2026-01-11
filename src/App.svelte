@@ -105,6 +105,14 @@
         width: geometry.width,
         height: geometry.height,
       });
+      // Trigger terminal resize after geometry change
+      // Use multiple dispatches to ensure terminals catch the new size
+      setTimeout(() => {
+        window.dispatchEvent(new Event('terminal-resize'));
+      }, 100);
+      setTimeout(() => {
+        window.dispatchEvent(new Event('terminal-resize'));
+      }, 300);
     } catch (error) {
       console.error('Failed to restore window geometry:', error);
     }

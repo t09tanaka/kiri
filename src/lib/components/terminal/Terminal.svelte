@@ -64,6 +64,10 @@
   // Get the first suggestion for inline display
   const topSuggestion = $derived(suggestions.length > 0 ? suggestions[0] : null);
 
+  // Maximum terminal width to prevent rendering issues with Ink-based apps
+  // Wide terminals (140+ cols) can cause spinner glitches due to cursor movement calculations
+  const MAX_TERMINAL_COLS = 120;
+
   // Watch for tab activation to focus terminal
   const isActiveTab = $derived($tabStore.activeTabId === tabId);
 
@@ -72,8 +76,31 @@
       // Small delay to ensure the tab is fully rendered
       requestAnimationFrame(() => {
         terminal?.focus();
+        // Force fit when tab becomes active
+        // This handles the case when switching tabs or closing other tabs
+        // Use double rAF to ensure layout is fully settled
+        requestAnimationFrame(() => {
+          fitTerminalToContainer();
+        });
       });
     }
+  });
+
+  // Watch for tab count changes and trigger resize
+  // This ensures proper fit when tabs are added or removed
+  const tabCount = $derived($tabStore.tabs.length);
+  let prevTabCount = $state(0);
+
+  $effect(() => {
+    if (prevTabCount !== 0 && prevTabCount !== tabCount && terminal) {
+      // Tab count changed - trigger resize after layout settles
+      setTimeout(() => {
+        requestAnimationFrame(() => {
+          fitTerminalToContainer();
+        });
+      }, 50);
+    }
+    prevTabCount = tabCount;
   });
 
   // KIRI Mist Theme - soft atmospheric terminal colors
@@ -312,14 +339,24 @@
         terminal.open(terminalContainer);
       }
 
-      // Fit and focus
+      // Fit and focus - use same thorough layout wait as initial creation
       document.fonts.ready.then(() => {
         setTimeout(() => {
           requestAnimationFrame(() => {
-            fitTerminalToContainer();
-            terminal?.focus();
+            requestAnimationFrame(() => {
+              fitTerminalToContainer();
+              // If size seems wrong (too small), wait more and try again
+              if (terminal && (terminal.cols < 40 || terminal.rows < 10)) {
+                setTimeout(() => {
+                  fitTerminalToContainer();
+                  terminal?.focus();
+                }, 100);
+              } else {
+                terminal?.focus();
+              }
+            });
           });
-        }, 50);
+        }, 100); // Match initial creation timing
       });
 
       // Setup focus tracking for the reattached terminal
@@ -344,7 +381,7 @@
       fontSize: 13,
       fontWeight: '400',
       fontWeightBold: '500',
-      lineHeight: 1.4,
+      lineHeight: 1.2,
       letterSpacing: 0,
       allowTransparency: true,
       theme: mistTheme,
@@ -352,6 +389,9 @@
       smoothScrollDuration: 150,
       macOptionIsMeta: true,
       altClickMovesCursor: true,
+      // Match macOS Terminal behavior for ED2 (Erase in Display)
+      // This prevents blank lines when CLI tools use screen clearing
+      scrollOnEraseInDisplay: true,
     });
 
     fitAddon = new FitAddon();
@@ -387,38 +427,136 @@
 
     terminal.open(terminalContainer);
 
-    // Delay fit to ensure container is properly sized
-    // Use multiple RAFs and setTimeout to ensure layout is complete
-    const doFit = () => {
-      fitTerminalToContainer();
-      terminal?.focus();
-    };
+    // Wait for layout to be complete before creating PTY
+    // This ensures the PTY is created with the correct initial size
+    // which is critical for Ink-based apps like Claude Code
+    const waitForLayout = (): Promise<void> => {
+      return new Promise((resolve) => {
+        document.fonts.ready.then(() => {
+          // Use longer delay and multiple fit attempts to ensure correct size
+          setTimeout(() => {
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                if (fitAddon && terminal) {
+                  fitAddon.fit();
 
-    // Wait for fonts to load, then fit
-    document.fonts.ready.then(() => {
-      setTimeout(() => {
-        requestAnimationFrame(() => {
-          doFit();
+                  // If size seems wrong (too small), wait more and try again
+                  if (terminal.cols < 40 || terminal.rows < 10) {
+                    setTimeout(() => {
+                      fitAddon.fit();
+                      resolve();
+                    }, 100);
+                    return;
+                  }
+                }
+                resolve();
+              });
+            });
+          }, 100); // Increased from 50ms to 100ms
         });
-      }, 50);
-    });
+      });
+    };
 
     // Create PTY or reconnect to existing one
     try {
       if (existingTerminalId !== null) {
         // Reconnect to existing PTY
         terminalId = existingTerminalId;
+        // Still need to fit for reconnection
+        await waitForLayout();
       } else {
-        // Create new PTY
-        terminalId = await invoke<number>('create_terminal', { cwd });
+        // Wait for layout before creating PTY
+        await waitForLayout();
+
+        // Now create PTY with correct initial size
+        // Cap cols to MAX_TERMINAL_COLS to prevent Ink spinner issues
+        const cols = Math.min(terminal.cols, MAX_TERMINAL_COLS);
+        const rows = terminal.rows;
+
+        // If we capped the cols, resize the terminal to match
+        if (terminal.cols > MAX_TERMINAL_COLS) {
+          terminal.resize(cols, rows);
+        }
+
+        terminalId = await invoke<number>('create_terminal', { cwd, cols, rows });
         // Store terminal ID in tab store
         tabStore.setTerminalId(tabId, paneId, terminalId);
       }
 
+      terminal?.focus();
+
+      // Synchronized Output Mode (DEC Private Mode 2026)
+      // xterm.js doesn't support this natively, so we implement manual buffering
+      // to prevent visual glitches from partial frame rendering
+      // See: https://github.com/xtermjs/xterm.js/issues/3375
+      const SYNC_START = '\x1b[?2026h';
+      const SYNC_END = '\x1b[?2026l';
+      let syncBuffer = '';
+      let inSyncMode = false;
+      let pendingWrite = '';
+      let writeScheduled = false;
+
+      // Flush all pending writes in a single animation frame
+      const flushWrites = () => {
+        if (pendingWrite && terminal) {
+          terminal.write(pendingWrite);
+          pendingWrite = '';
+        }
+        writeScheduled = false;
+      };
+
+      // Schedule a batched write using requestAnimationFrame
+      const scheduleWrite = (data: string) => {
+        pendingWrite += data;
+        if (!writeScheduled) {
+          writeScheduled = true;
+          requestAnimationFrame(flushWrites);
+        }
+      };
+
       // Listen for terminal output
       unlisten = await listen<TerminalOutput>('terminal-output', (event) => {
         if (event.payload.id === terminalId && terminal) {
-          terminal.write(event.payload.data);
+          let data = event.payload.data;
+
+          // Process sync mode markers and buffer content
+          while (data.length > 0) {
+            if (inSyncMode) {
+              // Look for sync end marker
+              const endIndex = data.indexOf(SYNC_END);
+              if (endIndex !== -1) {
+                // Add content before end marker to buffer
+                syncBuffer += data.substring(0, endIndex);
+                // Schedule the entire buffered frame for next animation frame
+                scheduleWrite(syncBuffer);
+                syncBuffer = '';
+                inSyncMode = false;
+                // Continue processing remaining data
+                data = data.substring(endIndex + SYNC_END.length);
+              } else {
+                // No end marker yet, buffer entire chunk
+                syncBuffer += data;
+                data = '';
+              }
+            } else {
+              // Look for sync start marker
+              const startIndex = data.indexOf(SYNC_START);
+              if (startIndex !== -1) {
+                // Schedule content before start marker
+                if (startIndex > 0) {
+                  scheduleWrite(data.substring(0, startIndex));
+                }
+                inSyncMode = true;
+                syncBuffer = '';
+                // Continue processing after start marker
+                data = data.substring(startIndex + SYNC_START.length);
+              } else {
+                // No sync markers, schedule write
+                scheduleWrite(data);
+                data = '';
+              }
+            }
+          }
         }
       });
 
@@ -449,12 +587,16 @@
         }
       });
 
-      // Force initial resize notification after fit
+      // PTY was created with correct initial size, but trigger terminal-resize
+      // to ensure consistent behavior with split panes
       setTimeout(() => {
-        if (terminal && terminalId !== null) {
-          invoke('resize_terminal', { id: terminalId, cols: terminal.cols, rows: terminal.rows });
-        }
+        window.dispatchEvent(new Event('terminal-resize'));
       }, 100);
+
+      // And another one slightly later to catch any remaining layout changes
+      setTimeout(() => {
+        window.dispatchEvent(new Event('terminal-resize'));
+      }, 250);
 
       // Track focus state for visual feedback
       terminal.textarea?.addEventListener('focus', () => {
@@ -488,9 +630,34 @@
   let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
   function fitTerminalToContainer() {
-    if (!fitAddon || !terminal) return;
+    if (!fitAddon || !terminal || !terminalContainer) return;
+
+    // CRITICAL: Guard against 0-size fits
+    // When tabs are switched or closed, the container may momentarily have 0 size
+    // Sending cols=0/rows=0 to PTY will break Ink-based apps
+    const rect = terminalContainer.getBoundingClientRect();
+    if (rect.width < 2 || rect.height < 2) {
+      return;
+    }
+
     try {
       fitAddon.fit();
+
+      // Cap terminal width to prevent issues with Ink-based CLI apps
+      // Very wide terminals can cause spinner/progress bar rendering glitches
+      let cols = terminal.cols;
+      const rows = terminal.rows;
+
+      if (cols > MAX_TERMINAL_COLS) {
+        cols = MAX_TERMINAL_COLS;
+        terminal.resize(cols, rows);
+      }
+
+      // Explicitly send resize to PTY after fit
+      // This ensures Ink-based apps get the correct size immediately
+      if (terminalId !== null && cols > 0 && rows > 0) {
+        invoke('resize_terminal', { id: terminalId, cols, rows });
+      }
     } catch (e) {
       console.warn('FitAddon.fit() error:', e);
     }
