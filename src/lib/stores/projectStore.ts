@@ -128,6 +128,17 @@ function createProjectStore() {
       }));
     },
 
+    /**
+     * Set current path directly (for restoring from persistence)
+     * Unlike openProject, this doesn't update recent projects
+     */
+    setCurrentPath(path: string | null) {
+      update((state) => ({
+        ...state,
+        currentPath: path,
+      }));
+    },
+
     async refreshRecentProjectsGitInfo() {
       update((state) => ({ ...state }));
 

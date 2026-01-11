@@ -1,4 +1,5 @@
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
+import type { PersistedUI } from '@/lib/services/persistenceService';
 
 export type ViewMode = 'terminal' | 'editor';
 export type SidebarMode = 'explorer' | 'changes';
@@ -64,6 +65,31 @@ function createAppStore() {
         ...state,
         sidebarMode: state.sidebarMode === 'explorer' ? 'changes' : 'explorer',
       })),
+
+    /**
+     * Get UI state for persistence
+     */
+    getUIForPersistence: (): PersistedUI => {
+      const state = get({ subscribe });
+      return {
+        sidebarWidth: state.sidebarWidth,
+        showSidebar: state.showSidebar,
+        sidebarMode: state.sidebarMode,
+      };
+    },
+
+    /**
+     * Restore UI state from persistence
+     */
+    restoreUI: (ui: PersistedUI) => {
+      update((state) => ({
+        ...state,
+        sidebarWidth: Math.max(160, Math.min(400, ui.sidebarWidth)),
+        showSidebar: ui.showSidebar,
+        sidebarMode: ui.sidebarMode,
+      }));
+    },
+
     reset: () => set(initialState),
   };
 }
