@@ -52,7 +52,8 @@
     }
 
     const state = getCurrentWindowState();
-    // Don't save empty state - only save when there's meaningful data
+
+    // Don't save empty windows (no project and no tabs)
     if (!state.currentProject && state.tabs.length === 0) {
       return;
     }
@@ -85,10 +86,12 @@
   }
 
   /**
-   * Check if window state has meaningful data
+   * Check if window state should be restored (not closed and has data)
    */
-  function hasWindowData(win: Omit<PersistedWindowState, 'label'> | null): boolean {
+  function shouldRestoreWindow(win: Omit<PersistedWindowState, 'label'> | null): boolean {
     if (!win) return false;
+    if (win.closed) return false;
+    // Must have either project or tabs
     return win.tabs.length > 0 || win.currentProject !== null;
   }
 
@@ -101,8 +104,8 @@
       return;
     }
 
-    // Filter out empty entries from other windows
-    const otherWindowsData = (session.otherWindows || []).filter(hasWindowData);
+    // Filter out closed and empty windows
+    const otherWindowsData = (session.otherWindows || []).filter(shouldRestoreWindow);
 
     // Clear other windows to start fresh
     await clearOtherWindows();
@@ -229,7 +232,6 @@
     // Listen for state restore event and index assignment (for non-main windows)
     let unlistenRestore: (() => void) | null = null;
     let unlistenAssignIndex: (() => void) | null = null;
-    let wasRestored = false;
     if (!isMainWindow) {
       // Listen for state restore (when app starts)
       unlistenRestore = await listen<{ index: number; state: Omit<PersistedWindowState, 'label'> }>(
@@ -238,7 +240,6 @@
           // Receive index and state
           windowIndex = event.payload.index;
           restoreWindowState({ ...event.payload.state, label: windowLabel });
-          wasRestored = true;
         }
       );
       // Listen for index assignment (when created at runtime)
@@ -257,16 +258,15 @@
 
     window.addEventListener('keydown', handleKeyDown);
 
-    // Wait a bit before enabling auto-save, then save restored state
+    // Wait a bit before enabling auto-save, then save state
     setTimeout(() => {
       isRestoring = false;
-      // If window was restored, save its state to ensure persistence
-      if (wasRestored || isMainWindow) {
-        saveCurrentWindowState();
-      }
+      // Save state for all windows that have meaningful data
+      saveCurrentWindowState();
     }, 1500);
 
-    const unsubscribeTabStore = tabStore.subscribe(() => {
+    // Debounced save function
+    const debouncedSave = () => {
       if (isRestoring) return;
 
       if (saveTimeout) {
@@ -275,7 +275,13 @@
       saveTimeout = setTimeout(() => {
         saveCurrentWindowState();
       }, 500);
-    });
+    };
+
+    // Auto-save when tab state changes
+    const unsubscribeTabStore = tabStore.subscribe(debouncedSave);
+
+    // Auto-save when project changes (for new windows opening projects)
+    const unsubscribeProjectStore = projectStore.subscribe(debouncedSave);
 
     // Save state before window closes
     const unlistenCloseRequested = await currentWindow.onCloseRequested(async (event) => {
@@ -310,6 +316,7 @@
     return () => {
       if (saveTimeout) clearTimeout(saveTimeout);
       unsubscribeTabStore();
+      unsubscribeProjectStore();
       unlistenRestore?.();
       unlistenAssignIndex?.();
       window.removeEventListener('keydown', handleKeyDown);

@@ -26,6 +26,7 @@ export interface PersistedWindowState {
   tabs: PersistedTab[];
   activeTabId: string | null;
   ui: PersistedUI;
+  closed?: boolean; // Mark window as closed (for filtering on restore)
 }
 
 // Complete persisted state (for backwards compatibility)
@@ -340,7 +341,7 @@ export async function saveOtherWindowState(
 }
 
 /**
- * Remove a non-main window from session by index (sets to null, doesn't shift indices)
+ * Mark a non-main window as closed (doesn't shift indices)
  */
 export async function removeOtherWindow(index: number): Promise<void> {
   try {
@@ -351,12 +352,10 @@ export async function removeOtherWindow(index: number): Promise<void> {
     if (!session || !session.otherWindows) return;
 
     if (index >= 0 && index < session.otherWindows.length) {
-      // Set to empty state instead of removing (to preserve indices)
+      // Mark as closed instead of removing (to preserve indices)
       session.otherWindows[index] = {
-        currentProject: null,
-        tabs: [],
-        activeTabId: null,
-        ui: DEFAULT_UI,
+        ...session.otherWindows[index],
+        closed: true,
       };
     }
 
