@@ -1,6 +1,7 @@
 <script lang="ts">
   import { open } from '@tauri-apps/plugin-dialog';
   import { projectStore, recentProjects, type RecentProject } from '@/lib/stores/projectStore';
+  import { tabStore } from '@/lib/stores/tabStore';
   import RecentProjectItem from './RecentProjectItem.svelte';
   import { onMount } from 'svelte';
 
@@ -15,11 +16,15 @@
 
     if (selected && typeof selected === 'string') {
       await projectStore.openProject(selected);
+      // Open a default terminal tab when opening a new project
+      tabStore.addTerminalTab();
     }
   }
 
   function handleProjectSelect(project: RecentProject) {
     projectStore.openProject(project.path);
+    // Open a default terminal tab when opening a new project
+    tabStore.addTerminalTab();
   }
 
   function handleProjectRemove(project: RecentProject) {

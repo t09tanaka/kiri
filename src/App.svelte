@@ -125,6 +125,9 @@
     // Restore tabs
     if (state.tabs && state.tabs.length > 0) {
       tabStore.restoreState(state.tabs, state.activeTabId);
+    } else if (state.currentProject) {
+      // If project is open but no tabs, open a default terminal
+      tabStore.addTerminalTab();
     }
 
     // Restore window geometry (only for main window, other windows get geometry at creation)
@@ -197,6 +200,11 @@
 
     if (selected && typeof selected === 'string') {
       await projectStore.openProject(selected);
+      // Open a default terminal tab when opening a new project (if no tabs exist)
+      const { tabs } = tabStore.getStateForPersistence();
+      if (tabs.length === 0) {
+        tabStore.addTerminalTab();
+      }
     }
   }
 
