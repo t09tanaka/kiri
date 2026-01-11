@@ -2,12 +2,16 @@
   import { invoke } from '@tauri-apps/api/core';
   import type { FileEntry } from './types';
   import { type GitFileStatus, getStatusIcon, getStatusColor } from '@/lib/stores/gitStore';
+  import { getFileIconInfo, getFolderColor } from '@/lib/utils/fileIcons';
+  import ContextMenu, { type MenuItem } from '@/lib/components/ui/ContextMenu.svelte';
+  import FileTreeItem from './FileTreeItem.svelte';
 
   interface Props {
     entry: FileEntry;
     depth?: number;
     selectedPath?: string | null;
     onSelect?: (path: string) => void;
+    onOpenInTerminal?: (path: string) => void;
     gitStatusMap?: Map<string, GitFileStatus>;
     repoRoot?: string;
   }
@@ -17,6 +21,7 @@
     depth = 0,
     selectedPath = null,
     onSelect,
+    onOpenInTerminal,
     gitStatusMap = new Map(),
     repoRoot = '',
   }: Props = $props();
@@ -25,9 +30,14 @@
   let children = $state<FileEntry[]>([]);
   let loading = $state(false);
   let error = $state<string | null>(null);
+  let contextMenu = $state<{ x: number; y: number } | null>(null);
 
   const isSelected = $derived(selectedPath === entry.path);
   const paddingLeft = $derived(12 + depth * 16);
+
+  // File icon info
+  const fileIconInfo = $derived(getFileIconInfo(entry.name));
+  const folderColor = $derived(getFolderColor(expanded));
 
   const gitStatus = $derived(() => {
     if (!repoRoot || !entry.path.startsWith(repoRoot)) return null;
@@ -74,36 +84,51 @@
     }
   }
 
-  function getFileIcon(entry: FileEntry): string {
+  function handleContextMenu(e: MouseEvent) {
+    e.preventDefault();
+    contextMenu = { x: e.clientX, y: e.clientY };
+  }
+
+  function getContextMenuItems(): MenuItem[] {
+    const items: MenuItem[] = [];
+
     if (entry.is_dir) {
-      return expanded ? '📂' : '📁';
+      items.push(
+        { id: 'expand', label: expanded ? 'Collapse' : 'Expand', icon: expanded ? '▼' : '▶' },
+        { id: 'open-terminal', label: 'Open in Terminal', icon: '>' },
+        { id: 'separator1', label: '', separator: true },
+        { id: 'copy-path', label: 'Copy Path', shortcut: '⌘C' },
+        { id: 'reveal', label: 'Reveal in Finder', shortcut: '⌘⇧R' }
+      );
+    } else {
+      items.push(
+        { id: 'open', label: 'Open', icon: '📄' },
+        { id: 'separator1', label: '', separator: true },
+        { id: 'copy-path', label: 'Copy Path', shortcut: '⌘C' },
+        { id: 'reveal', label: 'Reveal in Finder', shortcut: '⌘⇧R' }
+      );
     }
 
-    const ext = entry.name.split('.').pop()?.toLowerCase();
-    switch (ext) {
-      case 'ts':
-      case 'tsx':
-        return '🔷';
-      case 'js':
-      case 'jsx':
-        return '🟨';
-      case 'svelte':
-        return '🔶';
-      case 'json':
-        return '📋';
-      case 'md':
-        return '📝';
-      case 'css':
-      case 'scss':
-        return '🎨';
-      case 'html':
-        return '🌐';
-      case 'rs':
-        return '🦀';
-      case 'toml':
-        return '⚙️';
-      default:
-        return '📄';
+    return items;
+  }
+
+  async function handleContextMenuSelect(id: string) {
+    switch (id) {
+      case 'expand':
+        toggleExpand();
+        break;
+      case 'open':
+        onSelect?.(entry.path);
+        break;
+      case 'open-terminal':
+        onOpenInTerminal?.(entry.path);
+        break;
+      case 'copy-path':
+        await navigator.clipboard.writeText(entry.path);
+        break;
+      case 'reveal':
+        await invoke('reveal_in_finder', { path: entry.path });
+        break;
     }
   }
 </script>
@@ -113,40 +138,125 @@
     class="tree-item"
     class:selected={isSelected}
     class:hidden-file={entry.is_hidden}
+    class:directory={entry.is_dir}
     style="padding-left: {paddingLeft}px"
     onclick={handleClick}
     onkeydown={handleKeyDown}
+    oncontextmenu={handleContextMenu}
     title={entry.path}
   >
-    <span class="icon">{getFileIcon(entry)}</span>
+    {#if entry.is_dir}
+      <span class="chevron" class:expanded>
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="9 18 15 12 9 6"></polyline>
+        </svg>
+      </span>
+      <span class="icon folder" style="color: {folderColor}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          {#if expanded}
+            <path
+              d="M19 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6l2 2h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2z"
+            />
+          {:else}
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          {/if}
+        </svg>
+      </span>
+    {:else}
+      <span class="spacer"></span>
+      <span class="icon file" style="color: {fileIconInfo.color}">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+          <polyline points="14 2 14 8 20 8"></polyline>
+        </svg>
+      </span>
+    {/if}
     <span class="name">{entry.name}</span>
     {#if statusIcon}
       <span class="git-status" style="color: {statusColor}">{statusIcon}</span>
     {/if}
     {#if loading}
-      <span class="loading">...</span>
+      <span class="loading">
+        <svg
+          class="spinner"
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <circle cx="12" cy="12" r="10" stroke-opacity="0.25" />
+          <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" />
+        </svg>
+      </span>
     {/if}
   </button>
 
   {#if expanded && children.length > 0}
     <div class="children">
-      {#each children as child (child.path)}
-        <svelte:self
-          entry={child}
-          depth={depth + 1}
-          {selectedPath}
-          {onSelect}
-          {gitStatusMap}
-          {repoRoot}
-        />
+      {#each children as child, index (child.path)}
+        <div class="child-wrapper" style="--child-index: {index}">
+          <FileTreeItem
+            entry={child}
+            depth={depth + 1}
+            {selectedPath}
+            {onSelect}
+            {onOpenInTerminal}
+            {gitStatusMap}
+            {repoRoot}
+          />
+        </div>
       {/each}
     </div>
   {/if}
 
   {#if error}
-    <div class="error" style="padding-left: {paddingLeft + 16}px">Failed to load</div>
+    <div class="error" style="padding-left: {paddingLeft + 16}px">
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      >
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="12" y1="8" x2="12" y2="12"></line>
+        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+      </svg>
+      Failed to load
+    </div>
   {/if}
 </div>
+
+{#if contextMenu}
+  <ContextMenu
+    items={getContextMenuItems()}
+    x={contextMenu.x}
+    y={contextMenu.y}
+    onSelect={handleContextMenuSelect}
+    onClose={() => (contextMenu = null)}
+  />
+{/if}
 
 <style>
   .tree-item-container {
@@ -154,66 +264,284 @@
   }
 
   .tree-item {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-1);
     width: 100%;
-    height: 24px;
-    padding-right: 8px;
+    height: 28px;
+    padding-right: var(--space-3);
     border: none;
     background: transparent;
     color: var(--text-primary);
-    font-size: 13px;
+    font-size: 12px;
+    font-family: var(--font-sans);
     text-align: left;
     cursor: pointer;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    border-radius: var(--radius-sm);
+    margin: 1px var(--space-1);
+    transition: all var(--transition-fast);
   }
 
   .tree-item:hover {
-    background-color: var(--bg-tertiary);
+    background: var(--bg-tertiary);
+  }
+
+  .tree-item:hover .name {
+    color: var(--accent-color);
+  }
+
+  .tree-item:active {
+    transform: scale(0.995);
+    transition: transform 80ms ease;
   }
 
   .tree-item.selected {
-    background-color: var(--accent-color);
-    color: white;
+    background: var(--accent-subtle);
+    color: var(--text-primary);
+  }
+
+  .tree-item.selected::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 4px;
+    bottom: 4px;
+    width: 2px;
+    background: var(--accent-color);
+    border-radius: 1px;
+  }
+
+  .tree-item.selected .name {
+    color: var(--accent-color);
+  }
+
+  /* Selection animation */
+  .tree-item.selected {
+    animation: selectFlash 0.4s ease;
+  }
+
+  @keyframes selectFlash {
+    0% {
+      background: rgba(125, 211, 252, 0.12);
+    }
+    100% {
+      background: var(--accent-subtle);
+    }
+  }
+
+  .tree-item.selected .icon {
+    color: var(--accent-color);
   }
 
   .tree-item.hidden-file {
-    opacity: 0.6;
+    opacity: 0.4;
+  }
+
+  .chevron {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+    transition:
+      transform var(--transition-fast),
+      color var(--transition-fast);
+  }
+
+  .tree-item:hover .chevron {
+    color: var(--accent-color);
+    transform: translateX(2px);
+  }
+
+  .chevron.expanded {
+    transform: rotate(90deg);
+    color: var(--accent-color);
+  }
+
+  .tree-item:hover .chevron.expanded {
+    transform: rotate(90deg) translateX(2px);
+  }
+
+  .spacer {
+    width: 16px;
+    flex-shrink: 0;
   }
 
   .icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
-    font-size: 14px;
+    width: 16px;
+    height: 16px;
+    transition: all var(--transition-fast);
+  }
+
+  .tree-item:hover .icon {
+    color: var(--accent-color);
+    transform: scale(1.1);
+  }
+
+  /* Hover mist effect */
+  .tree-item::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+      rgba(125, 211, 252, 0.06) 0%,
+      transparent 60%
+    );
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+    pointer-events: none;
+    border-radius: inherit;
+  }
+
+  .tree-item:hover::after {
+    opacity: 1;
   }
 
   .name {
     overflow: hidden;
     text-overflow: ellipsis;
+    flex: 1;
+  }
+
+  .directory .name {
+    font-weight: 500;
   }
 
   .loading {
-    color: var(--text-secondary);
-    font-size: 11px;
+    display: flex;
+    align-items: center;
+    margin-left: auto;
+  }
+
+  .spinner {
+    animation: spin 1s linear infinite;
+    color: var(--accent-color);
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .git-status {
     flex-shrink: 0;
-    font-size: 11px;
-    font-weight: bold;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
     margin-left: auto;
-    padding-right: 4px;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid currentColor;
+    background: transparent;
+    opacity: 0.9;
+    transition: all var(--transition-fast);
+  }
+
+  .tree-item:hover .git-status {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+
+  .git-status {
+    transform-origin: center;
   }
 
   .children {
+    position: relative;
     width: 100%;
+    animation: expandIn 0.2s ease-out;
+    transform-origin: top;
+  }
+
+  /* Subtle vertical connection line */
+  .children::before {
+    content: '';
+    position: absolute;
+    left: calc(12px + var(--depth, 0) * 16px + 8px);
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: linear-gradient(to bottom, var(--border-subtle), transparent);
+    opacity: 0.3;
+    pointer-events: none;
+  }
+
+  .child-wrapper {
+    animation: childSlideIn 0.2s ease-out backwards;
+    animation-delay: calc(var(--child-index) * 30ms);
+  }
+
+  @keyframes childSlideIn {
+    from {
+      opacity: 0;
+      transform: translateX(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes expandIn {
+    from {
+      opacity: 0;
+      transform: scaleY(0.95);
+    }
+    to {
+      opacity: 1;
+      transform: scaleY(1);
+    }
   }
 
   .error {
-    color: #f44336;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--git-deleted);
     font-size: 11px;
-    padding: 4px 8px;
+    padding: var(--space-2) var(--space-3);
+    margin: var(--space-1);
+    background: rgba(255, 69, 58, 0.08);
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(255, 69, 58, 0.15);
+    animation: errorShake 0.4s ease;
+  }
+
+  .error svg {
+    flex-shrink: 0;
+  }
+
+  @keyframes errorShake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20% {
+      transform: translateX(-4px);
+    }
+    40% {
+      transform: translateX(4px);
+    }
+    60% {
+      transform: translateX(-2px);
+    }
+    80% {
+      transform: translateX(2px);
+    }
   }
 </style>

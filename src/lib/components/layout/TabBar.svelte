@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tabStore, type Tab } from '@/lib/stores/tabStore';
+  import { getFileIconInfo } from '@/lib/utils/fileIcons';
 
   interface Props {
     tabs: Tab[];
@@ -15,11 +16,10 @@
     return tab.filePath.split('/').pop() || 'Untitled';
   }
 
-  function getTabIcon(tab: Tab): string {
-    if (tab.type === 'terminal') {
-      return '⌨';
-    }
-    return '📄';
+  function getFileColor(tab: Tab): string {
+    if (tab.type === 'terminal') return 'var(--accent-color)';
+    const filename = tab.filePath.split('/').pop() || '';
+    return getFileIconInfo(filename).color;
   }
 
   function handleTabClick(tab: Tab) {
@@ -38,7 +38,7 @@
 
 <div class="tab-bar">
   <div class="tabs-container">
-    {#each tabs as tab (tab.id)}
+    {#each tabs as tab, index (tab.id)}
       <div
         class="tab"
         class:active={tab.id === activeTabId}
@@ -47,11 +47,42 @@
         role="tab"
         tabindex="0"
         title={tab.type === 'editor' ? tab.filePath : tab.title}
+        style="--tab-index: {index}"
       >
-        <span class="tab-icon">{getTabIcon(tab)}</span>
+        <span class="tab-icon" style="color: {getFileColor(tab)}">
+          {#if tab.type === 'terminal'}
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="4 17 10 11 4 5"></polyline>
+              <line x1="12" y1="19" x2="20" y2="19"></line>
+            </svg>
+          {:else}
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+            </svg>
+          {/if}
+        </span>
         <span class="tab-label">{getTabLabel(tab)}</span>
         {#if tab.type === 'editor' && tab.modified}
-          <span class="modified-dot">●</span>
+          <span class="modified-indicator"></span>
         {/if}
         <button
           class="close-btn"
@@ -59,28 +90,71 @@
           title="Close"
           aria-label="Close tab"
         >
-          ×
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
         </button>
+        {#if tab.id === activeTabId}
+          <div class="active-indicator"></div>
+        {/if}
       </div>
     {/each}
   </div>
   <button
     class="add-btn"
     onclick={handleAddTerminal}
-    title="New Terminal"
+    title="New Terminal (⌘`)"
     aria-label="New Terminal"
   >
-    +
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <line x1="12" y1="5" x2="12" y2="19"></line>
+      <line x1="5" y1="12" x2="19" y2="12"></line>
+    </svg>
   </button>
 </div>
 
 <style>
   .tab-bar {
-    height: 35px;
+    height: var(--tabbar-height, 44px);
     display: flex;
     align-items: stretch;
-    background-color: var(--bg-tertiary);
+    background: var(--bg-tertiary);
     border-bottom: 1px solid var(--border-color);
+    user-select: none;
+    position: relative;
+  }
+
+  /* Subtle gradient overlay on tab bar */
+  .tab-bar::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(125, 211, 252, 0.02) 50%,
+      transparent 100%
+    );
+    pointer-events: none;
   }
 
   .tabs-container {
@@ -89,107 +163,241 @@
     align-items: stretch;
     overflow-x: auto;
     overflow-y: hidden;
+    scrollbar-width: none;
   }
 
   .tabs-container::-webkit-scrollbar {
-    height: 4px;
-  }
-
-  .tabs-container::-webkit-scrollbar-thumb {
-    background-color: var(--border-color);
-    border-radius: 2px;
+    display: none;
   }
 
   .tab {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 0 8px 0 12px;
-    min-width: 100px;
-    max-width: 180px;
-    background: none;
+    gap: var(--space-2);
+    padding: 0 var(--space-3) 0 var(--space-4);
+    min-width: 140px;
+    max-width: 200px;
+    background: transparent;
     border: none;
-    border-right: 1px solid var(--border-color);
+    border-right: 1px solid var(--border-subtle);
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
     cursor: pointer;
-    white-space: nowrap;
-    transition:
-      background-color 0.15s,
-      color 0.15s;
+    position: relative;
+    transition: all var(--transition-normal);
+    animation: tabSlideIn 0.3s ease backwards;
+    animation-delay: calc(var(--tab-index) * 30ms);
+    overflow: hidden;
+  }
+
+  @keyframes tabSlideIn {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Tab hover background effect */
+  .tab::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(
+      ellipse 100% 100% at 50% 100%,
+      rgba(125, 211, 252, 0.08) 0%,
+      transparent 70%
+    );
+    opacity: 0;
+    transition: opacity var(--transition-normal);
+    pointer-events: none;
+  }
+
+  .tab:hover::before {
+    opacity: 1;
   }
 
   .tab:hover {
-    background-color: var(--bg-secondary);
+    background: rgba(125, 211, 252, 0.03);
     color: var(--text-primary);
   }
 
   .tab.active {
-    background-color: var(--bg-primary);
+    background: var(--bg-primary);
     color: var(--text-primary);
-    border-bottom: 2px solid var(--accent-color);
-    margin-bottom: -1px;
+  }
+
+  .tab.active::before {
+    background: radial-gradient(
+      ellipse 120% 80% at 50% 100%,
+      rgba(125, 211, 252, 0.1) 0%,
+      transparent 60%
+    );
+    opacity: 1;
+  }
+
+  /* Active tab indicator - subtle with entrance animation */
+  .active-indicator {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent-color), var(--accent2-color));
+    border-radius: 2px 2px 0 0;
+    opacity: 0.8;
+    animation: indicatorSlide 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes indicatorSlide {
+    from {
+      transform: scaleX(0);
+      opacity: 0;
+    }
+    to {
+      transform: scaleX(1);
+      opacity: 0.8;
+    }
   }
 
   .tab-icon {
     flex-shrink: 0;
-    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.6;
+    transition: all var(--transition-normal);
+  }
+
+  .tab:hover .tab-icon {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+
+  .tab.active .tab-icon {
+    opacity: 1;
   }
 
   .tab-label {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;
     text-align: left;
+    transition: all var(--transition-fast);
   }
 
-  .modified-dot {
+  .tab.active .tab-label {
     color: var(--accent-color);
-    font-size: 10px;
+  }
+
+  .modified-indicator {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--accent-color);
+    flex-shrink: 0;
+    animation: modifiedPulse 2s ease-in-out infinite;
+  }
+
+  @keyframes modifiedPulse {
+    0%,
+    100% {
+      opacity: 0.6;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.15);
+    }
   }
 
   .close-btn {
     flex-shrink: 0;
-    width: 18px;
-    height: 18px;
+    width: 22px;
+    height: 22px;
     padding: 0;
-    background: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
     border: none;
-    border-radius: 3px;
-    color: var(--text-secondary);
-    font-size: 14px;
-    cursor: pointer;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
     opacity: 0;
-    transition:
-      opacity 0.15s,
-      background-color 0.15s;
+    transition: all var(--transition-fast);
   }
 
   .tab:hover .close-btn {
     opacity: 1;
   }
 
+  .close-btn svg {
+    transition: transform var(--transition-fast);
+  }
+
   .close-btn:hover {
-    background-color: rgba(255, 255, 255, 0.1);
-    color: var(--text-primary);
+    background: rgba(248, 113, 113, 0.15);
+    color: var(--git-deleted);
+  }
+
+  .close-btn:hover svg {
+    transform: scale(1.1);
+  }
+
+  .close-btn:active {
+    transform: scale(0.9);
+    transition: transform 100ms ease;
   }
 
   .add-btn {
     flex-shrink: 0;
-    width: 35px;
-    background: none;
+    width: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
     border: none;
-    border-left: 1px solid var(--border-color);
-    color: var(--text-secondary);
-    font-size: 18px;
-    cursor: pointer;
-    transition:
-      background-color 0.15s,
-      color 0.15s;
+    border-left: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    transition: all var(--transition-normal);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .add-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at center, rgba(125, 211, 252, 0.1) 0%, transparent 70%);
+    opacity: 0;
+    transition: opacity var(--transition-normal);
+  }
+
+  .add-btn:hover::before {
+    opacity: 1;
   }
 
   .add-btn:hover {
-    background-color: var(--bg-secondary);
-    color: var(--text-primary);
+    color: var(--accent-color);
+  }
+
+  .add-btn:hover svg {
+    transform: rotate(90deg);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  .add-btn svg {
+    transition: all 0.3s ease;
+  }
+
+  .add-btn:active {
+    transform: scale(0.95);
+    transition: transform 100ms ease;
   }
 </style>
