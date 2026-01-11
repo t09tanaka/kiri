@@ -1,4 +1,4 @@
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -13,6 +13,7 @@ pub struct TerminalOutput {
 }
 
 struct PtyInstance {
+    master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     _child: Box<dyn portable_pty::Child + Send + Sync>,
 }
@@ -78,6 +79,7 @@ pub fn create_terminal(
     manager.instances.insert(
         id,
         PtyInstance {
+            master: pair.master,
             writer,
             _child: child,
         },
@@ -137,11 +139,17 @@ pub fn resize_terminal(
 ) -> Result<(), String> {
     let manager = state.lock().map_err(|e| e.to_string())?;
 
-    if manager.instances.contains_key(&id) {
-        // Note: portable-pty doesn't easily expose resize on the master
-        // For now, we'll skip actual resize implementation
-        // Full implementation would require keeping the master reference
-        log::info!("Resize terminal {} to {}x{}", id, cols, rows);
+    if let Some(instance) = manager.instances.get(&id) {
+        instance
+            .master
+            .resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(|e| e.to_string())?;
+        log::info!("Resized terminal {} to {}x{}", id, cols, rows);
         Ok(())
     } else {
         Err(format!("Terminal {} not found", id))
