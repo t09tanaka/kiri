@@ -1,10 +1,11 @@
 mod commands;
 
 use commands::{
-    close_terminal, create_terminal, create_window, get_all_git_diffs, get_git_diff,
-    get_git_file_status, get_git_status, get_home_directory, get_window_geometry, read_directory,
-    read_file, resize_terminal, reveal_in_finder, search_content, search_files, set_window_geometry,
-    setup_menu, write_file, write_terminal, TerminalState,
+    close_terminal, create_terminal, create_window, get_all_git_diffs, get_command_history,
+    get_file_suggestions, get_git_diff, get_git_file_status, get_git_status, get_home_directory,
+    get_path_commands, get_window_geometry, read_directory, read_file, resize_terminal,
+    reveal_in_finder, search_content, search_files, set_window_geometry, setup_menu, write_file,
+    write_terminal, TerminalState,
 };
 use std::sync::{Arc, Mutex};
 
@@ -46,6 +47,9 @@ pub fn run() {
             get_window_geometry,
             set_window_geometry,
             reveal_in_finder,
+            get_path_commands,
+            get_command_history,
+            get_file_suggestions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

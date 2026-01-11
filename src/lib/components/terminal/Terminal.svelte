@@ -9,6 +9,12 @@
   import { CanvasAddon } from '@xterm/addon-canvas';
   import { tabStore, getAllPaneIds, type TerminalTab } from '@/lib/stores/tabStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
+  import {
+    getSuggestions,
+    preloadSuggestions,
+    type Suggestion,
+  } from '@/lib/services/suggestService';
+  import TerminalSuggest from './TerminalSuggest.svelte';
   import '@xterm/xterm/css/xterm.css';
 
   interface TerminalOutput {
@@ -37,6 +43,7 @@
   }: Props = $props();
 
   let terminalWrapper: HTMLDivElement;
+  let terminalPadding: HTMLDivElement;
   let terminalContainer: HTMLDivElement;
   let terminal: Terminal | null = null;
   let fitAddon: FitAddon | null = null;
@@ -44,6 +51,16 @@
   let unlisten: UnlistenFn | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let isFocused = $state(false);
+
+  // Suggest feature state
+  let currentInput = $state('');
+  let suggestions = $state<Suggestion[]>([]);
+  let showSuggestions = $state(false);
+  let suggestDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let cursorPosition = $state<{ x: number; y: number } | null>(null);
+
+  // Get the first suggestion for inline display
+  const topSuggestion = $derived(suggestions.length > 0 ? suggestions[0] : null);
 
   // Watch for tab activation to focus terminal
   const isActiveTab = $derived($tabStore.activeTabId === tabId);
@@ -119,6 +136,160 @@
     return findTerminalId(terminalTab.rootPane);
   }
 
+  /**
+   * Calculate cursor position in pixels relative to terminal-padding
+   */
+  function updateCursorPosition() {
+    if (!terminal || !terminalPadding || !terminalContainer) {
+      cursorPosition = null;
+      return;
+    }
+
+    try {
+      const cursorX = terminal.buffer.active.cursorX;
+      const cursorY = terminal.buffer.active.cursorY;
+
+      // Get cell dimensions from the canvas element for accuracy
+      const canvas = terminalContainer.querySelector('canvas');
+      if (!canvas) {
+        cursorPosition = null;
+        return;
+      }
+
+      // Calculate cell dimensions from canvas size
+      const cellWidth = canvas.clientWidth / terminal.cols;
+      const cellHeight = canvas.clientHeight / terminal.rows;
+
+      // Use canvas rect directly as reference point
+      const canvasRect = canvas.getBoundingClientRect();
+      const paddingRect = terminalPadding.getBoundingClientRect();
+
+      // Calculate position relative to terminal-padding
+      const offsetX = canvasRect.left - paddingRect.left;
+      const offsetY = canvasRect.top - paddingRect.top;
+
+      // Position at the cursor (where next character will appear)
+      const x = offsetX + cursorX * cellWidth;
+      // Add offset to align with text (canvas renders from top, text needs baseline adjustment)
+      const y = offsetY + cursorY * cellHeight + 2;
+
+      cursorPosition = { x, y };
+    } catch {
+      cursorPosition = null;
+    }
+  }
+
+  /**
+   * Update suggestions based on current input
+   */
+  async function updateSuggestions() {
+    if (!currentInput.trim()) {
+      suggestions = [];
+      showSuggestions = false;
+      cursorPosition = null;
+      return;
+    }
+
+    try {
+      const newSuggestions = await getSuggestions(currentInput, cwd ?? undefined);
+      suggestions = newSuggestions;
+      showSuggestions = newSuggestions.length > 0;
+
+      if (showSuggestions) {
+        updateCursorPosition();
+      }
+    } catch (error) {
+      console.error('Failed to get suggestions:', error);
+      suggestions = [];
+      showSuggestions = false;
+      cursorPosition = null;
+    }
+  }
+
+  /**
+   * Debounced suggestion update
+   */
+  function debouncedUpdateSuggestions() {
+    if (suggestDebounceTimer) {
+      clearTimeout(suggestDebounceTimer);
+    }
+    suggestDebounceTimer = setTimeout(updateSuggestions, 100);
+  }
+
+  /**
+   * Handle input tracking for suggestions
+   */
+  function trackInput(data: string) {
+    // Handle special characters
+    if (data === '\r' || data === '\n') {
+      // Enter pressed - clear input and hide suggestions
+      currentInput = '';
+      showSuggestions = false;
+      return;
+    }
+
+    if (data === '\x7f' || data === '\b') {
+      // Backspace - remove last character
+      currentInput = currentInput.slice(0, -1);
+      debouncedUpdateSuggestions();
+      return;
+    }
+
+    if (data === '\x03') {
+      // Ctrl+C - clear input
+      currentInput = '';
+      showSuggestions = false;
+      return;
+    }
+
+    if (data === '\x1b') {
+      // Escape - hide suggestions
+      showSuggestions = false;
+      return;
+    }
+
+    // Skip other control characters and escape sequences
+    if (data.charCodeAt(0) < 32 || data.startsWith('\x1b')) {
+      return;
+    }
+
+    // Regular character - append to input
+    currentInput += data;
+    debouncedUpdateSuggestions();
+  }
+
+  /**
+   * Accept the current top suggestion
+   */
+  function acceptSuggestion() {
+    if (!terminal || terminalId === null || !topSuggestion) return;
+
+    const suggestion = topSuggestion.text;
+
+    // Check if we're completing a path (input has space)
+    const parts = currentInput.split(/\s+/);
+    const isPathCompletion = topSuggestion.kind === 'path' && parts.length > 1;
+
+    if (isPathCompletion) {
+      // Only complete the remaining part of the path
+      const lastPart = parts[parts.length - 1];
+      if (suggestion.toLowerCase().startsWith(lastPart.toLowerCase())) {
+        const remaining = suggestion.slice(lastPart.length);
+        invoke('write_terminal', { id: terminalId, data: remaining });
+        currentInput = parts.slice(0, -1).join(' ') + ' ' + suggestion;
+      }
+    } else {
+      // Complete the command - just add the remaining part
+      if (suggestion.toLowerCase().startsWith(currentInput.toLowerCase())) {
+        const remaining = suggestion.slice(currentInput.length);
+        invoke('write_terminal', { id: terminalId, data: remaining });
+        currentInput = suggestion;
+      }
+    }
+
+    showSuggestions = false;
+  }
+
   async function initTerminal() {
     // Check if there's an existing terminal instance in the registry
     const existingInstance = terminalRegistry.get(paneId);
@@ -186,12 +357,22 @@
     terminal.loadAddon(new WebLinksAddon());
     terminal.loadAddon(new CanvasAddon());
 
-    // Handle Shift+Enter BEFORE opening terminal
-    // This prevents xterm from processing Enter when Shift is held
+    // Handle keyboard events for suggestions and Shift+Enter
     terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey) {
+      if (event.type !== 'keydown') return true;
+
+      // Handle Shift+Enter
+      if (event.key === 'Enter' && event.shiftKey) {
         return false; // Prevent xterm from processing this key
       }
+
+      // Handle Tab to accept suggestion when visible
+      if (event.key === 'Tab' && showSuggestions && topSuggestion) {
+        event.preventDefault();
+        acceptSuggestion();
+        return false; // Prevent xterm from processing this key
+      }
+
       return true;
     });
 
@@ -242,8 +423,11 @@
         });
       }
 
-      // Send input to PTY
+      // Send input to PTY and track for suggestions
       terminal.onData((data) => {
+        // Track input for suggestions
+        trackInput(data);
+
         if (terminalId !== null) {
           invoke('write_terminal', { id: terminalId, data });
         }
@@ -320,6 +504,9 @@
 
   onMount(() => {
     initTerminal();
+
+    // Preload suggestions in the background
+    preloadSuggestions();
 
     // Use ResizeObserver to detect container size changes
     resizeObserver = new ResizeObserver((entries) => {
@@ -448,8 +635,14 @@
       {/if}
     </div>
   {/if}
-  <div class="terminal-padding">
+  <div class="terminal-padding" bind:this={terminalPadding}>
     <div class="terminal-container" bind:this={terminalContainer}></div>
+    <TerminalSuggest
+      suggestion={topSuggestion}
+      {currentInput}
+      visible={showSuggestions}
+      {cursorPosition}
+    />
   </div>
   <div class="terminal-glow"></div>
   <div class="focus-indicator"></div>
@@ -544,6 +737,7 @@
   }
 
   .terminal-padding {
+    position: relative;
     flex: 1;
     min-height: 0;
     padding: 12px 16px;

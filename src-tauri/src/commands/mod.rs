@@ -3,6 +3,7 @@ pub mod fs;
 pub mod git;
 pub mod menu;
 pub mod search;
+pub mod suggest;
 pub mod terminal;
 pub mod window;
 
@@ -11,5 +12,6 @@ pub use fs::*;
 pub use git::*;
 pub use menu::*;
 pub use search::*;
+pub use suggest::*;
 pub use terminal::*;
 pub use window::*;
