@@ -65,7 +65,7 @@ pub fn get_git_status(path: String) -> Result<GitRepoInfo, String> {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(true)
-        .include_ignored(false);
+        .include_ignored(true);
 
     let statuses = repo.statuses(Some(&mut opts)).map_err(|e| e.to_string())?;
 

@@ -137,7 +137,7 @@
   <button
     class="tree-item"
     class:selected={isSelected}
-    class:hidden-file={entry.is_hidden}
+    class:gitignored={entry.is_gitignored}
     class:directory={entry.is_dir}
     style="padding-left: {paddingLeft}px"
     onclick={handleClick}
@@ -337,7 +337,7 @@
     color: var(--accent-color);
   }
 
-  .tree-item.hidden-file {
+  .tree-item.gitignored {
     opacity: 0.4;
   }
 

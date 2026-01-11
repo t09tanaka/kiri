@@ -1,3 +1,4 @@
+use git2::Repository;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -8,6 +9,20 @@ pub struct FileEntry {
     pub path: String,
     pub is_dir: bool,
     pub is_hidden: bool,
+    pub is_gitignored: bool,
+}
+
+fn find_repo_root(path: &Path) -> Option<String> {
+    let mut current = path;
+    loop {
+        if current.join(".git").exists() {
+            return Some(current.to_string_lossy().to_string());
+        }
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => return None,
+        }
+    }
 }
 
 const EXCLUDED_NAMES: &[&str] = &[
@@ -41,6 +56,9 @@ pub fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
         return Err(format!("Path is not a directory: {}", path.display()));
     }
 
+    // Try to open git repository for gitignore checking
+    let repo = find_repo_root(path).and_then(|root| Repository::open(&root).ok());
+
     let mut entries: Vec<FileEntry> = Vec::new();
 
     let read_dir = fs::read_dir(path).map_err(|e| e.to_string())?;
@@ -56,12 +74,30 @@ pub fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
 
         let file_type = entry.file_type().map_err(|e| e.to_string())?;
         let full_path = entry.path().to_string_lossy().to_string();
+        let is_dir = file_type.is_dir();
+
+        // Check if path is gitignored
+        let is_gitignored = repo.as_ref().map_or(false, |r| {
+            let entry_path = entry.path();
+            if let Ok(repo_path) = entry_path.strip_prefix(r.workdir().unwrap_or(Path::new(""))) {
+                // For directories, append a trailing slash for correct gitignore matching
+                if is_dir {
+                    let dir_path = format!("{}/", repo_path.to_string_lossy());
+                    r.is_path_ignored(&dir_path).unwrap_or(false)
+                } else {
+                    r.is_path_ignored(repo_path).unwrap_or(false)
+                }
+            } else {
+                false
+            }
+        });
 
         entries.push(FileEntry {
             name: file_name.clone(),
             path: full_path,
-            is_dir: file_type.is_dir(),
+            is_dir,
             is_hidden: is_hidden(&file_name),
+            is_gitignored,
         });
     }
 

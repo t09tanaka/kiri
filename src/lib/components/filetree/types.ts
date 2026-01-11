@@ -3,4 +3,5 @@ export interface FileEntry {
   path: string;
   is_dir: boolean;
   is_hidden: boolean;
+  is_gitignored: boolean;
 }
