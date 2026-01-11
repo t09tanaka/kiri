@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import { WebLinksAddon } from '@xterm/addon-web-links';
   import { CanvasAddon } from '@xterm/addon-canvas';
-  import { tabStore } from '@/lib/stores/tabStore';
+  import { tabStore, getAllPaneIds, type TerminalTab } from '@/lib/stores/tabStore';
+  import { terminalRegistry } from '@/lib/stores/terminalRegistry';
   import '@xterm/xterm/css/xterm.css';
 
   interface TerminalOutput {
@@ -82,7 +84,85 @@
     brightWhite: '#f0f4f8',
   };
 
+  /**
+   * Check if this pane still exists in the tab store
+   */
+  function paneExistsInStore(): boolean {
+    const state = get(tabStore);
+    const tab = state.tabs.find((t) => t.id === tabId);
+    if (!tab || tab.type !== 'terminal') return false;
+    const terminalTab = tab as TerminalTab;
+    const allPaneIds = getAllPaneIds(terminalTab.rootPane);
+    return allPaneIds.includes(paneId);
+  }
+
+  /**
+   * Get existing terminal ID from the pane in store
+   */
+  function getExistingTerminalId(): number | null {
+    const state = get(tabStore);
+    const tab = state.tabs.find((t) => t.id === tabId);
+    if (!tab || tab.type !== 'terminal') return null;
+
+    const terminalTab = tab as TerminalTab;
+    const findTerminalId = (pane: typeof terminalTab.rootPane): number | null => {
+      if (pane.type === 'terminal') {
+        if (pane.id === paneId) return pane.terminalId;
+        return null;
+      }
+      for (const child of pane.children) {
+        const result = findTerminalId(child);
+        if (result !== null) return result;
+      }
+      return null;
+    };
+    return findTerminalId(terminalTab.rootPane);
+  }
+
   async function initTerminal() {
+    // Check if there's an existing terminal instance in the registry
+    const existingInstance = terminalRegistry.get(paneId);
+    if (existingInstance) {
+      // Reattach existing terminal to new container
+      terminal = existingInstance.terminal;
+      fitAddon = existingInstance.fitAddon;
+      terminalId = existingInstance.terminalId;
+      unlisten = existingInstance.unlisten;
+
+      // Move the terminal's DOM element to the new container
+      if (terminal.element && terminal.element.parentElement) {
+        // xterm.js manages its own DOM, so we need to manually move it
+        // eslint-disable-next-line svelte/no-dom-manipulating
+        terminalContainer.appendChild(terminal.element);
+      } else {
+        // If element doesn't exist, reopen the terminal
+        terminal.open(terminalContainer);
+      }
+
+      // Fit and focus
+      document.fonts.ready.then(() => {
+        setTimeout(() => {
+          requestAnimationFrame(() => {
+            fitTerminalToContainer();
+            terminal?.focus();
+          });
+        }, 50);
+      });
+
+      // Setup focus tracking for the reattached terminal
+      terminal.textarea?.addEventListener('focus', () => {
+        isFocused = true;
+      });
+      terminal.textarea?.addEventListener('blur', () => {
+        isFocused = false;
+      });
+
+      return;
+    }
+
+    // Check if there's an existing PTY for this pane (from store)
+    const existingTerminalId = getExistingTerminalId();
+
     terminal = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
@@ -133,12 +213,17 @@
       }, 50);
     });
 
-    // Create PTY
+    // Create PTY or reconnect to existing one
     try {
-      terminalId = await invoke<number>('create_terminal', { cwd });
-
-      // Store terminal ID in tab store
-      tabStore.setTerminalId(tabId, paneId, terminalId);
+      if (existingTerminalId !== null) {
+        // Reconnect to existing PTY
+        terminalId = existingTerminalId;
+      } else {
+        // Create new PTY
+        terminalId = await invoke<number>('create_terminal', { cwd });
+        // Store terminal ID in tab store
+        tabStore.setTerminalId(tabId, paneId, terminalId);
+      }
 
       // Listen for terminal output
       unlisten = await listen<TerminalOutput>('terminal-output', (event) => {
@@ -146,6 +231,16 @@
           terminal.write(event.payload.data);
         }
       });
+
+      // Register instance in registry for preservation across remounts
+      if (terminal && fitAddon && terminalId !== null && unlisten) {
+        terminalRegistry.register(paneId, {
+          terminal,
+          fitAddon,
+          terminalId,
+          unlisten,
+        });
+      }
 
       // Send input to PTY
       terminal.onData((data) => {
@@ -264,6 +359,19 @@
     if (resizeObserver) {
       resizeObserver.disconnect();
     }
+
+    // Check if the pane still exists in the store
+    // If it does, this is just a remount due to split - preserve the terminal
+    const paneStillExists = paneExistsInStore();
+
+    if (paneStillExists) {
+      // Pane still exists, terminal will be reattached
+      // Don't dispose anything, keep the instance in the registry
+      return;
+    }
+
+    // Pane is being truly closed - clean up everything
+    terminalRegistry.remove(paneId);
 
     if (unlisten) {
       unlisten();
