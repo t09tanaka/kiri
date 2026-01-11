@@ -617,10 +617,10 @@
     flex-direction: column;
     gap: var(--space-2);
     max-height: 280px;
-    overflow-y: auto;
+    overflow-y: scroll;
     padding-right: var(--space-2);
     scrollbar-width: thin;
-    scrollbar-color: rgba(125, 211, 252, 0.15) transparent;
+    scrollbar-color: rgba(125, 211, 252, 0.2) transparent;
   }
 
   .recent-list::-webkit-scrollbar {
@@ -628,16 +628,17 @@
   }
 
   .recent-list::-webkit-scrollbar-track {
-    background: transparent;
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 3px;
   }
 
   .recent-list::-webkit-scrollbar-thumb {
-    background: rgba(125, 211, 252, 0.15);
+    background: rgba(125, 211, 252, 0.2);
     border-radius: 3px;
   }
 
   .recent-list::-webkit-scrollbar-thumb:hover {
-    background: rgba(125, 211, 252, 0.25);
+    background: rgba(125, 211, 252, 0.35);
   }
 
   .project-wrapper {
