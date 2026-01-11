@@ -9,6 +9,8 @@
   import KeyboardShortcuts from '@/lib/components/ui/KeyboardShortcuts.svelte';
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { tabStore } from '@/lib/stores/tabStore';
+  import { peekStore } from '@/lib/stores/peekStore';
+  import { PeekEditor } from '@/lib/components/peek';
   import { appStore } from '@/lib/stores/appStore';
   import { projectStore, isProjectOpen } from '@/lib/stores/projectStore';
   import {
@@ -401,6 +403,14 @@
 
   {#if $isQuickOpenVisible}
     <QuickOpen onSelect={handleFileSelect} />
+  {/if}
+
+  {#if $peekStore.isOpen && $peekStore.filePath}
+    <PeekEditor
+      filePath={$peekStore.filePath}
+      lineNumber={$peekStore.lineNumber}
+      onClose={() => peekStore.close()}
+    />
   {/if}
 {:else}
   <StartScreen />

@@ -9,6 +9,8 @@
   import { CanvasAddon } from '@xterm/addon-canvas';
   import { tabStore, getAllPaneIds, type TerminalTab } from '@/lib/stores/tabStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
+  import { peekStore } from '@/lib/stores/peekStore';
+  import { createFilePathLinkProvider } from '@/lib/services/filePathLinkProvider';
   import {
     getSuggestions,
     preloadSuggestions,
@@ -356,6 +358,13 @@
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(new WebLinksAddon());
     terminal.loadAddon(new CanvasAddon());
+
+    // Register file path link provider for peek editor
+    terminal.registerLinkProvider(
+      createFilePathLinkProvider(terminal, (path, line, column) => {
+        peekStore.open(path, line, column);
+      })
+    );
 
     // Handle keyboard events for suggestions and Shift+Enter
     terminal.attachCustomKeyEventHandler((event) => {
