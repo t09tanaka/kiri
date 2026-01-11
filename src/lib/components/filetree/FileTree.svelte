@@ -17,6 +17,10 @@
   let selectedPath = $state<string | null>(null);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  let projectExpanded = $state(true);
+
+  // Extract project name from rootPath
+  const projectName = $derived(rootPath ? rootPath.split('/').pop() || rootPath : null);
 
   async function loadRootDirectory() {
     loading = true;
@@ -84,33 +88,62 @@
       </svg>
       <span>{error}</span>
     </div>
-  {:else if entries.length === 0}
-    <div class="empty">
-      <svg
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="1.5"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-      </svg>
-      <span>Empty directory</span>
-    </div>
   {:else}
     <div class="tree-content">
-      {#each entries as entry (entry.path)}
-        <FileTreeItem
-          {entry}
-          {selectedPath}
-          onSelect={handleSelect}
-          gitStatusMap={$gitStatusMap}
-          repoRoot={$gitStore.repoInfo?.root ?? ''}
-        />
-      {/each}
+      {#if projectName}
+        <button
+          class="project-header"
+          class:expanded={projectExpanded}
+          onclick={() => (projectExpanded = !projectExpanded)}
+          title={rootPath}
+        >
+          <svg
+            class="chevron"
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+          <span class="project-name">{projectName}</span>
+        </button>
+      {/if}
+      {#if projectExpanded}
+        {#if entries.length === 0}
+          <div class="empty">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+              />
+            </svg>
+            <span>Empty directory</span>
+          </div>
+        {:else}
+          {#each entries as entry (entry.path)}
+            <FileTreeItem
+              {entry}
+              {selectedPath}
+              onSelect={handleSelect}
+              gitStatusMap={$gitStatusMap}
+              repoRoot={$gitStore.repoInfo?.root ?? ''}
+            />
+          {/each}
+        {/if}
+      {/if}
     </div>
   {/if}
 </div>
@@ -168,6 +201,57 @@
   .tree-content {
     padding: var(--space-1) 0;
     animation: treeContentFadeIn 0.3s ease-out;
+  }
+
+  .project-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    width: 100%;
+    padding: 6px var(--space-2);
+    margin-bottom: 2px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--font-sans);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    text-align: left;
+  }
+
+  .project-header:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+  }
+
+  .project-header:active {
+    background: var(--bg-active);
+  }
+
+  .project-header .chevron {
+    flex-shrink: 0;
+    transition: transform var(--transition-fast);
+    opacity: 0.6;
+  }
+
+  .project-header.expanded .chevron {
+    transform: rotate(90deg);
+  }
+
+  .project-header:hover .chevron {
+    opacity: 1;
+  }
+
+  .project-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   @keyframes treeContentFadeIn {
