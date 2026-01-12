@@ -1,24 +1,50 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
   <defs>
-    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#64d2ff"/>
-      <stop offset="50%" stop-color="#5ac8fa"/>
-      <stop offset="100%" stop-color="#bf5af2"/>
+    <linearGradient id="mistGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#64d2ff" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#bf5af2" stop-opacity="0.7"/>
     </linearGradient>
-    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
       <feMerge>
-        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="blur"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
-    <radialGradient id="innerGlow" cx="50%" cy="50%" r="50%">
+    <radialGradient id="bgGlow" cx="50%" cy="70%" r="60%">
       <stop offset="0%" stop-color="#64d2ff" stop-opacity="0.15"/>
       <stop offset="100%" stop-color="#64d2ff" stop-opacity="0"/>
     </radialGradient>
   </defs>
+  <!-- Background -->
   <rect width="48" height="48" rx="10" fill="#080b10"/>
-  <circle cx="24" cy="24" r="18" fill="url(#innerGlow)"/>
-  <path d="M24 8L10 16v16l14 8 14-8V16L24 8z" stroke="url(#grad)" stroke-width="2" fill="none" filter="url(#glow)"/>
-  <circle cx="24" cy="24" r="5" fill="url(#grad)" filter="url(#glow)"/>
+  <!-- Inner glow -->
+  <circle cx="24" cy="30" r="20" fill="url(#bgGlow)"/>
+  <!-- Mountain silhouette -->
+  <path
+    d="M8 36 L16 22 L20 28 L28 16 L36 26 L40 36"
+    stroke="url(#mistGradient)"
+    stroke-width="2"
+    fill="none"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    filter="url(#softGlow)"
+  />
+  <!-- Mist layers -->
+  <path
+    d="M4 38 Q12 35 24 37 Q36 35 44 38"
+    stroke="#64d2ff"
+    stroke-width="1.2"
+    fill="none"
+    opacity="0.5"
+    stroke-linecap="round"
+  />
+  <path
+    d="M6 42 Q18 39 30 41 Q42 39 46 42"
+    stroke="#bf5af2"
+    stroke-width="1"
+    fill="none"
+    opacity="0.3"
+    stroke-linecap="round"
+  />
 </svg>
