@@ -1,7 +1,12 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import type { FileEntry } from './types';
-  import { type GitFileStatus, getStatusIcon, getStatusColor } from '@/lib/stores/gitStore';
+  import {
+    type GitFileStatus,
+    getStatusIcon,
+    getStatusColor,
+    getDirectoryStatusColor,
+  } from '@/lib/stores/gitStore';
   import { getFileIconInfo, getFolderColor } from '@/lib/utils/fileIcons';
   import ContextMenu, { type MenuItem } from '@/lib/components/ui/ContextMenu.svelte';
   import FileTreeItem from './FileTreeItem.svelte';
@@ -39,13 +44,27 @@
   const fileIconInfo = $derived(getFileIconInfo(entry.name));
   const folderColor = $derived(getFolderColor(expanded));
 
-  const gitStatus = $derived(() => {
-    if (!repoRoot || !entry.path.startsWith(repoRoot)) return null;
-    const relativePath = entry.path.slice(repoRoot.length + 1);
-    return gitStatusMap.get(relativePath) ?? null;
+  const relativePath = $derived(() => {
+    if (!repoRoot || !entry.path.startsWith(repoRoot)) return '';
+    return entry.path.slice(repoRoot.length + 1);
   });
+
+  const gitStatus = $derived(() => {
+    const path = relativePath();
+    if (!path) return null;
+    return gitStatusMap.get(path) ?? null;
+  });
+
   const statusIcon = $derived(gitStatus() ? getStatusIcon(gitStatus()!) : '');
-  const statusColor = $derived(gitStatus() ? getStatusColor(gitStatus()!) : '');
+
+  // For files, use direct status color. For directories, check children.
+  const statusColor = $derived(() => {
+    if (entry.is_dir) {
+      const path = relativePath();
+      return getDirectoryStatusColor(path, gitStatusMap);
+    }
+    return gitStatus() ? getStatusColor(gitStatus()!) : '';
+  });
 
   async function toggleExpand() {
     if (!entry.is_dir) return;
@@ -189,9 +208,11 @@
         </svg>
       </span>
     {/if}
-    <span class="name">{entry.name}</span>
+    <span class="name" class:git-modified={statusColor()} style:color={statusColor() || null}
+      >{entry.name}</span
+    >
     {#if statusIcon}
-      <span class="git-status" style="color: {statusColor}">{statusIcon}</span>
+      <span class="git-status" style="color: {statusColor()}">{statusIcon}</span>
     {/if}
     {#if loading}
       <span class="loading">
@@ -290,7 +311,7 @@
     background: var(--bg-tertiary);
   }
 
-  .tree-item:hover .name {
+  .tree-item:hover .name:not(.git-modified) {
     color: var(--accent-color);
   }
 
@@ -315,7 +336,7 @@
     border-radius: 1px;
   }
 
-  .tree-item.selected .name {
+  .tree-item.selected .name:not(.git-modified) {
     color: var(--accent-color);
   }
 

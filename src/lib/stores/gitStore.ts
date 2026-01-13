@@ -190,3 +190,38 @@ export function getStatusColor(status: GitFileStatus): string {
       return 'inherit';
   }
 }
+
+// Priority order for status (higher = more important)
+const STATUS_PRIORITY: Record<GitFileStatus, number> = {
+  Conflicted: 6,
+  Deleted: 5,
+  Modified: 4,
+  Added: 3,
+  Renamed: 2,
+  Untracked: 1,
+  Ignored: 0,
+};
+
+export function getDirectoryStatusColor(
+  dirRelativePath: string,
+  gitStatusMap: Map<string, GitFileStatus>
+): string {
+  let highestPriorityStatus: GitFileStatus | null = null;
+  let highestPriority = -1;
+
+  // Ensure path ends with separator for proper prefix matching
+  const prefix = dirRelativePath ? dirRelativePath + '/' : '';
+
+  for (const [filePath, status] of gitStatusMap) {
+    // Check if file is inside this directory
+    if (filePath.startsWith(prefix) || (prefix === '' && filePath.length > 0)) {
+      const priority = STATUS_PRIORITY[status] ?? 0;
+      if (priority > highestPriority) {
+        highestPriority = priority;
+        highestPriorityStatus = status;
+      }
+    }
+  }
+
+  return highestPriorityStatus ? getStatusColor(highestPriorityStatus) : '';
+}
