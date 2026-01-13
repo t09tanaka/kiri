@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import FileTreeItem from './FileTreeItem.svelte';
   import type { FileEntry } from './types';
   import { gitStore, gitStatusMap } from '@/lib/stores/gitStore';
@@ -19,11 +20,19 @@
   let error = $state<string | null>(null);
   let projectExpanded = $state(true);
 
+  // Watcher state
+  let unlistenFs: UnlistenFn | null = null;
+  let unlistenGit: UnlistenFn | null = null;
+  let currentWatchPath: string | null = null;
+  let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Extract project name from rootPath
   const projectName = $derived(rootPath ? rootPath.split('/').pop() || rootPath : null);
 
-  async function loadRootDirectory() {
-    loading = true;
+  async function loadRootDirectory(showLoading = true) {
+    if (showLoading) {
+      loading = true;
+    }
     error = null;
 
     try {
@@ -48,14 +57,85 @@
     onFileSelect?.(path);
   }
 
+  // Debounced refresh to avoid rapid updates
+  function scheduleRefresh() {
+    if (refreshDebounceTimer) {
+      clearTimeout(refreshDebounceTimer);
+    }
+    refreshDebounceTimer = setTimeout(() => {
+      loadRootDirectory(false); // Don't show loading state on refresh
+    }, 100);
+  }
+
+  async function setupWatcher(path: string) {
+    if (!path || currentWatchPath === path) return;
+
+    // Cleanup previous watcher
+    await cleanupWatcher();
+
+    try {
+      // Start watching
+      await invoke('start_watching', { path });
+      currentWatchPath = path;
+
+      // Listen for file system changes
+      unlistenFs = await listen<{ path: string }>('fs-changed', (event) => {
+        if (event.payload.path === path) {
+          scheduleRefresh();
+        }
+      });
+
+      // Listen for git status changes
+      unlistenGit = await listen<{ repo_root: string }>('git-status-changed', (event) => {
+        if (path.startsWith(event.payload.repo_root)) {
+          gitStore.refresh(path);
+        }
+      });
+    } catch (err) {
+      console.error('Failed to setup watcher:', err);
+    }
+  }
+
+  async function cleanupWatcher() {
+    if (refreshDebounceTimer) {
+      clearTimeout(refreshDebounceTimer);
+      refreshDebounceTimer = null;
+    }
+
+    if (unlistenFs) {
+      unlistenFs();
+      unlistenFs = null;
+    }
+
+    if (unlistenGit) {
+      unlistenGit();
+      unlistenGit = null;
+    }
+
+    if (currentWatchPath) {
+      await invoke('stop_watching', { path: currentWatchPath }).catch(() => {});
+      currentWatchPath = null;
+    }
+  }
+
   onMount(() => {
     loadRootDirectory();
+    if (rootPath) {
+      setupWatcher(rootPath);
+    }
+  });
+
+  onDestroy(() => {
+    cleanupWatcher();
   });
 
   // Reload when rootPath changes
   $effect(() => {
     if (rootPath !== undefined) {
       loadRootDirectory();
+      if (rootPath) {
+        setupWatcher(rootPath);
+      }
     }
   });
 </script>

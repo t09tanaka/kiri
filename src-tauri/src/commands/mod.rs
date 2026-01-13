@@ -5,6 +5,7 @@ pub mod menu;
 pub mod search;
 pub mod suggest;
 pub mod terminal;
+pub mod watcher;
 pub mod window;
 
 pub use file::*;
@@ -14,4 +15,5 @@ pub use menu::*;
 pub use search::*;
 pub use suggest::*;
 pub use terminal::*;
+pub use watcher::*;
 pub use window::*;

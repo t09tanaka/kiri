@@ -4,8 +4,9 @@ use commands::{
     close_terminal, create_terminal, create_window, get_all_git_diffs, get_command_history,
     get_file_suggestions, get_git_diff, get_git_file_status, get_git_status, get_home_directory,
     get_path_commands, get_window_geometry, read_directory, read_file, resize_terminal,
-    reveal_in_finder, search_content, search_files, set_window_geometry, setup_menu, write_file,
-    write_terminal, TerminalState,
+    reveal_in_finder, search_content, search_files, set_window_geometry, setup_menu,
+    start_watching, stop_all_watching, stop_watching, write_file, write_terminal, TerminalState,
+    WatcherState,
 };
 use std::sync::{Arc, Mutex};
 
@@ -15,6 +16,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(Arc::new(Mutex::new(commands::TerminalManager::new())) as TerminalState)
+        .manage(Arc::new(Mutex::new(commands::WatcherManager::new())) as WatcherState)
         .setup(|app| {
             // Setup menu bar
             setup_menu(app)?;
@@ -52,6 +54,9 @@ pub fn run() {
             get_path_commands,
             get_command_history,
             get_file_suggestions,
+            start_watching,
+            stop_watching,
+            stop_all_watching,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
