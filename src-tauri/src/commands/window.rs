@@ -125,12 +125,77 @@ pub fn set_window_geometry(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+    use std::sync::Arc;
+    use std::thread;
 
     #[test]
     fn test_window_counter_increments() {
-        let initial = WINDOW_COUNTER.load(Ordering::SeqCst);
-        WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let next = WINDOW_COUNTER.load(Ordering::SeqCst);
-        assert_eq!(next, initial + 1);
+        // fetch_add returns the previous value and atomically increments
+        let prev = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let current = WINDOW_COUNTER.load(Ordering::SeqCst);
+        // current should be at least prev + 1 (other tests may also increment)
+        assert!(current > prev);
+    }
+
+    #[test]
+    fn test_diffview_counter_increments() {
+        // fetch_add returns the previous value and atomically increments
+        let prev = DIFFVIEW_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let current = DIFFVIEW_COUNTER.load(Ordering::SeqCst);
+        // current should be at least prev + 1 (other tests may also increment)
+        assert!(current > prev);
+    }
+
+    #[test]
+    fn test_window_counter_is_atomic() {
+        // Test atomicity by verifying all fetch_add calls return unique values
+        // This proves no race conditions occur
+        let results = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let results = Arc::clone(&results);
+                thread::spawn(move || {
+                    let prev = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
+                    results.lock().unwrap().push(prev);
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // All returned values should be unique (no two threads got same value)
+        let results = results.lock().unwrap();
+        let unique: HashSet<_> = results.iter().collect();
+        assert_eq!(unique.len(), 10, "All fetch_add results should be unique");
+    }
+
+    #[test]
+    fn test_diffview_counter_is_atomic() {
+        // Test atomicity by verifying all fetch_add calls return unique values
+        // This proves no race conditions occur
+        let results = Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let results = Arc::clone(&results);
+                thread::spawn(move || {
+                    let prev = DIFFVIEW_COUNTER.fetch_add(1, Ordering::SeqCst);
+                    results.lock().unwrap().push(prev);
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // All returned values should be unique (no two threads got same value)
+        let results = results.lock().unwrap();
+        let unique: HashSet<_> = results.iter().collect();
+        assert_eq!(unique.len(), 10, "All fetch_add results should be unique");
     }
 }

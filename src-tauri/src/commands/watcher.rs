@@ -1,11 +1,8 @@
-use notify::RecursiveMode;
-use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEventKind};
+use notify_debouncer_mini::DebouncedEventKind;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FsChangeEvent {
@@ -17,14 +14,74 @@ pub struct GitChangeEvent {
     pub repo_root: String,
 }
 
-struct WatcherInstance {
+/// Result of classifying a file path for event handling
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathClassification {
+    /// The path is inside .git directory
+    GitPath,
+    /// The path is a regular file system path
+    FsPath,
+}
+
+/// Classify a path to determine if it's a git-related path or a regular fs path
+pub fn classify_path(path: &str) -> PathClassification {
+    if path.contains("/.git/") || path.ends_with("/.git") {
+        PathClassification::GitPath
+    } else {
+        PathClassification::FsPath
+    }
+}
+
+/// Result of processing debounced events
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EventClassificationResult {
+    pub fs_changed: bool,
+    pub git_changed: bool,
+}
+
+/// Process a list of debounced events and classify them
+pub fn classify_events<'a, I>(events: I) -> EventClassificationResult
+where
+    I: IntoIterator<Item = &'a notify_debouncer_mini::DebouncedEvent>,
+{
+    let mut result = EventClassificationResult::default();
+
+    for event in events {
+        let path_str = event.path.to_string_lossy();
+
+        match classify_path(&path_str) {
+            PathClassification::GitPath => {
+                // Only trigger git change on specific events
+                if matches!(event.kind, DebouncedEventKind::Any) {
+                    result.git_changed = true;
+                }
+            }
+            PathClassification::FsPath => {
+                result.fs_changed = true;
+            }
+        }
+    }
+
+    result
+}
+
+/// Check if a path exists
+pub fn path_exists(path: &str) -> bool {
+    PathBuf::from(path).exists()
+}
+
+/// Default debounce duration in milliseconds
+pub const DEFAULT_DEBOUNCE_MS: u64 = 300;
+
+pub struct WatcherInstance {
     #[allow(dead_code)]
-    debouncer: notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
-    root_path: PathBuf,
+    pub debouncer: notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
+    #[allow(dead_code)]
+    pub root_path: PathBuf,
 }
 
 pub struct WatcherManager {
-    instances: HashMap<String, WatcherInstance>,
+    pub instances: HashMap<String, WatcherInstance>,
 }
 
 impl WatcherManager {
@@ -32,6 +89,11 @@ impl WatcherManager {
         Self {
             instances: HashMap::new(),
         }
+    }
+
+    /// Check if a path is being watched
+    pub fn is_watching(&self, path: &str) -> bool {
+        self.instances.contains_key(path)
     }
 }
 
@@ -43,108 +105,194 @@ impl Default for WatcherManager {
 
 pub type WatcherState = Arc<Mutex<WatcherManager>>;
 
-#[tauri::command]
-pub fn start_watching(
-    app: AppHandle,
-    state: tauri::State<'_, WatcherState>,
-    path: String,
-) -> Result<(), String> {
-    let root_path = PathBuf::from(&path);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use notify_debouncer_mini::DebouncedEvent;
 
-    if !root_path.exists() {
-        return Err(format!("Path does not exist: {}", path));
+    #[test]
+    fn test_watcher_manager_new() {
+        let manager = WatcherManager::new();
+        assert!(manager.instances.is_empty());
     }
 
-    let mut manager = state.lock().map_err(|e| e.to_string())?;
-
-    // Already watching this path
-    if manager.instances.contains_key(&path) {
-        return Ok(());
+    #[test]
+    fn test_watcher_manager_default() {
+        let manager = WatcherManager::default();
+        assert!(manager.instances.is_empty());
     }
 
-    let app_handle = app.clone();
-    let watched_path = path.clone();
-
-    // Create debounced watcher with 300ms delay
-    let mut debouncer = new_debouncer(
-        Duration::from_millis(300),
-        move |result: DebounceEventResult| {
-            if let Ok(events) = result {
-                let mut fs_changed = false;
-                let mut git_changed = false;
-
-                for event in events {
-                    let path_str = event.path.to_string_lossy().to_string();
-
-                    // Check if this is a git-related change
-                    if path_str.contains("/.git/") || path_str.ends_with("/.git") {
-                        // Only trigger git change on specific events
-                        if matches!(event.kind, DebouncedEventKind::Any) {
-                            git_changed = true;
-                        }
-                    } else {
-                        fs_changed = true;
-                    }
-                }
-
-                // Emit consolidated events
-                if fs_changed {
-                    let _ = app_handle.emit(
-                        "fs-changed",
-                        FsChangeEvent {
-                            path: watched_path.clone(),
-                        },
-                    );
-                }
-
-                if git_changed {
-                    let _ = app_handle.emit(
-                        "git-status-changed",
-                        GitChangeEvent {
-                            repo_root: watched_path.clone(),
-                        },
-                    );
-                }
-            }
-        },
-    )
-    .map_err(|e| e.to_string())?;
-
-    // Start watching the directory recursively
-    debouncer
-        .watcher()
-        .watch(&root_path, RecursiveMode::Recursive)
-        .map_err(|e| e.to_string())?;
-
-    manager.instances.insert(
-        path,
-        WatcherInstance {
-            debouncer,
-            root_path,
-        },
-    );
-
-    Ok(())
-}
-
-#[tauri::command]
-pub fn stop_watching(state: tauri::State<'_, WatcherState>, path: String) -> Result<(), String> {
-    let mut manager = state.lock().map_err(|e| e.to_string())?;
-
-    if manager.instances.remove(&path).is_some() {
-        log::info!("Stopped watching: {}", path);
+    #[test]
+    fn test_watcher_manager_is_watching() {
+        let manager = WatcherManager::new();
+        assert!(!manager.is_watching("/some/path"));
     }
 
-    Ok(())
-}
+    #[test]
+    fn test_fs_change_event_struct() {
+        let event = FsChangeEvent {
+            path: "/path/to/file".to_string(),
+        };
+        assert_eq!(event.path, "/path/to/file");
+    }
 
-#[tauri::command]
-pub fn stop_all_watching(state: tauri::State<'_, WatcherState>) -> Result<(), String> {
-    let mut manager = state.lock().map_err(|e| e.to_string())?;
+    #[test]
+    fn test_fs_change_event_clone() {
+        let event = FsChangeEvent {
+            path: "/path/to/file".to_string(),
+        };
+        let cloned = event.clone();
+        assert_eq!(cloned.path, event.path);
+    }
 
-    let count = manager.instances.len();
-    manager.instances.clear();
-    log::info!("Stopped all watchers ({})", count);
+    #[test]
+    fn test_git_change_event_struct() {
+        let event = GitChangeEvent {
+            repo_root: "/path/to/repo".to_string(),
+        };
+        assert_eq!(event.repo_root, "/path/to/repo");
+    }
 
-    Ok(())
+    #[test]
+    fn test_git_change_event_clone() {
+        let event = GitChangeEvent {
+            repo_root: "/path/to/repo".to_string(),
+        };
+        let cloned = event.clone();
+        assert_eq!(cloned.repo_root, event.repo_root);
+    }
+
+    #[test]
+    fn test_classify_path_git_internal() {
+        assert_eq!(
+            classify_path("/repo/.git/objects/abc"),
+            PathClassification::GitPath
+        );
+        assert_eq!(
+            classify_path("/repo/.git/HEAD"),
+            PathClassification::GitPath
+        );
+        assert_eq!(
+            classify_path("/repo/.git/index"),
+            PathClassification::GitPath
+        );
+    }
+
+    #[test]
+    fn test_classify_path_git_root() {
+        assert_eq!(classify_path("/repo/.git"), PathClassification::GitPath);
+    }
+
+    #[test]
+    fn test_classify_path_regular_file() {
+        assert_eq!(
+            classify_path("/repo/src/main.rs"),
+            PathClassification::FsPath
+        );
+        assert_eq!(
+            classify_path("/repo/README.md"),
+            PathClassification::FsPath
+        );
+        assert_eq!(classify_path("/home/user/file.txt"), PathClassification::FsPath);
+    }
+
+    #[test]
+    fn test_classify_path_gitignore() {
+        // .gitignore is NOT inside .git directory, so it's a regular file
+        assert_eq!(classify_path("/repo/.gitignore"), PathClassification::FsPath);
+    }
+
+    #[test]
+    fn test_classify_events_empty() {
+        let events: Vec<DebouncedEvent> = vec![];
+        let result = classify_events(events.iter());
+        assert!(!result.fs_changed);
+        assert!(!result.git_changed);
+    }
+
+    #[test]
+    fn test_classify_events_fs_only() {
+        let events = vec![
+            DebouncedEvent {
+                path: PathBuf::from("/repo/src/main.rs"),
+                kind: DebouncedEventKind::Any,
+            },
+            DebouncedEvent {
+                path: PathBuf::from("/repo/README.md"),
+                kind: DebouncedEventKind::Any,
+            },
+        ];
+        let result = classify_events(events.iter());
+        assert!(result.fs_changed);
+        assert!(!result.git_changed);
+    }
+
+    #[test]
+    fn test_classify_events_git_only() {
+        let events = vec![
+            DebouncedEvent {
+                path: PathBuf::from("/repo/.git/index"),
+                kind: DebouncedEventKind::Any,
+            },
+            DebouncedEvent {
+                path: PathBuf::from("/repo/.git/HEAD"),
+                kind: DebouncedEventKind::Any,
+            },
+        ];
+        let result = classify_events(events.iter());
+        assert!(!result.fs_changed);
+        assert!(result.git_changed);
+    }
+
+    #[test]
+    fn test_classify_events_mixed() {
+        let events = vec![
+            DebouncedEvent {
+                path: PathBuf::from("/repo/src/main.rs"),
+                kind: DebouncedEventKind::Any,
+            },
+            DebouncedEvent {
+                path: PathBuf::from("/repo/.git/index"),
+                kind: DebouncedEventKind::Any,
+            },
+        ];
+        let result = classify_events(events.iter());
+        assert!(result.fs_changed);
+        assert!(result.git_changed);
+    }
+
+    #[test]
+    fn test_classify_events_git_continuous_event() {
+        // AnyContinuous events should not trigger git_changed
+        let events = vec![DebouncedEvent {
+            path: PathBuf::from("/repo/.git/index"),
+            kind: DebouncedEventKind::AnyContinuous,
+        }];
+        let result = classify_events(events.iter());
+        assert!(!result.fs_changed);
+        assert!(!result.git_changed);
+    }
+
+    #[test]
+    fn test_path_exists_valid() {
+        assert!(path_exists("/tmp"));
+        assert!(path_exists("/"));
+    }
+
+    #[test]
+    fn test_path_exists_invalid() {
+        assert!(!path_exists("/nonexistent/path/that/does/not/exist"));
+    }
+
+    #[test]
+    fn test_default_debounce_ms() {
+        assert_eq!(DEFAULT_DEBOUNCE_MS, 300);
+    }
+
+    #[test]
+    fn test_event_classification_result_default() {
+        let result = EventClassificationResult::default();
+        assert!(!result.fs_changed);
+        assert!(!result.git_changed);
+    }
 }

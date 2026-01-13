@@ -750,7 +750,12 @@
   });
 </script>
 
-<div class="terminal-wrapper" class:focused={isFocused} bind:this={terminalWrapper}>
+<div
+  class="terminal-wrapper"
+  data-testid="terminal"
+  class:focused={isFocused}
+  bind:this={terminalWrapper}
+>
   {#if showControls}
     <div class="terminal-controls">
       <button

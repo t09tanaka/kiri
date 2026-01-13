@@ -32,7 +32,7 @@
   }
 </script>
 
-<aside class="sidebar" style="width: {width}px">
+<aside class="sidebar" data-testid="sidebar" style="width: {width}px">
   <div class="sidebar-header">
     <div class="header-icon">
       <svg

@@ -140,7 +140,7 @@
   });
 </script>
 
-<div class="file-tree">
+<div class="file-tree" data-testid="file-tree">
   {#if loading}
     <div class="loading-skeleton">
       {#each Array(6) as _, i (i)}

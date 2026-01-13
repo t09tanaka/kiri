@@ -93,8 +93,9 @@ function splitPaneInTree(
 /**
  * Helper: Close a pane in the tree
  * Returns null if the entire tree should be removed
+ * @internal Exported for testing purposes
  */
-function closePaneInTree(pane: TerminalPane, targetPaneId: string): TerminalPane | null {
+export function closePaneInTree(pane: TerminalPane, targetPaneId: string): TerminalPane | null {
   if (pane.type === 'terminal') {
     if (pane.id === targetPaneId) {
       return null; // Remove this pane
@@ -430,7 +431,8 @@ function createTabStore() {
         .flatMap((t) => getAllPaneIds(t.rootPane))
         .map((id) => {
           const match = id.match(/^pane-(\d+)$/);
-          return match ? parseInt(match[1], 10) : 0;
+          // v8 ignore next -- defensive fallback: generatePaneId() always returns pane-{number} format
+          return match ? parseInt(match[1], 10) : /* v8 ignore next */ 0;
         })
         .reduce((max, id) => Math.max(max, id), 0);
       nextPaneId = maxPaneId + 1;

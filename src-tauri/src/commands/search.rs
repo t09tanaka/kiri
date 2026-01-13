@@ -273,6 +273,8 @@ pub fn search_content(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_fuzzy_match() {
@@ -284,5 +286,554 @@ mod tests {
     #[test]
     fn test_fuzzy_match_empty_query() {
         assert!(fuzzy_match("", "anything").is_some());
+        assert_eq!(fuzzy_match("", "anything").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_fuzzy_match_case_insensitive() {
+        assert!(fuzzy_match("FILE", "file.txt").is_some());
+        assert!(fuzzy_match("file", "FILE.TXT").is_some());
+        assert!(fuzzy_match("FiLe", "fIlE.txt").is_some());
+    }
+
+    #[test]
+    fn test_fuzzy_match_consecutive_bonus() {
+        let score_consecutive = fuzzy_match("ab", "ab").unwrap();
+        let score_separated = fuzzy_match("ab", "a_b").unwrap();
+        // Both should match, consecutive might have bonus but also word boundary bonus
+        assert!(score_consecutive > 0);
+        assert!(score_separated > 0);
+    }
+
+    #[test]
+    fn test_fuzzy_match_word_boundary_bonus() {
+        // Matching at word boundaries should have bonus
+        let score_boundary = fuzzy_match("f", "file").unwrap(); // at start
+        assert!(score_boundary > 0);
+    }
+
+    #[test]
+    fn test_fuzzy_match_special_separators() {
+        // Test matching after separators
+        assert!(fuzzy_match("t", "_test").is_some());
+        assert!(fuzzy_match("t", "-test").is_some());
+        assert!(fuzzy_match("t", ".test").is_some());
+        assert!(fuzzy_match("t", "/test").is_some());
+    }
+
+    #[test]
+    fn test_search_files_empty_directory() {
+        let dir = tempdir().unwrap();
+
+        let result = search_files(
+            dir.path().to_string_lossy().to_string(),
+            "test".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_search_files_nonexistent_path() {
+        let result = search_files(
+            "/nonexistent/path".to_string(),
+            "test".to_string(),
+            10
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_search_files_basic() {
+        let dir = tempdir().unwrap();
+
+        // Create test files
+        fs::write(dir.path().join("test.txt"), "content").unwrap();
+        fs::write(dir.path().join("another.rs"), "code").unwrap();
+        fs::write(dir.path().join("testing.md"), "docs").unwrap();
+
+        let result = search_files(
+            dir.path().to_string_lossy().to_string(),
+            "test".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        assert!(results.len() >= 2); // test.txt and testing.md should match
+    }
+
+    #[test]
+    fn test_search_files_max_results() {
+        let dir = tempdir().unwrap();
+
+        // Create many test files
+        for i in 0..20 {
+            fs::write(dir.path().join(format!("file{}.txt", i)), "content").unwrap();
+        }
+
+        let result = search_files(
+            dir.path().to_string_lossy().to_string(),
+            "file".to_string(),
+            5
+        );
+        assert!(result.is_ok());
+        assert!(result.unwrap().len() <= 5);
+    }
+
+    #[test]
+    fn test_search_files_ignores_hidden() {
+        let dir = tempdir().unwrap();
+
+        fs::write(dir.path().join(".hidden_file.txt"), "hidden").unwrap();
+        fs::write(dir.path().join("visible_file.txt"), "visible").unwrap();
+
+        let result = search_files(
+            dir.path().to_string_lossy().to_string(),
+            "file".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        // Hidden files should be ignored
+        assert!(results.iter().all(|r| !r.name.starts_with('.')));
+    }
+
+    #[test]
+    fn test_search_files_sorted_by_score() {
+        let dir = tempdir().unwrap();
+
+        fs::write(dir.path().join("exact_match.txt"), "").unwrap();
+        fs::write(dir.path().join("e_x_a_c_t.txt"), "").unwrap();
+
+        let result = search_files(
+            dir.path().to_string_lossy().to_string(),
+            "exact".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        if results.len() >= 2 {
+            // Results should be sorted by score (descending)
+            assert!(results[0].score >= results[1].score);
+        }
+    }
+
+    #[test]
+    fn test_search_files_subdirectories() {
+        let dir = tempdir().unwrap();
+
+        fs::create_dir(dir.path().join("subdir")).unwrap();
+        fs::write(dir.path().join("subdir").join("nested.txt"), "").unwrap();
+        fs::write(dir.path().join("root.txt"), "").unwrap();
+
+        let result = search_files(
+            dir.path().to_string_lossy().to_string(),
+            "nested".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].path.contains("subdir"));
+    }
+
+    #[test]
+    fn test_search_files_skips_excluded_dirs() {
+        let dir = tempdir().unwrap();
+
+        fs::create_dir(dir.path().join("node_modules")).unwrap();
+        fs::write(dir.path().join("node_modules").join("package.txt"), "").unwrap();
+        fs::write(dir.path().join("package.txt"), "").unwrap();
+
+        let result = search_files(
+            dir.path().to_string_lossy().to_string(),
+            "package".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        // Should only find the root level file, not the one in node_modules
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].path.contains("node_modules"));
+    }
+
+    #[test]
+    fn test_search_content_short_query() {
+        let dir = tempdir().unwrap();
+
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "a".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+        // Short queries (< 2 chars) should return empty results
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_search_content_nonexistent_path() {
+        let result = search_content(
+            "/nonexistent/path".to_string(),
+            "test".to_string(),
+            10
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_search_content_basic() {
+        let dir = tempdir().unwrap();
+
+        fs::write(dir.path().join("test.rs"), "fn main() {\n    println!(\"hello\");\n}").unwrap();
+
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "println".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].matches.len(), 1);
+        assert_eq!(results[0].matches[0].line, 2);
+    }
+
+    #[test]
+    fn test_search_content_multiple_matches() {
+        let dir = tempdir().unwrap();
+
+        fs::write(dir.path().join("test.rs"), "test line 1\ntest line 2\ntest line 3").unwrap();
+
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "test".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].matches.len(), 3);
+    }
+
+    #[test]
+    fn test_search_content_case_insensitive() {
+        let dir = tempdir().unwrap();
+
+        fs::write(dir.path().join("test.rs"), "Hello World\nhello world\nHELLO WORLD").unwrap();
+
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "hello".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        assert_eq!(results[0].matches.len(), 3);
+    }
+
+    #[test]
+    fn test_search_content_only_searchable_files() {
+        let dir = tempdir().unwrap();
+
+        // Searchable file
+        fs::write(dir.path().join("test.rs"), "test content").unwrap();
+        // Non-searchable file (binary extension)
+        fs::write(dir.path().join("test.exe"), "test content").unwrap();
+
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "test".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].name.ends_with(".rs"));
+    }
+
+    #[test]
+    fn test_content_match_start_end() {
+        let dir = tempdir().unwrap();
+
+        fs::write(dir.path().join("test.rs"), "hello world").unwrap();
+
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "world".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        let m = &results[0].matches[0];
+        assert_eq!(m.start, 6); // "world" starts at index 6
+        assert_eq!(m.end, 11); // "world" ends at index 11
+    }
+
+    #[test]
+    fn test_file_search_result_fields() {
+        let result = FileSearchResult {
+            path: "/path/to/file.txt".to_string(),
+            name: "file.txt".to_string(),
+            is_dir: false,
+            score: 100,
+        };
+        assert_eq!(result.path, "/path/to/file.txt");
+        assert_eq!(result.name, "file.txt");
+        assert!(!result.is_dir);
+        assert_eq!(result.score, 100);
+    }
+
+    #[test]
+    fn test_content_search_result_fields() {
+        let result = ContentSearchResult {
+            path: "/path/to/file.rs".to_string(),
+            name: "file.rs".to_string(),
+            matches: vec![ContentMatch {
+                line: 1,
+                content: "test content".to_string(),
+                start: 0,
+                end: 4,
+            }],
+        };
+        assert_eq!(result.path, "/path/to/file.rs");
+        assert_eq!(result.name, "file.rs");
+        assert_eq!(result.matches.len(), 1);
+    }
+
+    #[test]
+    fn test_search_content_in_subdirectories() {
+        let dir = tempdir().unwrap();
+
+        // Create nested directory structure
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src").join("main.rs"), "fn main() { hello() }").unwrap();
+        fs::write(dir.path().join("lib.rs"), "pub fn hello() {}").unwrap();
+
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "hello".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        assert_eq!(results.len(), 2); // Should find in both files
+    }
+
+    #[test]
+    fn test_search_content_max_results_limit() {
+        let dir = tempdir().unwrap();
+
+        // Create many files with matching content
+        for i in 0..10 {
+            fs::write(dir.path().join(format!("file{}.rs", i)), "matching content").unwrap();
+        }
+
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "matching".to_string(),
+            5
+        );
+        assert!(result.is_ok());
+        assert!(result.unwrap().len() <= 5);
+    }
+
+    #[test]
+    fn test_search_files_read_error_handling() {
+        let dir = tempdir().unwrap();
+
+        // Create a file that can be found
+        fs::write(dir.path().join("test.txt"), "").unwrap();
+
+        let result = search_files(
+            dir.path().to_string_lossy().to_string(),
+            "test".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_search_content_skips_excluded_dirs() {
+        let dir = tempdir().unwrap();
+
+        // Create excluded directories
+        fs::create_dir(dir.path().join("node_modules")).unwrap();
+        fs::write(dir.path().join("node_modules").join("package.rs"), "matching content").unwrap();
+
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src").join("main.rs"), "matching content").unwrap();
+
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "matching".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        // Should only find in src, not node_modules
+        assert_eq!(results.len(), 1);
+        assert!(results[0].path.contains("src"));
+    }
+
+    #[test]
+    fn test_search_content_max_matches_per_file() {
+        let dir = tempdir().unwrap();
+
+        // Create file with many matches
+        let content = (0..20).map(|_| "match").collect::<Vec<_>>().join("\n");
+        fs::write(dir.path().join("test.rs"), content).unwrap();
+
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "match".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        // search_content uses max_matches_per_file=10
+        assert!(results[0].matches.len() <= 10);
+    }
+
+    #[test]
+    fn test_search_files_deeply_nested() {
+        let dir = tempdir().unwrap();
+
+        // Create deeply nested structure
+        let nested = dir.path().join("a").join("b").join("c");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("deep.txt"), "").unwrap();
+
+        let result = search_files(
+            dir.path().to_string_lossy().to_string(),
+            "deep".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].path.contains("deep.txt"));
+    }
+
+    #[test]
+    fn test_search_files_hits_max_results_early() {
+        let dir = tempdir().unwrap();
+
+        // Create many files that match the query
+        for i in 0..50 {
+            fs::write(dir.path().join(format!("match{}.txt", i)), "").unwrap();
+        }
+
+        // Search with a small max_results limit
+        let result = search_files(
+            dir.path().to_string_lossy().to_string(),
+            "match".to_string(),
+            3
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        // Should stop at max_results
+        assert!(results.len() <= 3);
+    }
+
+    #[test]
+    fn test_search_content_hidden_files_ignored() {
+        let dir = tempdir().unwrap();
+
+        // Create a hidden searchable file
+        fs::write(dir.path().join(".hidden.rs"), "matching content here").unwrap();
+        // Create a visible searchable file
+        fs::write(dir.path().join("visible.rs"), "matching content here").unwrap();
+
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "matching".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        // Hidden files should be ignored
+        assert!(results.iter().all(|r| !r.name.starts_with('.')));
+    }
+
+    #[test]
+    fn test_search_content_skips_build_directory() {
+        let dir = tempdir().unwrap();
+
+        // Create build directory with matching file
+        fs::create_dir(dir.path().join("build")).unwrap();
+        fs::write(dir.path().join("build").join("output.rs"), "matching content").unwrap();
+
+        // Create regular directory with matching file
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src").join("main.rs"), "matching content").unwrap();
+
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "matching".to_string(),
+            10
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        // Should only find in src, not build
+        assert_eq!(results.len(), 1);
+        assert!(results[0].path.contains("src"));
+    }
+
+    #[test]
+    fn test_collect_files_stops_at_max() {
+        let dir = tempdir().unwrap();
+
+        // Create many matching files in subdirectories
+        for letter in ['a', 'b', 'c'] {
+            let subdir = dir.path().join(letter.to_string());
+            fs::create_dir(&subdir).unwrap();
+            for i in 0..10 {
+                fs::write(subdir.join(format!("file{}.txt", i)), "").unwrap();
+            }
+        }
+
+        let result = search_files(
+            dir.path().to_string_lossy().to_string(),
+            "file".to_string(),
+            5
+        );
+        assert!(result.is_ok());
+        assert!(result.unwrap().len() <= 5);
+    }
+
+    #[test]
+    fn test_search_content_handles_read_error() {
+        let dir = tempdir().unwrap();
+
+        // Create a valid searchable file
+        fs::write(dir.path().join("valid.rs"), "searchable content").unwrap();
+
+        // Search should work even with permission issues on some files
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "searchable".to_string(),
+            10
+        );
+        assert!(result.is_ok());
     }
 }

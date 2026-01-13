@@ -1,11 +1,19 @@
 pub mod file;
+pub mod file_io;
 pub mod fs;
+pub mod fs_gitignore;
+pub mod fs_io;
 pub mod git;
+pub mod git_diff;
+pub mod git_status_map;
 pub mod menu;
 pub mod search;
 pub mod suggest;
+pub mod suggest_io;
 pub mod terminal;
+pub mod terminal_commands;
 pub mod watcher;
+pub mod watcher_commands;
 pub mod window;
 
 pub use file::*;
@@ -15,5 +23,7 @@ pub use menu::*;
 pub use search::*;
 pub use suggest::*;
 pub use terminal::*;
+pub use terminal_commands::*;
 pub use watcher::*;
+pub use watcher_commands::*;
 pub use window::*;

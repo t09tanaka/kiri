@@ -214,7 +214,9 @@ export function getDirectoryStatusColor(
 
   for (const [filePath, status] of gitStatusMap) {
     // Check if file is inside this directory
-    if (filePath.startsWith(prefix) || (prefix === '' && filePath.length > 0)) {
+    // Note: When prefix is empty, startsWith('') is always true for any string,
+    // so we only need to check startsWith(prefix)
+    if (filePath.startsWith(prefix)) {
       const priority = STATUS_PRIORITY[status] ?? 0;
       if (priority > highestPriority) {
         highestPriority = priority;

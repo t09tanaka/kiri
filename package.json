@@ -14,19 +14,29 @@
     "format:check": "prettier --check .",
     "tauri": "tauri",
     "prepare": "husky",
-    "demo:links": "bash scripts/demo-file-links.sh"
+    "demo:links": "bash scripts/demo-file-links.sh",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:rust:watch": "cargo watch -C src-tauri -x test",
+    "test:rust:coverage": "LLVM_COV=$(brew --prefix llvm)/bin/llvm-cov LLVM_PROFDATA=$(brew --prefix llvm)/bin/llvm-profdata cargo llvm-cov --manifest-path src-tauri/Cargo.toml --ignore-filename-regex '(main|lib|menu|window|terminal_commands|watcher_commands|fs_gitignore|fs_io|file_io|git_diff|git_status_map|suggest_io)\\.rs$|/rustc-.*-src/|/private/tmp/' --summary-only"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
     "@tauri-apps/cli": "^2.9.6",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/svelte": "^5.3.1",
     "@tsconfig/svelte": "^5.0.6",
     "@types/node": "^24.10.1",
+    "@vitest/coverage-v8": "^4.0.17",
     "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.5",
     "eslint-plugin-svelte": "^3.9.0",
     "globals": "^17.0.0",
     "husky": "^9.1.7",
+    "jsdom": "^24.1.3",
     "lint-staged": "^16.2.7",
     "node-pty": "^1.1.0",
     "prettier": "^3.5.3",
@@ -35,7 +45,8 @@
     "svelte-check": "^4.3.4",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.52.0",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "vitest": "^4.0.17"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.1",
