@@ -1,12 +1,12 @@
 mod commands;
 
 use commands::{
-    close_terminal, create_terminal, create_window, get_all_git_diffs, get_command_history,
-    get_file_suggestions, get_git_diff, get_git_file_status, get_git_status, get_home_directory,
-    get_path_commands, get_window_geometry, read_directory, read_file, resize_terminal,
-    reveal_in_finder, search_content, search_files, set_window_geometry, setup_menu,
-    start_watching, stop_all_watching, stop_watching, write_file, write_terminal, TerminalState,
-    WatcherState,
+    close_terminal, create_diffview_window, create_terminal, create_window, get_all_git_diffs,
+    get_command_history, get_file_suggestions, get_git_diff, get_git_file_status, get_git_status,
+    get_home_directory, get_path_commands, get_window_geometry, read_directory, read_file,
+    resize_terminal, reveal_in_finder, search_content, search_files, set_window_geometry,
+    setup_menu, start_watching, stop_all_watching, stop_watching, write_file, write_terminal,
+    TerminalState, WatcherState,
 };
 use std::sync::{Arc, Mutex};
 
@@ -48,6 +48,7 @@ pub fn run() {
             search_files,
             search_content,
             create_window,
+            create_diffview_window,
             get_window_geometry,
             set_window_geometry,
             reveal_in_finder,

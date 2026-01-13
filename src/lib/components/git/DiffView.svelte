@@ -5,7 +5,9 @@
 
   const allDiffs = $derived($gitStore.allDiffs);
   const isLoading = $derived($gitStore.isDiffsLoading);
-  const changeCount = $derived($gitStore.repoInfo?.statuses.length ?? 0);
+  const changeCount = $derived(
+    $gitStore.repoInfo?.statuses.filter((s) => s.status !== 'Ignored').length ?? 0
+  );
 
   // Track which sections are visible and should render their content
   const visibleSections = new SvelteSet<string>();

@@ -1,10 +1,9 @@
 <script lang="ts">
   import { FileTree } from '@/lib/components/filetree';
-  import GitChanges from '@/lib/components/git/GitChanges.svelte';
-  import { appStore, type SidebarMode } from '@/lib/stores/appStore';
   import { gitStore } from '@/lib/stores/gitStore';
-  import { get } from 'svelte/store';
-  import { tick } from 'svelte';
+  import { currentProjectPath } from '@/lib/stores/projectStore';
+  import { invoke } from '@tauri-apps/api/core';
+  import { emit } from '@tauri-apps/api/event';
 
   interface Props {
     width?: number;
@@ -14,26 +13,21 @@
 
   let { width = 250, rootPath = '', onFileSelect }: Props = $props();
 
-  // Use $state and $effect for explicit store subscription in Svelte 5
-  let sidebarMode = $state<SidebarMode>(get(appStore).sidebarMode);
-
-  $effect(() => {
-    const unsubscribe = appStore.subscribe(async (state) => {
-      sidebarMode = state.sidebarMode;
-      await tick(); // Force synchronous DOM update
-    });
-    return unsubscribe;
-  });
-
   const changeCount = $derived(
     $gitStore.repoInfo?.statuses.filter((s) => s.status !== 'Ignored').length ?? 0
   );
 
-  function toggleChanges() {
-    const wasChangesMode = get(appStore).sidebarMode === 'changes';
-    appStore.toggleSidebarMode();
-    if (wasChangesMode) {
-      gitStore.clearDiffs();
+  async function openDiffViewWindow() {
+    try {
+      await invoke('create_diffview_window');
+      // Emit project path to the new window after a short delay
+      if ($currentProjectPath) {
+        setTimeout(async () => {
+          await emit('project-path-changed', { path: $currentProjectPath });
+        }, 500);
+      }
+    } catch (error) {
+      console.error('Failed to open DiffView window:', error);
     }
   }
 </script>
@@ -51,38 +45,26 @@
         stroke-linecap="round"
         stroke-linejoin="round"
       >
-        {#if sidebarMode === 'explorer'}
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-        {:else}
-          <circle cx="12" cy="12" r="10"></circle>
-          <path d="M12 6v6l4 2"></path>
-        {/if}
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
       </svg>
     </div>
-    <span class="title">{sidebarMode === 'explorer' ? 'Explorer' : 'Changes'}</span>
+    <span class="title">Explorer</span>
   </div>
 
-  <div class="sidebar-content" class:changes-mode={sidebarMode === 'changes'}>
-    {#if sidebarMode === 'explorer'}
-      <FileTree {rootPath} {onFileSelect} />
-    {:else}
-      <GitChanges />
-    {/if}
+  <div class="sidebar-content">
+    <FileTree {rootPath} {onFileSelect} />
   </div>
 
   <div class="sidebar-footer">
     <button
       type="button"
       class="changes-button"
-      class:active={sidebarMode === 'changes'}
       class:has-changes={changeCount > 0}
-      onclick={toggleChanges}
-      title="{sidebarMode === 'changes'
-        ? 'Back to Explorer'
-        : 'View Changes'} ({changeCount} files)"
+      onclick={openDiffViewWindow}
+      title="Open Changes Window ({changeCount} files)"
     >
-      <span>{sidebarMode === 'changes' ? 'Explorer' : 'Changes'}</span>
-      {#if sidebarMode !== 'changes' && changeCount > 0}
+      <span>Changes</span>
+      {#if changeCount > 0}
         <span class="badge">{changeCount}</span>
       {/if}
     </button>
@@ -198,10 +180,6 @@
     position: relative;
   }
 
-  .sidebar-content.changes-mode::after {
-    display: none;
-  }
-
   /* Bottom fade gradient for overflow hint */
   .sidebar-content::after {
     content: '';
@@ -263,12 +241,6 @@
     background: rgba(251, 191, 36, 0.1);
   }
 
-  .changes-button.active {
-    background: var(--accent-subtle);
-    border-color: var(--accent-color);
-    color: var(--accent-color);
-  }
-
   .changes-button svg {
     flex-shrink: 0;
     transition: transform var(--transition-fast);
@@ -293,7 +265,7 @@
     transition: all var(--transition-fast);
   }
 
-  .changes-button.has-changes:not(.active) .badge {
+  .changes-button.has-changes .badge {
     animation: badgePulse 2s ease-in-out infinite;
   }
 

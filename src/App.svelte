@@ -7,6 +7,7 @@
   import { AppLayout, StartScreen } from '@/lib/components';
   import QuickOpen from '@/lib/components/search/QuickOpen.svelte';
   import KeyboardShortcuts from '@/lib/components/ui/KeyboardShortcuts.svelte';
+  import DiffViewWindow from '@/lib/components/git/DiffViewWindow.svelte';
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { tabStore } from '@/lib/stores/tabStore';
   import { peekStore } from '@/lib/stores/peekStore';
@@ -22,6 +23,9 @@
     type PersistedWindowState,
     type PersistedWindowGeometry,
   } from '@/lib/services/persistenceService';
+
+  // Check if this window is a DiffView window
+  const isDiffViewWindow = new URLSearchParams(window.location.search).get('mode') === 'diffview';
 
   let showShortcuts = $state(false);
   let windowLabel = $state('');
@@ -291,6 +295,12 @@
   }
 
   onMount(async () => {
+    // DiffView windows have simplified initialization
+    if (isDiffViewWindow) {
+      await projectStore.init();
+      return;
+    }
+
     // Initialize project store first (loads recent projects)
     await projectStore.init();
 
@@ -406,7 +416,9 @@
   });
 </script>
 
-{#if $isProjectOpen}
+{#if isDiffViewWindow}
+  <DiffViewWindow />
+{:else if $isProjectOpen}
   <AppLayout />
 
   {#if $isQuickOpenVisible}

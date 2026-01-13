@@ -1,8 +1,9 @@
 <script lang="ts">
   import { tabStore, activeTab } from '@/lib/stores/tabStore';
   import { gitStore } from '@/lib/stores/gitStore';
-  import { appStore } from '@/lib/stores/appStore';
-  import { get } from 'svelte/store';
+  import { currentProjectPath } from '@/lib/stores/projectStore';
+  import { invoke } from '@tauri-apps/api/core';
+  import { emit } from '@tauri-apps/api/event';
 
   interface Props {
     onShowShortcuts?: () => void;
@@ -27,11 +28,17 @@
     $gitStore.repoInfo?.statuses.filter((s) => s.status !== 'Ignored').length ?? 0
   );
 
-  function handleChangesClick() {
-    const wasChangesMode = get(appStore).sidebarMode === 'changes';
-    appStore.toggleSidebarMode();
-    if (wasChangesMode) {
-      gitStore.clearDiffs();
+  async function handleChangesClick() {
+    try {
+      await invoke('create_diffview_window');
+      // Emit project path to the new window after a short delay
+      if ($currentProjectPath) {
+        setTimeout(async () => {
+          await emit('project-path-changed', { path: $currentProjectPath });
+        }, 500);
+      }
+    } catch (error) {
+      console.error('Failed to open DiffView window:', error);
     }
   }
 </script>
@@ -111,9 +118,8 @@
     {#if changeCount > 0}
       <button
         class="status-item git-changes"
-        class:active={$appStore.sidebarMode === 'changes'}
         onclick={handleChangesClick}
-        title="View changes ({changeCount} files)"
+        title="Open Changes Window ({changeCount} files)"
       >
         <svg
           width="12"
@@ -326,11 +332,6 @@
 
   .git-changes:active {
     transform: translateY(0) scale(0.98);
-  }
-
-  .git-changes.active {
-    background: rgba(251, 191, 36, 0.2);
-    box-shadow: 0 0 8px rgba(251, 191, 36, 0.2);
   }
 
   .git-changes:hover svg {

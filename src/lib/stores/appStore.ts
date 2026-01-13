@@ -2,6 +2,7 @@ import { writable, get } from 'svelte/store';
 import type { PersistedUI } from '@/lib/services/persistenceService';
 
 export type ViewMode = 'terminal' | 'editor';
+// Keep 'changes' in type for backwards compatibility with persisted data
 export type SidebarMode = 'explorer' | 'changes';
 
 export interface AppState {
@@ -55,16 +56,6 @@ function createAppStore() {
         ...state,
         currentFile: file,
       })),
-    setSidebarMode: (mode: SidebarMode) =>
-      update((state) => ({
-        ...state,
-        sidebarMode: mode,
-      })),
-    toggleSidebarMode: () =>
-      update((state) => ({
-        ...state,
-        sidebarMode: state.sidebarMode === 'explorer' ? 'changes' : 'explorer',
-      })),
 
     /**
      * Get UI state for persistence
@@ -80,13 +71,14 @@ function createAppStore() {
 
     /**
      * Restore UI state from persistence
+     * Note: sidebarMode is always set to 'explorer' as DiffView now opens in a separate window
      */
     restoreUI: (ui: PersistedUI) => {
       update((state) => ({
         ...state,
         sidebarWidth: Math.max(160, Math.min(400, ui.sidebarWidth)),
         showSidebar: ui.showSidebar,
-        sidebarMode: ui.sidebarMode,
+        sidebarMode: 'explorer',
       }));
     },
 

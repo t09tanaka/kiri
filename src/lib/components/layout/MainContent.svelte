@@ -1,10 +1,8 @@
 <script lang="ts">
   import { tabStore, activeTab, getAllPaneIds } from '@/lib/stores/tabStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
-  import { appStore } from '@/lib/stores/appStore';
   import { TerminalContainer } from '@/lib/components/terminal';
   import { Editor } from '@/lib/components/editor';
-  import DiffView from '@/lib/components/git/DiffView.svelte';
   import TabBar from './TabBar.svelte';
 
   function handleEditorModified(tabId: string, modified: boolean) {
@@ -13,13 +11,9 @@
 </script>
 
 <main class="main-content">
-  {#if $appStore.sidebarMode === 'explorer'}
-    <TabBar tabs={$tabStore.tabs} activeTabId={$tabStore.activeTabId} />
-  {/if}
+  <TabBar tabs={$tabStore.tabs} activeTabId={$tabStore.activeTabId} />
   <div class="content-area">
-    {#if $appStore.sidebarMode === 'changes'}
-      <DiffView />
-    {:else if $activeTab}
+    {#if $activeTab}
       {#if $activeTab.type === 'terminal'}
         {#key $activeTab.id}
           <TerminalContainer

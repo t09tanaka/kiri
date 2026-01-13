@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
 
 static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
+static DIFFVIEW_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 #[tauri::command]
 pub fn create_window(
@@ -41,6 +42,29 @@ pub fn create_window(
     builder.build().map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// Create a new window specifically for DiffView
+/// Opens a smaller window with URL parameter to indicate diffview mode
+#[tauri::command]
+pub fn create_diffview_window(app: AppHandle) -> Result<String, String> {
+    let id = DIFFVIEW_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let label = format!("diffview-{}", id);
+
+    // Default size for diffview window (narrower, focused on diffs)
+    let win_width = 800.0;
+    let win_height = 600.0;
+
+    WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("?mode=diffview".into()))
+        .title("Kiri - Changes")
+        .inner_size(win_width, win_height)
+        .min_inner_size(400.0, 300.0)
+        .visible(true)
+        .focused(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    Ok(label)
 }
 
 /// Get window geometry (position and size) for the specified window label
