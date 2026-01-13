@@ -1,26 +1,14 @@
 <script lang="ts">
   import { tabStore, activeTab } from '@/lib/stores/tabStore';
   import { gitStore } from '@/lib/stores/gitStore';
-  import { appStore, type SidebarMode } from '@/lib/stores/appStore';
+  import { appStore } from '@/lib/stores/appStore';
   import { get } from 'svelte/store';
-  import { tick } from 'svelte';
 
   interface Props {
     onShowShortcuts?: () => void;
   }
 
   let { onShowShortcuts }: Props = $props();
-
-  // Use $state and $effect for explicit store subscription in Svelte 5
-  let sidebarMode = $state<SidebarMode>(get(appStore).sidebarMode);
-
-  $effect(() => {
-    const unsubscribe = appStore.subscribe(async (state) => {
-      sidebarMode = state.sidebarMode;
-      await tick(); // Force synchronous DOM update
-    });
-    return unsubscribe;
-  });
 
   function getActiveInfo(): { mode: string; file: string | null } {
     const tab = $activeTab;
@@ -123,7 +111,7 @@
     {#if changeCount > 0}
       <button
         class="status-item git-changes"
-        class:active={sidebarMode === 'changes'}
+        class:active={$appStore.sidebarMode === 'changes'}
         onclick={handleChangesClick}
         title="View changes ({changeCount} files)"
       >

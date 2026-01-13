@@ -1,24 +1,11 @@
 <script lang="ts">
   import { tabStore, activeTab, getAllPaneIds } from '@/lib/stores/tabStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
-  import { appStore, type SidebarMode } from '@/lib/stores/appStore';
+  import { appStore } from '@/lib/stores/appStore';
   import { TerminalContainer } from '@/lib/components/terminal';
   import { Editor } from '@/lib/components/editor';
   import DiffView from '@/lib/components/git/DiffView.svelte';
   import TabBar from './TabBar.svelte';
-  import { get } from 'svelte/store';
-  import { tick } from 'svelte';
-
-  // Use $state and $effect for explicit store subscription in Svelte 5
-  let sidebarMode = $state<SidebarMode>(get(appStore).sidebarMode);
-
-  $effect(() => {
-    const unsubscribe = appStore.subscribe(async (state) => {
-      sidebarMode = state.sidebarMode;
-      await tick(); // Force synchronous DOM update
-    });
-    return unsubscribe;
-  });
 
   function handleEditorModified(tabId: string, modified: boolean) {
     tabStore.setModified(tabId, modified);
@@ -26,11 +13,11 @@
 </script>
 
 <main class="main-content">
-  {#if sidebarMode === 'explorer'}
+  {#if $appStore.sidebarMode === 'explorer'}
     <TabBar tabs={$tabStore.tabs} activeTabId={$tabStore.activeTabId} />
   {/if}
   <div class="content-area">
-    {#if sidebarMode === 'changes'}
+    {#if $appStore.sidebarMode === 'changes'}
       <DiffView />
     {:else if $activeTab}
       {#if $activeTab.type === 'terminal'}
