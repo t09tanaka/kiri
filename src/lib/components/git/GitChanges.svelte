@@ -3,7 +3,10 @@
   import { onMount } from 'svelte';
 
   // Use repoInfo.statuses for immediate file list display (no waiting for diffs)
-  const statuses = $derived($gitStore.repoInfo?.statuses ?? []);
+  // Filter out Ignored files - they should not appear in the changes list
+  const statuses = $derived(
+    ($gitStore.repoInfo?.statuses ?? []).filter((s) => s.status !== 'Ignored')
+  );
   const sortedStatuses = $derived([...statuses].sort((a, b) => a.path.localeCompare(b.path)));
   const changeCount = $derived(sortedStatuses.length);
   const currentVisibleFile = $derived($gitStore.currentVisibleFile);

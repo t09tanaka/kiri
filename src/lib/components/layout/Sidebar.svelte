@@ -1,8 +1,10 @@
 <script lang="ts">
   import { FileTree } from '@/lib/components/filetree';
   import GitChanges from '@/lib/components/git/GitChanges.svelte';
-  import { appStore } from '@/lib/stores/appStore';
+  import { appStore, type SidebarMode } from '@/lib/stores/appStore';
   import { gitStore } from '@/lib/stores/gitStore';
+  import { get } from 'svelte/store';
+  import { tick } from 'svelte';
 
   interface Props {
     width?: number;
@@ -12,15 +14,26 @@
 
   let { width = 250, rootPath = '', onFileSelect }: Props = $props();
 
-  const sidebarMode = $derived($appStore.sidebarMode);
-  const changeCount = $derived($gitStore.repoInfo?.statuses.length ?? 0);
+  // Use $state and $effect for explicit store subscription in Svelte 5
+  let sidebarMode = $state<SidebarMode>(get(appStore).sidebarMode);
+
+  $effect(() => {
+    const unsubscribe = appStore.subscribe(async (state) => {
+      sidebarMode = state.sidebarMode;
+      await tick(); // Force synchronous DOM update
+    });
+    return unsubscribe;
+  });
+
+  const changeCount = $derived(
+    $gitStore.repoInfo?.statuses.filter((s) => s.status !== 'Ignored').length ?? 0
+  );
 
   function toggleChanges() {
-    if (sidebarMode === 'changes') {
-      appStore.setSidebarMode('explorer');
+    const wasChangesMode = get(appStore).sidebarMode === 'changes';
+    appStore.toggleSidebarMode();
+    if (wasChangesMode) {
       gitStore.clearDiffs();
-    } else {
-      appStore.setSidebarMode('changes');
     }
   }
 </script>
@@ -59,6 +72,7 @@
 
   <div class="sidebar-footer">
     <button
+      type="button"
       class="changes-button"
       class:active={sidebarMode === 'changes'}
       class:has-changes={changeCount > 0}
@@ -67,38 +81,9 @@
         ? 'Back to Explorer'
         : 'View Changes'} ({changeCount} files)"
     >
-      {#if sidebarMode === 'changes'}
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-        </svg>
-        <span>Explorer</span>
-      {:else}
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <circle cx="12" cy="12" r="10"></circle>
-          <path d="M12 6v6l4 2"></path>
-        </svg>
-        <span>Changes</span>
-        {#if changeCount > 0}
-          <span class="badge">{changeCount}</span>
-        {/if}
+      <span>{sidebarMode === 'changes' ? 'Explorer' : 'Changes'}</span>
+      {#if sidebarMode !== 'changes' && changeCount > 0}
+        <span class="badge">{changeCount}</span>
       {/if}
     </button>
   </div>
@@ -113,18 +98,6 @@
     flex-direction: column;
     overflow: hidden;
     position: relative;
-    animation: sidebarSlideIn 0.3s ease-out;
-  }
-
-  @keyframes sidebarSlideIn {
-    from {
-      opacity: 0;
-      transform: translateX(-8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
   }
 
   /* Subtle gradient overlay */

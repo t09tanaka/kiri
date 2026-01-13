@@ -1,13 +1,26 @@
 <script lang="ts">
   import { tabStore, activeTab } from '@/lib/stores/tabStore';
   import { gitStore } from '@/lib/stores/gitStore';
-  import { appStore } from '@/lib/stores/appStore';
+  import { appStore, type SidebarMode } from '@/lib/stores/appStore';
+  import { get } from 'svelte/store';
+  import { tick } from 'svelte';
 
   interface Props {
     onShowShortcuts?: () => void;
   }
 
   let { onShowShortcuts }: Props = $props();
+
+  // Use $state and $effect for explicit store subscription in Svelte 5
+  let sidebarMode = $state<SidebarMode>(get(appStore).sidebarMode);
+
+  $effect(() => {
+    const unsubscribe = appStore.subscribe(async (state) => {
+      sidebarMode = state.sidebarMode;
+      await tick(); // Force synchronous DOM update
+    });
+    return unsubscribe;
+  });
 
   function getActiveInfo(): { mode: string; file: string | null } {
     const tab = $activeTab;
@@ -22,12 +35,14 @@
 
   const info = $derived(getActiveInfo());
   const gitInfo = $derived($gitStore.repoInfo);
-  const changeCount = $derived($gitStore.repoInfo?.statuses.length ?? 0);
-  const sidebarMode = $derived($appStore.sidebarMode);
+  const changeCount = $derived(
+    $gitStore.repoInfo?.statuses.filter((s) => s.status !== 'Ignored').length ?? 0
+  );
 
   function handleChangesClick() {
+    const wasChangesMode = get(appStore).sidebarMode === 'changes';
     appStore.toggleSidebarMode();
-    if ($appStore.sidebarMode === 'explorer') {
+    if (wasChangesMode) {
       gitStore.clearDiffs();
     }
   }

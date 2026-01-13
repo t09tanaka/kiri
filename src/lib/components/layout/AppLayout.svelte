@@ -242,19 +242,6 @@
     position: relative;
     display: flex;
     flex-shrink: 0;
-    animation: sidebarReveal 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-    transform-origin: left center;
-  }
-
-  @keyframes sidebarReveal {
-    from {
-      opacity: 0;
-      transform: translateX(-20px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
   }
 
   .resize-handle {
