@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { fileService } from '@/lib/services/fileService';
+  import { watcherService } from '@/lib/services/watcherService';
+  import { eventService, type UnlistenFn } from '@/lib/services/eventService';
   import FileTreeItem from './FileTreeItem.svelte';
   import type { FileEntry } from './types';
   import { gitStore, gitStatusMap } from '@/lib/stores/gitStore';
@@ -38,10 +39,10 @@
     try {
       let path = rootPath;
       if (!path) {
-        path = await invoke<string>('get_home_directory');
+        path = await fileService.getHomeDirectory();
       }
 
-      entries = await invoke<FileEntry[]>('read_directory', { path });
+      entries = await fileService.readDirectory(path);
 
       gitStore.refresh(path);
     } catch (e) {
@@ -75,22 +76,25 @@
 
     try {
       // Start watching
-      await invoke('start_watching', { path });
+      await watcherService.startWatching(path);
       currentWatchPath = path;
 
       // Listen for file system changes
-      unlistenFs = await listen<{ path: string }>('fs-changed', (event) => {
+      unlistenFs = await eventService.listen<{ path: string }>('fs-changed', (event) => {
         if (event.payload.path === path) {
           scheduleRefresh();
         }
       });
 
       // Listen for git status changes
-      unlistenGit = await listen<{ repo_root: string }>('git-status-changed', (event) => {
-        if (path.startsWith(event.payload.repo_root)) {
-          gitStore.refresh(path);
+      unlistenGit = await eventService.listen<{ repo_root: string }>(
+        'git-status-changed',
+        (event) => {
+          if (path.startsWith(event.payload.repo_root)) {
+            gitStore.refresh(path);
+          }
         }
-      });
+      );
     } catch (err) {
       console.error('Failed to setup watcher:', err);
     }
@@ -113,7 +117,7 @@
     }
 
     if (currentWatchPath) {
-      await invoke('stop_watching', { path: currentWatchPath }).catch(() => {});
+      await watcherService.stopWatching(currentWatchPath).catch(() => {});
       currentWatchPath = null;
     }
   }

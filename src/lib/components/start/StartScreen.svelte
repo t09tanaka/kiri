@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { open } from '@tauri-apps/plugin-dialog';
+  import { dialogService } from '@/lib/services/dialogService';
   import { projectStore, recentProjects, type RecentProject } from '@/lib/stores/projectStore';
   import { tabStore } from '@/lib/stores/tabStore';
   import RecentProjectItem from './RecentProjectItem.svelte';
@@ -8,13 +8,9 @@
   let mounted = $state(false);
 
   async function handleOpenDirectory() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: 'Open Directory',
-    });
+    const selected = await dialogService.openDirectory();
 
-    if (selected && typeof selected === 'string') {
+    if (selected) {
       await projectStore.openProject(selected);
       // Open a default terminal tab when opening a new project
       tabStore.addTerminalTab();

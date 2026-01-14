@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { fileService } from '@/lib/services/fileService';
   import {
     EditorView,
     keymap,
@@ -210,7 +210,7 @@
     setModified(false);
 
     try {
-      const content = await invoke<string>('read_file', { path: filePath });
+      const content = await fileService.readFile(filePath);
       createEditor(content);
     } catch (e) {
       error = String(e);
@@ -225,7 +225,7 @@
 
     try {
       const content = view.state.doc.toString();
-      await invoke('write_file', { path: filePath, content });
+      await fileService.writeFile(filePath, content);
       setModified(false);
       onSave?.();
     } catch (e) {

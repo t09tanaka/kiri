@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from '@tauri-apps/api/core';
+  import { fileService } from '@/lib/services/fileService';
   import type { FileEntry } from './types';
   import {
     type GitFileStatus,
@@ -78,7 +78,7 @@
     error = null;
 
     try {
-      children = await invoke<FileEntry[]>('read_directory', { path: entry.path });
+      children = await fileService.readDirectory(entry.path);
       expanded = true;
     } catch (e) {
       error = String(e);
@@ -146,7 +146,7 @@
         await navigator.clipboard.writeText(entry.path);
         break;
       case 'reveal':
-        await invoke('reveal_in_finder', { path: entry.path });
+        await fileService.revealInFinder(entry.path);
         break;
     }
   }

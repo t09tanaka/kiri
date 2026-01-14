@@ -2,8 +2,8 @@
   import { tabStore, activeTab } from '@/lib/stores/tabStore';
   import { gitStore } from '@/lib/stores/gitStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
-  import { invoke } from '@tauri-apps/api/core';
-  import { emit } from '@tauri-apps/api/event';
+  import { windowService } from '@/lib/services/windowService';
+  import { eventService } from '@/lib/services/eventService';
 
   interface Props {
     onShowShortcuts?: () => void;
@@ -30,11 +30,11 @@
 
   async function handleChangesClick() {
     try {
-      await invoke('create_diffview_window');
+      await windowService.createDiffViewWindow();
       // Emit project path to the new window after a short delay
       if ($currentProjectPath) {
         setTimeout(async () => {
-          await emit('project-path-changed', { path: $currentProjectPath });
+          await eventService.emit('project-path-changed', { path: $currentProjectPath });
         }, 500);
       }
     } catch (error) {

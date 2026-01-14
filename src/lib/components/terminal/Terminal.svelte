@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { invoke } from '@tauri-apps/api/core';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { terminalService } from '@/lib/services/terminalService';
+  import { eventService, type UnlistenFn } from '@/lib/services/eventService';
   import { Terminal } from '@xterm/xterm';
   import { FitAddon } from '@xterm/addon-fit';
   import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -304,14 +304,14 @@
       const lastPart = parts[parts.length - 1];
       if (suggestion.toLowerCase().startsWith(lastPart.toLowerCase())) {
         const remaining = suggestion.slice(lastPart.length);
-        invoke('write_terminal', { id: terminalId, data: remaining });
+        terminalService.writeTerminal(terminalId, remaining);
         currentInput = parts.slice(0, -1).join(' ') + ' ' + suggestion;
       }
     } else {
       // Complete the command - just add the remaining part
       if (suggestion.toLowerCase().startsWith(currentInput.toLowerCase())) {
         const remaining = suggestion.slice(currentInput.length);
-        invoke('write_terminal', { id: terminalId, data: remaining });
+        terminalService.writeTerminal(terminalId, remaining);
         currentInput = suggestion;
       }
     }
@@ -478,7 +478,7 @@
           terminal.resize(cols, rows);
         }
 
-        terminalId = await invoke<number>('create_terminal', { cwd, cols, rows });
+        terminalId = await terminalService.createTerminal(cwd, cols, rows);
         // Store terminal ID in tab store
         tabStore.setTerminalId(tabId, paneId, terminalId);
       }
@@ -515,7 +515,7 @@
       };
 
       // Listen for terminal output
-      unlisten = await listen<TerminalOutput>('terminal-output', (event) => {
+      unlisten = await eventService.listen<TerminalOutput>('terminal-output', (event) => {
         if (event.payload.id === terminalId && terminal) {
           let data = event.payload.data;
 
@@ -576,14 +576,14 @@
         trackInput(data);
 
         if (terminalId !== null) {
-          invoke('write_terminal', { id: terminalId, data });
+          terminalService.writeTerminal(terminalId, data);
         }
       });
 
       // Handle resize
       terminal.onResize(({ cols, rows }) => {
         if (terminalId !== null) {
-          invoke('resize_terminal', { id: terminalId, cols, rows });
+          terminalService.resizeTerminal(terminalId, cols, rows);
         }
       });
 
@@ -615,7 +615,7 @@
             event.preventDefault();
             event.stopPropagation();
             if (terminalId !== null) {
-              invoke('write_terminal', { id: terminalId, data: '\n' });
+              terminalService.writeTerminal(terminalId, '\n');
             }
           }
         },
@@ -656,7 +656,7 @@
       // Explicitly send resize to PTY after fit
       // This ensures Ink-based apps get the correct size immediately
       if (terminalId !== null && cols > 0 && rows > 0) {
-        invoke('resize_terminal', { id: terminalId, cols, rows });
+        terminalService.resizeTerminal(terminalId, cols, rows);
       }
     } catch (e) {
       console.warn('FitAddon.fit() error:', e);
@@ -741,7 +741,7 @@
     }
 
     if (terminalId !== null) {
-      invoke('close_terminal', { id: terminalId });
+      terminalService.closeTerminal(terminalId);
     }
 
     if (terminal) {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { invoke } from '@tauri-apps/api/core';
+  import { fileService } from '@/lib/services/fileService';
   import { EditorView, lineNumbers } from '@codemirror/view';
   import { EditorState, StateEffect, StateField } from '@codemirror/state';
   import { Decoration, type DecorationSet } from '@codemirror/view';
@@ -210,7 +210,7 @@
 
     try {
       const absolutePath = resolveFilePath(filePath);
-      const content = await invoke<string>('read_file', { path: absolutePath });
+      const content = await fileService.readFile(absolutePath);
       fileContent = content;
     } catch (e) {
       error = String(e);
