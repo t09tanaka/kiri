@@ -114,8 +114,9 @@ xterm.js doesn't natively support Synchronized Output Mode (DEC 2026), which Ink
 - [x] Search functionality (Quick Open + content search)
 - [x] Multiple windows
 - [ ] File operations (new/delete/rename)
-- [ ] Settings screen
-- [ ] Windows/Linux support
+- [ ] Multiple cursors (Sublime Text style)
+- [ ] Cross-file search and replace
+- [ ] Minimap
 
 ## Contributing
 
