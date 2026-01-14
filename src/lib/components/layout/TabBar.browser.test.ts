@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/svelte';
+import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
 import TabBar from './TabBar.svelte';
 import type { Tab } from '@/lib/stores/tabStore';
+import { tabStore } from '@/lib/stores/tabStore';
+import { dialogService } from '@/lib/services/dialogService';
 
 // Mock tabStore
 vi.mock('@/lib/stores/tabStore', () => ({
@@ -9,6 +11,13 @@ vi.mock('@/lib/stores/tabStore', () => ({
     setActiveTab: vi.fn(),
     closeTab: vi.fn(),
     addTerminalTab: vi.fn(),
+  },
+}));
+
+// Mock dialogService
+vi.mock('@/lib/services/dialogService', () => ({
+  dialogService: {
+    confirm: vi.fn(),
   },
 }));
 
@@ -156,5 +165,71 @@ describe('TabBar Component (Browser)', () => {
     const tabIcons = container.querySelectorAll('.tab-icon');
     const terminalIcon = tabIcons[2];
     expect(terminalIcon.querySelector('svg')).toBeInTheDocument();
+  });
+
+  describe('Terminal close confirmation', () => {
+    it('shows confirmation dialog when closing terminal tab', async () => {
+      vi.mocked(dialogService.confirm).mockResolvedValue(true);
+
+      const { container } = render(TabBar, {
+        props: { tabs: mockTabs, activeTabId: 'tab-3' },
+      });
+
+      // Find the terminal tab's close button (third tab)
+      const closeButtons = container.querySelectorAll('.close-btn');
+      const terminalCloseBtn = closeButtons[2];
+
+      await fireEvent.click(terminalCloseBtn);
+
+      expect(dialogService.confirm).toHaveBeenCalledWith(
+        'Are you sure you want to close this terminal? Any running processes will be terminated.',
+        { title: 'Close Terminal' }
+      );
+    });
+
+    it('closes terminal tab when user confirms', async () => {
+      vi.mocked(dialogService.confirm).mockResolvedValue(true);
+
+      const { container } = render(TabBar, {
+        props: { tabs: mockTabs, activeTabId: 'tab-3' },
+      });
+
+      const closeButtons = container.querySelectorAll('.close-btn');
+      const terminalCloseBtn = closeButtons[2];
+
+      await fireEvent.click(terminalCloseBtn);
+
+      expect(tabStore.closeTab).toHaveBeenCalledWith('tab-3');
+    });
+
+    it('does not close terminal tab when user cancels', async () => {
+      vi.mocked(dialogService.confirm).mockResolvedValue(false);
+
+      const { container } = render(TabBar, {
+        props: { tabs: mockTabs, activeTabId: 'tab-3' },
+      });
+
+      const closeButtons = container.querySelectorAll('.close-btn');
+      const terminalCloseBtn = closeButtons[2];
+
+      await fireEvent.click(terminalCloseBtn);
+
+      expect(tabStore.closeTab).not.toHaveBeenCalled();
+    });
+
+    it('does not show confirmation dialog when closing editor tab', async () => {
+      const { container } = render(TabBar, {
+        props: { tabs: mockTabs, activeTabId: 'tab-1' },
+      });
+
+      // Find the first editor tab's close button
+      const closeButtons = container.querySelectorAll('.close-btn');
+      const editorCloseBtn = closeButtons[0];
+
+      await fireEvent.click(editorCloseBtn);
+
+      expect(dialogService.confirm).not.toHaveBeenCalled();
+      expect(tabStore.closeTab).toHaveBeenCalledWith('tab-1');
+    });
   });
 });

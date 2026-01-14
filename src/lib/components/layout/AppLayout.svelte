@@ -3,6 +3,7 @@
   import { appStore } from '@/lib/stores/appStore';
   import { tabStore } from '@/lib/stores/tabStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
+  import { dialogService } from '@/lib/services/dialogService';
   import Sidebar from '@/lib/components/layout/Sidebar.svelte';
   import MainContent from '@/lib/components/layout/MainContent.svelte';
   import StatusBar from '@/lib/components/layout/StatusBar.svelte';
@@ -17,7 +18,7 @@
     tabStore.addEditorTab(path);
   }
 
-  function handleKeyDown(e: KeyboardEvent) {
+  async function handleKeyDown(e: KeyboardEvent) {
     // Skip if typing in an input
     const target = e.target as HTMLElement;
     const isTyping =
@@ -33,6 +34,17 @@
       e.preventDefault();
       const activeId = $tabStore.activeTabId;
       if (activeId) {
+        const activeTab = $tabStore.tabs.find((t) => t.id === activeId);
+        // Show confirmation dialog for terminal tabs
+        if (activeTab?.type === 'terminal') {
+          const confirmed = await dialogService.confirm(
+            'Are you sure you want to close this terminal? Any running processes will be terminated.',
+            { title: 'Close Terminal' }
+          );
+          if (!confirmed) {
+            return;
+          }
+        }
         tabStore.closeTab(activeId);
       }
     }

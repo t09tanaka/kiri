@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tabStore, type Tab } from '@/lib/stores/tabStore';
   import { getFileIconInfo } from '@/lib/utils/fileIcons';
+  import { dialogService } from '@/lib/services/dialogService';
 
   interface Props {
     tabs: Tab[];
@@ -26,8 +27,20 @@
     tabStore.setActiveTab(tab.id);
   }
 
-  function handleCloseClick(e: MouseEvent, tab: Tab) {
+  async function handleCloseClick(e: MouseEvent, tab: Tab) {
     e.stopPropagation();
+
+    // Show confirmation dialog for terminal tabs
+    if (tab.type === 'terminal') {
+      const confirmed = await dialogService.confirm(
+        'Are you sure you want to close this terminal? Any running processes will be terminated.',
+        { title: 'Close Terminal' }
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
     tabStore.closeTab(tab.id);
     // Trigger terminal resize after tab close
     // Use multiple dispatches to ensure terminals catch the new size after layout settles

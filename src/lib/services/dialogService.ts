@@ -1,10 +1,27 @@
-import { open, type OpenDialogOptions } from '@tauri-apps/plugin-dialog';
+import {
+  open,
+  ask,
+  type OpenDialogOptions,
+  type ConfirmDialogOptions,
+} from '@tauri-apps/plugin-dialog';
 
 /**
  * Native dialog service
  * Wraps Tauri dialog plugin for testability
  */
 export const dialogService = {
+  /**
+   * Show a confirmation dialog with Yes/No buttons
+   * @returns true if user clicked Yes, false otherwise
+   */
+  confirm: async (message: string, options?: Partial<ConfirmDialogOptions>): Promise<boolean> => {
+    return await ask(message, {
+      title: 'Confirm',
+      kind: 'warning',
+      ...options,
+    });
+  },
+
   /**
    * Open a directory picker dialog
    */
