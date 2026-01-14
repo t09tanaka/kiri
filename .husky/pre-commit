@@ -1,1 +1,6 @@
+# Lint and format staged files
 npx lint-staged
+
+# Run fast unit tests (frontend + backend)
+npm run test
+npm run test:rust
