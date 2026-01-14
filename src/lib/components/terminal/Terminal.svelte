@@ -405,6 +405,28 @@
       // Match macOS Terminal behavior for ED2 (Erase in Display)
       // This prevents blank lines when CLI tools use screen clearing
       scrollOnEraseInDisplay: true,
+      // OSC 8 Hyperlink handler - handles explicit hyperlinks from terminal apps
+      // See: https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda
+      linkHandler: {
+        activate: (_event, uri) => {
+          // Handle file:// URLs by opening in editor
+          if (uri.startsWith('file://')) {
+            const filePath = uri.replace('file://', '');
+            // Extract line number if present (file:///path/to/file:42)
+            const match = filePath.match(/^(.+?):(\d+)(?::(\d+))?$/);
+            if (match) {
+              const [, path, line, column] = match;
+              peekStore.open(path, parseInt(line, 10), column ? parseInt(column, 10) : undefined);
+            } else {
+              peekStore.open(filePath);
+            }
+          } else {
+            // Open other URLs in browser
+            openerService.openUrl(uri);
+          }
+        },
+        allowNonHttpProtocols: true, // Allow file:// protocol
+      },
     });
 
     fitAddon = new FitAddon();
