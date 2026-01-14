@@ -11,6 +11,7 @@
     "dialog:allow-ask",
     "store:default",
     "mcp-bridge:default",
-    "opener:default"
+    "opener:default",
+    "notification:default"
   ]
 }

@@ -11,6 +11,7 @@
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
   import { peekStore } from '@/lib/stores/peekStore';
   import { openerService } from '@/lib/services/openerService';
+  import { notificationService } from '@/lib/services/notificationService';
   import { createFilePathLinkProvider } from '@/lib/services/filePathLinkProvider';
   import {
     getSuggestions,
@@ -573,6 +574,19 @@
         if (event.payload.id === terminalId && terminal) {
           let data = event.payload.data;
 
+          // Process notification escape sequences (OSC 9, OSC 777)
+          // This extracts notifications and removes them from the output
+          const { output: cleanedData, notifications } =
+            notificationService.parseNotifications(data);
+          data = cleanedData;
+
+          // Send notifications asynchronously (don't block output)
+          if (notifications.length > 0) {
+            for (const notification of notifications) {
+              notificationService.notify(notification);
+            }
+          }
+
           // Process sync mode markers and buffer content
           while (data.length > 0) {
             if (inSyncMode) {
@@ -773,6 +787,9 @@
 
     // Preload suggestions in the background
     preloadSuggestions();
+
+    // Initialize notification service for OSC 9/777 notifications
+    notificationService.init();
 
     // Use ResizeObserver to detect container size changes
     resizeObserver = new ResizeObserver((entries) => {
