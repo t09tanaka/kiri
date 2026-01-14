@@ -31,6 +31,8 @@ pub struct GitRepoInfo {
     pub root: String,
     pub branch: Option<String>,
     pub statuses: Vec<GitStatusEntry>,
+    pub additions: usize,
+    pub deletions: usize,
 }
 
 fn find_repo_root(path: &Path) -> Option<String> {
@@ -44,6 +46,67 @@ fn find_repo_root(path: &Path) -> Option<String> {
             None => return None,
         }
     }
+}
+
+/// Calculate total additions and deletions for the repository
+fn calculate_diff_stats(repo: &Repository, repo_root: &str) -> (usize, usize) {
+    let mut total_additions: usize = 0;
+    let mut total_deletions: usize = 0;
+
+    // Get status to find changed files
+    let mut status_opts = StatusOptions::new();
+    status_opts
+        .include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .include_ignored(false);
+
+    let statuses = match repo.statuses(Some(&mut status_opts)) {
+        Ok(s) => s,
+        Err(_) => return (0, 0),
+    };
+
+    for entry in statuses.iter() {
+        let file_path = match entry.path() {
+            Some(p) => p.to_string(),
+            None => continue,
+        };
+        let status = entry.status();
+
+        // For untracked files, count all lines as additions
+        if status.is_wt_new() {
+            let full_path = Path::new(repo_root).join(&file_path);
+            if let Ok(content) = std::fs::read_to_string(&full_path) {
+                total_additions += content.lines().count();
+            }
+            continue;
+        }
+
+        // For tracked files, get the diff stats
+        let mut diff_opts = DiffOptions::new();
+        diff_opts.pathspec(&file_path);
+
+        // Get diff between index and working directory
+        if let Ok(diff) = repo.diff_index_to_workdir(None, Some(&mut diff_opts)) {
+            if let Ok(stats) = diff.stats() {
+                total_additions += stats.insertions();
+                total_deletions += stats.deletions();
+            }
+        }
+
+        // Also check staged changes (diff between HEAD and index)
+        if let Ok(head) = repo.head() {
+            if let Ok(head_tree) = head.peel_to_tree() {
+                if let Ok(diff) = repo.diff_tree_to_index(Some(&head_tree), None, Some(&mut diff_opts)) {
+                    if let Ok(stats) = diff.stats() {
+                        total_additions += stats.insertions();
+                        total_deletions += stats.deletions();
+                    }
+                }
+            }
+        }
+    }
+
+    (total_additions, total_deletions)
 }
 
 #[tauri::command]
@@ -87,10 +150,15 @@ pub fn get_git_status(path: String) -> Result<GitRepoInfo, String> {
         });
     }
 
+    // Calculate diff statistics (additions and deletions)
+    let (additions, deletions) = calculate_diff_stats(&repo, &repo_root);
+
     Ok(GitRepoInfo {
         root: repo_root,
         branch,
         statuses: entries,
+        additions,
+        deletions,
     })
 }
 
@@ -320,10 +388,14 @@ mod tests {
             root: "/path/to/repo".to_string(),
             branch: Some("main".to_string()),
             statuses: vec![],
+            additions: 100,
+            deletions: 50,
         };
         assert_eq!(info.root, "/path/to/repo");
         assert_eq!(info.branch, Some("main".to_string()));
         assert!(info.statuses.is_empty());
+        assert_eq!(info.additions, 100);
+        assert_eq!(info.deletions, 50);
     }
 
     #[test]
@@ -1011,5 +1083,104 @@ mod tests {
         let diff = get_file_diff_internal(&repo, &dir.path().to_string_lossy(), "binary.bin");
         // Should handle gracefully - either return content or empty string
         assert!(diff.is_empty() || !diff.is_empty());
+    }
+
+    #[test]
+    fn test_calculate_diff_stats_untracked_file() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        // Create untracked files with known line counts
+        fs::write(dir.path().join("file1.txt"), "line1\nline2\nline3").unwrap();
+        fs::write(dir.path().join("file2.txt"), "single line").unwrap();
+
+        let (additions, deletions) = calculate_diff_stats(&repo, &dir.path().to_string_lossy());
+
+        // 3 lines in file1 + 1 line in file2 = 4 additions
+        assert_eq!(additions, 4);
+        assert_eq!(deletions, 0);
+    }
+
+    #[test]
+    fn test_calculate_diff_stats_modified_file() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        // Create and commit a file
+        let sig = test_signature();
+        fs::write(dir.path().join("test.txt"), "original line 1\noriginal line 2").unwrap();
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[]).unwrap();
+
+        // Modify the file
+        fs::write(dir.path().join("test.txt"), "modified line 1\nnew line 2\nnew line 3").unwrap();
+
+        let (additions, deletions) = calculate_diff_stats(&repo, &dir.path().to_string_lossy());
+
+        // Should have some additions and deletions
+        assert!(additions > 0 || deletions > 0);
+    }
+
+    #[test]
+    fn test_calculate_diff_stats_empty_repo() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        let (additions, deletions) = calculate_diff_stats(&repo, &dir.path().to_string_lossy());
+
+        assert_eq!(additions, 0);
+        assert_eq!(deletions, 0);
+    }
+
+    #[test]
+    fn test_get_git_status_includes_diff_stats() {
+        let dir = tempdir().unwrap();
+        Repository::init(dir.path()).unwrap();
+
+        // Create untracked files
+        fs::write(dir.path().join("file.txt"), "line1\nline2").unwrap();
+
+        let result = get_git_status(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let info = result.unwrap();
+        // Should have 2 lines as additions
+        assert_eq!(info.additions, 2);
+        assert_eq!(info.deletions, 0);
+    }
+
+    #[test]
+    fn test_calculate_diff_stats_staged_changes() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        // Create and commit a file
+        let sig = test_signature();
+        fs::write(dir.path().join("test.txt"), "original").unwrap();
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[]).unwrap();
+
+        // Modify and stage the file
+        fs::write(dir.path().join("test.txt"), "modified\nnew line").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+
+        let (additions, deletions) = calculate_diff_stats(&repo, &dir.path().to_string_lossy());
+
+        // Should count staged changes
+        assert!(additions > 0);
     }
 }

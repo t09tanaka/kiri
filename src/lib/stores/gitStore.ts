@@ -25,6 +25,8 @@ export interface GitRepoInfo {
   root: string;
   branch: string | null;
   statuses: GitStatusEntry[];
+  additions: number;
+  deletions: number;
 }
 
 interface GitStoreState {

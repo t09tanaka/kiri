@@ -3,7 +3,6 @@
   import { gitStore } from '@/lib/stores/gitStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
   import { windowService } from '@/lib/services/windowService';
-  import { eventService } from '@/lib/services/eventService';
 
   interface Props {
     onShowShortcuts?: () => void;
@@ -29,14 +28,12 @@
   );
 
   async function handleChangesClick() {
+    if (!$currentProjectPath) {
+      console.error('No project path available');
+      return;
+    }
     try {
-      await windowService.createDiffViewWindow();
-      // Emit project path to the new window after a short delay
-      if ($currentProjectPath) {
-        setTimeout(async () => {
-          await eventService.emit('project-path-changed', { path: $currentProjectPath });
-        }, 500);
-      }
+      await windowService.createDiffViewWindow($currentProjectPath);
     } catch (error) {
       console.error('Failed to open DiffView window:', error);
     }
@@ -119,7 +116,8 @@
       <button
         class="status-item git-changes"
         onclick={handleChangesClick}
-        title="Open Changes Window ({changeCount} files)"
+        title="Open Changes Window ({changeCount} files, +{gitInfo?.additions ??
+          0} -{gitInfo?.deletions ?? 0})"
       >
         <svg
           width="12"
@@ -134,7 +132,11 @@
           <circle cx="12" cy="12" r="10"></circle>
           <path d="M12 6v6l4 2"></path>
         </svg>
-        <span>{changeCount}</span>
+        <span class="change-summary">
+          <span class="file-count">{changeCount} files</span>
+          <span class="additions">+{gitInfo?.additions ?? 0}</span>
+          <span class="deletions">-{gitInfo?.deletions ?? 0}</span>
+        </span>
       </button>
     {/if}
     {#if info.file}
@@ -346,6 +348,30 @@
     50% {
       transform: scale(1.2) rotate(10deg);
     }
+  }
+
+  .change-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    pointer-events: none;
+  }
+
+  .file-count {
+    color: var(--git-modified);
+    pointer-events: none;
+  }
+
+  .additions {
+    color: var(--git-added);
+    font-weight: 600;
+    pointer-events: none;
+  }
+
+  .deletions {
+    color: var(--git-deleted);
+    font-weight: 600;
+    pointer-events: none;
   }
 
   .file-path {
