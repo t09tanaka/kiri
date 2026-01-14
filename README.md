@@ -104,21 +104,15 @@ xterm.js doesn't natively support Synchronized Output Mode (DEC 2026), which Ink
 ## Roadmap
 
 ### v0.0.1 (Current)
-- [ ] Basic window structure
-- [ ] Sidebar + file tree
-- [ ] Terminal (single tab)
-- [ ] Editor (single tab)
-- [ ] Mode switching (Terminal ↔ Editor)
-
-### v0.0.2
-- [ ] Multiple tabs (terminal/editor)
-- [ ] Git diff display
-
-### v0.0.3
-- [ ] Search functionality
-- [ ] Multiple windows
-
-### v0.1.0
+- [x] Basic window structure
+- [x] Sidebar + file tree
+- [x] Terminal (multiple tabs, pane splitting)
+- [x] Editor (multiple tabs, syntax highlighting)
+- [x] Mode switching (Terminal ↔ Editor)
+- [x] Multiple tabs (terminal/editor)
+- [x] Git diff display (gutter + DiffView window)
+- [x] Search functionality (Quick Open + content search)
+- [x] Multiple windows
 - [ ] File operations (new/delete/rename)
 - [ ] Settings screen
 - [ ] Windows/Linux support
