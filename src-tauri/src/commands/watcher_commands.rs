@@ -2,8 +2,8 @@
 //! These are thin wrappers that delegate to the core logic in watcher.rs
 
 use super::watcher::{
-    classify_events, path_exists, FsChangeEvent, FsFileChangeEvent, GitChangeEvent,
-    WatcherInstance, WatcherState, DEFAULT_DEBOUNCE_MS,
+    classify_events, path_exists, FsChangeEvent, GitChangeEvent, WatcherInstance, WatcherState,
+    DEFAULT_DEBOUNCE_MS,
 };
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult};
@@ -46,16 +46,6 @@ pub fn start_watching(
                         "fs-changed",
                         FsChangeEvent {
                             path: watched_path.clone(),
-                        },
-                    );
-                }
-
-                // Emit file-level change event for editor auto-reload
-                if !classification.changed_files.is_empty() {
-                    let _ = app_handle.emit(
-                        "fs-file-changed",
-                        FsFileChangeEvent {
-                            paths: classification.changed_files.clone(),
                         },
                     );
                 }

@@ -6,7 +6,6 @@ export interface EditorTab {
   type: 'editor';
   filePath: string;
   modified: boolean;
-  externallyModified: boolean;
 }
 
 // Terminal pane types for split support
@@ -220,7 +219,6 @@ function createTabStore() {
           type: 'editor',
           filePath,
           modified: false,
-          externallyModified: false,
         };
 
         return {
@@ -282,24 +280,6 @@ function createTabStore() {
       update((state) => ({
         ...state,
         tabs: state.tabs.map((t) => (t.id === id && t.type === 'editor' ? { ...t, modified } : t)),
-      }));
-    },
-
-    setExternallyModified: (id: string, externallyModified: boolean) => {
-      update((state) => ({
-        ...state,
-        tabs: state.tabs.map((t) =>
-          t.id === id && t.type === 'editor' ? { ...t, externallyModified } : t
-        ),
-      }));
-    },
-
-    setExternallyModifiedByPath: (filePath: string, externallyModified: boolean) => {
-      update((state) => ({
-        ...state,
-        tabs: state.tabs.map((t) =>
-          t.type === 'editor' && t.filePath === filePath ? { ...t, externallyModified } : t
-        ),
       }));
     },
 
@@ -420,7 +400,6 @@ function createTabStore() {
             type: 'editor',
             filePath: pTab.filePath,
             modified: false,
-            externallyModified: false,
           });
         } else if (pTab.type === 'terminal') {
           terminalCount++;

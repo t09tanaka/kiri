@@ -106,26 +106,7 @@
           {/if}
         </span>
         <span class="tab-label">{getTabLabel(tab)}</span>
-        {#if tab.type === 'editor' && tab.externallyModified}
-          <span class="externally-modified-indicator" title="File changed externally">
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path
-                d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
-              ></path>
-              <line x1="12" y1="9" x2="12" y2="13"></line>
-              <line x1="12" y1="17" x2="12.01" y2="17"></line>
-            </svg>
-          </span>
-        {:else if tab.type === 'editor' && tab.modified}
+        {#if tab.type === 'editor' && tab.modified}
           <span class="modified-indicator"></span>
         {/if}
         <button
@@ -347,27 +328,6 @@
     background: var(--accent-color);
     flex-shrink: 0;
     animation: modifiedPulse 2s ease-in-out infinite;
-  }
-
-  .externally-modified-indicator {
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--warning-color, #f59e0b);
-    animation: externallyModifiedPulse 2s ease-in-out infinite;
-  }
-
-  @keyframes externallyModifiedPulse {
-    0%,
-    100% {
-      opacity: 0.7;
-      transform: scale(1);
-    }
-    50% {
-      opacity: 1;
-      transform: scale(1.1);
-    }
   }
 
   @keyframes modifiedPulse {

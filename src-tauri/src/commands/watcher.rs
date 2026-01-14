@@ -10,11 +10,6 @@ pub struct FsChangeEvent {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct FsFileChangeEvent {
-    pub paths: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct GitChangeEvent {
     pub repo_root: String,
 }
@@ -42,7 +37,6 @@ pub fn classify_path(path: &str) -> PathClassification {
 pub struct EventClassificationResult {
     pub fs_changed: bool,
     pub git_changed: bool,
-    pub changed_files: Vec<String>,
 }
 
 /// Process a list of debounced events and classify them
@@ -64,8 +58,6 @@ where
             }
             PathClassification::FsPath => {
                 result.fs_changed = true;
-                // Collect changed file paths
-                result.changed_files.push(path_str.to_string());
             }
         }
     }
@@ -216,7 +208,6 @@ mod tests {
         let result = classify_events(events.iter());
         assert!(!result.fs_changed);
         assert!(!result.git_changed);
-        assert!(result.changed_files.is_empty());
     }
 
     #[test]
@@ -234,9 +225,6 @@ mod tests {
         let result = classify_events(events.iter());
         assert!(result.fs_changed);
         assert!(!result.git_changed);
-        assert_eq!(result.changed_files.len(), 2);
-        assert!(result.changed_files.contains(&"/repo/src/main.rs".to_string()));
-        assert!(result.changed_files.contains(&"/repo/README.md".to_string()));
     }
 
     #[test]
@@ -254,7 +242,6 @@ mod tests {
         let result = classify_events(events.iter());
         assert!(!result.fs_changed);
         assert!(result.git_changed);
-        assert!(result.changed_files.is_empty());
     }
 
     #[test]
@@ -272,8 +259,6 @@ mod tests {
         let result = classify_events(events.iter());
         assert!(result.fs_changed);
         assert!(result.git_changed);
-        assert_eq!(result.changed_files.len(), 1);
-        assert!(result.changed_files.contains(&"/repo/src/main.rs".to_string()));
     }
 
     #[test]
@@ -286,7 +271,6 @@ mod tests {
         let result = classify_events(events.iter());
         assert!(!result.fs_changed);
         assert!(!result.git_changed);
-        assert!(result.changed_files.is_empty());
     }
 
     #[test]
@@ -310,24 +294,5 @@ mod tests {
         let result = EventClassificationResult::default();
         assert!(!result.fs_changed);
         assert!(!result.git_changed);
-        assert!(result.changed_files.is_empty());
-    }
-
-    #[test]
-    fn test_fs_file_change_event_struct() {
-        let event = FsFileChangeEvent {
-            paths: vec!["/path/to/file1".to_string(), "/path/to/file2".to_string()],
-        };
-        assert_eq!(event.paths.len(), 2);
-        assert!(event.paths.contains(&"/path/to/file1".to_string()));
-    }
-
-    #[test]
-    fn test_fs_file_change_event_clone() {
-        let event = FsFileChangeEvent {
-            paths: vec!["/path/to/file".to_string()],
-        };
-        let cloned = event.clone();
-        assert_eq!(cloned.paths, event.paths);
     }
 }
