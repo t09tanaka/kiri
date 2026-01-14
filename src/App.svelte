@@ -14,12 +14,15 @@
   import { PeekEditor } from '@/lib/components/peek';
   import { appStore } from '@/lib/stores/appStore';
   import { projectStore, isProjectOpen } from '@/lib/stores/projectStore';
+  import { settingsStore } from '@/lib/stores/settingsStore';
   import {
     loadMultiWindowSession,
     saveMainWindowState,
     saveOtherWindowState,
     clearOtherWindows,
     removeOtherWindow,
+    loadSettings,
+    saveSettings,
     type PersistedWindowState,
     type PersistedWindowGeometry,
   } from '@/lib/services/persistenceService';
@@ -271,6 +274,27 @@
       return;
     }
 
+    // Cmd+= or Cmd+Shift+=: Zoom in (increase font size)
+    if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+')) {
+      e.preventDefault();
+      settingsStore.zoomIn();
+      return;
+    }
+
+    // Cmd+-: Zoom out (decrease font size)
+    if ((e.metaKey || e.ctrlKey) && e.key === '-') {
+      e.preventDefault();
+      settingsStore.zoomOut();
+      return;
+    }
+
+    // Cmd+0: Reset zoom
+    if ((e.metaKey || e.ctrlKey) && e.key === '0') {
+      e.preventDefault();
+      settingsStore.resetZoom();
+      return;
+    }
+
     // Skip if typing in an input for global shortcuts
     const target = e.target as HTMLElement;
     const isTyping =
@@ -303,6 +327,10 @@
 
     // Initialize project store first (loads recent projects)
     await projectStore.init();
+
+    // Load global settings (font size)
+    const settings = await loadSettings();
+    settingsStore.restoreState(settings);
 
     const currentWindow = getCurrentWindow();
     windowLabel = currentWindow.label;
@@ -366,6 +394,16 @@
     // Auto-save when project changes (for new windows opening projects)
     const unsubscribeProjectStore = projectStore.subscribe(debouncedSave);
 
+    // Auto-save settings when they change (main window only)
+    let unsubscribeSettingsStore: (() => void) | null = null;
+    if (isMainWindow) {
+      unsubscribeSettingsStore = settingsStore.subscribe((state) => {
+        if (!isRestoring) {
+          saveSettings(state);
+        }
+      });
+    }
+
     // Save state before window closes
     const unlistenCloseRequested = await currentWindow.onCloseRequested(async (event) => {
       event.preventDefault();
@@ -404,6 +442,7 @@
       if (saveTimeout) clearTimeout(saveTimeout);
       unsubscribeTabStore();
       unsubscribeProjectStore();
+      unsubscribeSettingsStore?.();
       unlistenRestore?.();
       unlistenAssignIndex?.();
       window.removeEventListener('keydown', handleKeyDown);

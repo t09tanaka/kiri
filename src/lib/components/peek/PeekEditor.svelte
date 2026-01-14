@@ -2,13 +2,14 @@
   import { onMount, onDestroy } from 'svelte';
   import { fileService } from '@/lib/services/fileService';
   import { EditorView, lineNumbers } from '@codemirror/view';
-  import { EditorState, StateEffect, StateField } from '@codemirror/state';
+  import { EditorState, StateEffect, StateField, Compartment } from '@codemirror/state';
   import { Decoration, type DecorationSet } from '@codemirror/view';
   import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
   import { tags } from '@lezer/highlight';
   import { getLanguageExtension } from '../editor/languages';
   import { tabStore } from '@/lib/stores/tabStore';
   import { projectStore } from '@/lib/stores/projectStore';
+  import { fontSize } from '@/lib/stores/settingsStore';
   import { Spinner } from '@/lib/components/ui';
 
   interface Props {
@@ -25,6 +26,9 @@
   let error = $state<string | null>(null);
   let mounted = $state(false);
   let fileContent = $state<string | null>(null);
+
+  // Compartment for dynamic theme updates (font size)
+  const themeCompartment = new Compartment();
 
   // KIRI Mist theme colors - soft atmospheric palette (reused from Editor.svelte)
   const mistColors = {
@@ -84,60 +88,64 @@
   ]);
 
   // Custom Ethereal Mist editor theme for peek (read-only)
-  const mistTheme = EditorView.theme(
-    {
-      '&': {
-        height: '100%',
-        fontSize: '13px',
-        backgroundColor: mistColors.bg,
-        color: mistColors.fg,
+  function createMistTheme(editorFontSize: number) {
+    // Line number font size scales with editor font size
+    const lineNumberFontSize = Math.max(9, Math.round(editorFontSize * 0.85));
+    return EditorView.theme(
+      {
+        '&': {
+          height: '100%',
+          fontSize: `${editorFontSize}px`,
+          backgroundColor: mistColors.bg,
+          color: mistColors.fg,
+        },
+        '.cm-content': {
+          padding: '16px 0',
+          caretColor: mistColors.cursor,
+          fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
+          lineHeight: '1.7',
+          letterSpacing: '0.02em',
+        },
+        '.cm-cursor, .cm-dropCursor': {
+          borderLeftColor: 'transparent', // Hide cursor in read-only mode
+        },
+        '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection': {
+          backgroundColor: `${mistColors.selection} !important`,
+        },
+        '.cm-gutters': {
+          backgroundColor: mistColors.bg,
+          borderRight: '1px solid rgba(125, 211, 252, 0.08)',
+          color: mistColors.lineNumber,
+          paddingRight: '8px',
+        },
+        '.cm-lineNumbers .cm-gutterElement': {
+          minWidth: '48px',
+          padding: '0 12px 0 8px',
+          fontSize: `${lineNumberFontSize}px`,
+          fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+        },
+        '.cm-scroller': {
+          fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
+          overflow: 'auto',
+        },
+        '.cm-scroller::-webkit-scrollbar': {
+          width: '8px',
+          height: '8px',
+        },
+        '.cm-scroller::-webkit-scrollbar-track': {
+          background: 'transparent',
+        },
+        '.cm-scroller::-webkit-scrollbar-thumb': {
+          background: 'rgba(125, 211, 252, 0.12)',
+          borderRadius: '4px',
+        },
+        '.cm-scroller::-webkit-scrollbar-thumb:hover': {
+          background: 'rgba(125, 211, 252, 0.2)',
+        },
       },
-      '.cm-content': {
-        padding: '16px 0',
-        caretColor: mistColors.cursor,
-        fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
-        lineHeight: '1.7',
-        letterSpacing: '0.02em',
-      },
-      '.cm-cursor, .cm-dropCursor': {
-        borderLeftColor: 'transparent', // Hide cursor in read-only mode
-      },
-      '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection': {
-        backgroundColor: `${mistColors.selection} !important`,
-      },
-      '.cm-gutters': {
-        backgroundColor: mistColors.bg,
-        borderRight: '1px solid rgba(125, 211, 252, 0.08)',
-        color: mistColors.lineNumber,
-        paddingRight: '8px',
-      },
-      '.cm-lineNumbers .cm-gutterElement': {
-        minWidth: '48px',
-        padding: '0 12px 0 8px',
-        fontSize: '11px',
-        fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
-      },
-      '.cm-scroller': {
-        fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
-        overflow: 'auto',
-      },
-      '.cm-scroller::-webkit-scrollbar': {
-        width: '8px',
-        height: '8px',
-      },
-      '.cm-scroller::-webkit-scrollbar-track': {
-        background: 'transparent',
-      },
-      '.cm-scroller::-webkit-scrollbar-thumb': {
-        background: 'rgba(125, 211, 252, 0.12)',
-        borderRadius: '4px',
-      },
-      '.cm-scroller::-webkit-scrollbar-thumb:hover': {
-        background: 'rgba(125, 211, 252, 0.2)',
-      },
-    },
-    { dark: true }
-  );
+      { dark: true }
+    );
+  }
 
   // Line highlight effect and field
   const highlightLineEffect = StateEffect.define<number>();
@@ -237,12 +245,15 @@
       return;
     }
 
+    // Get current font size from store
+    const currentFontSize = $fontSize;
+
     const extensions = [
       lineNumbers(),
       EditorView.editable.of(false), // Read-only
       EditorView.contentAttributes.of({ tabindex: '0' }),
       syntaxHighlighting(mistHighlightStyle),
-      mistTheme,
+      themeCompartment.of(createMistTheme(currentFontSize)),
       highlightField,
     ];
 
@@ -306,6 +317,19 @@
     loadFile();
     // Use capture phase to intercept before terminal handles it
     document.addEventListener('keydown', handleKeyDown, true);
+
+    // Subscribe to font size changes and update editor theme
+    const unsubscribe = fontSize.subscribe((size) => {
+      if (view) {
+        view.dispatch({
+          effects: themeCompartment.reconfigure(createMistTheme(size)),
+        });
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   });
 
   onDestroy(() => {

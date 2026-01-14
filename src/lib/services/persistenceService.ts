@@ -4,6 +4,15 @@ import type { SidebarMode } from '@/lib/stores/appStore';
 
 const STORE_PATH = 'kiri-settings.json';
 
+// Global settings (shared across all windows)
+export interface PersistedSettings {
+  fontSize: number;
+}
+
+const DEFAULT_SETTINGS: PersistedSettings = {
+  fontSize: 13,
+};
+
 // Persisted tab structure (minimal data needed for restoration)
 export interface PersistedTab {
   id: string;
@@ -401,4 +410,46 @@ export async function clearOtherWindows(): Promise<void> {
   } catch (error) {
     console.error('Failed to clear other windows:', error);
   }
+}
+
+/**
+ * Load global settings (font size, etc.)
+ */
+export async function loadSettings(): Promise<PersistedSettings> {
+  try {
+    const s = await getStore();
+    await s.reload();
+
+    const settings = await s.get<PersistedSettings>('globalSettings');
+    if (!settings) {
+      return { ...DEFAULT_SETTINGS };
+    }
+
+    return {
+      fontSize: settings.fontSize ?? DEFAULT_SETTINGS.fontSize,
+    };
+  } catch (error) {
+    console.error('Failed to load settings:', error);
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+/**
+ * Save global settings
+ */
+export async function saveSettings(settings: PersistedSettings): Promise<void> {
+  try {
+    const s = await getStore();
+    await s.set('globalSettings', settings);
+    await s.save();
+  } catch (error) {
+    console.error('Failed to save settings:', error);
+  }
+}
+
+/**
+ * Get default settings
+ */
+export function getDefaultSettings(): PersistedSettings {
+  return { ...DEFAULT_SETTINGS };
 }

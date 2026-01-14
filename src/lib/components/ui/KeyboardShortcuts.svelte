@@ -50,6 +50,15 @@
       ],
     },
     {
+      title: 'View',
+      icon: '🔍',
+      shortcuts: [
+        { keys: ['⌘', '+'], description: 'Zoom In' },
+        { keys: ['⌘', '-'], description: 'Zoom Out' },
+        { keys: ['⌘', '0'], description: 'Reset Zoom' },
+      ],
+    },
+    {
       title: 'File Tree',
       icon: '📁',
       shortcuts: [

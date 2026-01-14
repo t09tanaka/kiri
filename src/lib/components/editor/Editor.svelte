@@ -3,6 +3,7 @@
   import { fileService } from '@/lib/services/fileService';
   import { gitService } from '@/lib/services/gitService';
   import { projectStore } from '@/lib/stores/projectStore';
+  import { fontSize } from '@/lib/stores/settingsStore';
   import { gitDiffExtension, updateGitDiff } from './extensions';
   import {
     EditorView,
@@ -11,7 +12,7 @@
     highlightActiveLine,
     drawSelection,
   } from '@codemirror/view';
-  import { EditorState } from '@codemirror/state';
+  import { EditorState, Compartment } from '@codemirror/state';
   import { defaultKeymap, indentWithTab } from '@codemirror/commands';
   import { syntaxHighlighting, HighlightStyle, bracketMatching } from '@codemirror/language';
   import { tags } from '@lezer/highlight';
@@ -32,6 +33,9 @@
   let error = $state<string | null>(null);
   let modified = $state(false);
   let isFocused = $state(false);
+
+  // Compartment for dynamic theme updates (font size)
+  const themeCompartment = new Compartment();
 
   // KIRI Mist theme colors - soft atmospheric palette
   const mistColors = {
@@ -115,109 +119,113 @@
     { tag: tags.processingInstruction, color: mistColors.fgMuted },
   ]);
 
-  // Custom Ethereal Mist editor theme
-  const mistTheme = EditorView.theme(
-    {
-      '&': {
-        height: '100%',
-        fontSize: '13px',
-        backgroundColor: mistColors.bg,
-        color: mistColors.fg,
-      },
-      '.cm-content': {
-        padding: '16px 0',
-        caretColor: mistColors.cursor,
-        fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
-        lineHeight: '1.7',
-        letterSpacing: '0.02em',
-      },
-      '.cm-cursor, .cm-dropCursor': {
-        borderLeftColor: mistColors.cursor,
-        borderLeftWidth: '2px',
-      },
-      '&.cm-focused .cm-cursor': {
-        borderLeftColor: mistColors.cursor,
-      },
-      '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection': {
-        backgroundColor: `${mistColors.selection} !important`,
-      },
-      '.cm-activeLine': {
-        backgroundColor: 'rgba(125, 211, 252, 0.03)',
-      },
-      '.cm-activeLineGutter': {
-        backgroundColor: 'rgba(125, 211, 252, 0.03)',
-      },
-      '.cm-gutters': {
-        backgroundColor: mistColors.bg,
-        borderRight: '1px solid rgba(125, 211, 252, 0.08)',
-        color: mistColors.lineNumber,
-        paddingRight: '8px',
-      },
-      '.cm-lineNumbers .cm-gutterElement': {
-        minWidth: '48px',
-        padding: '0 12px 0 8px',
-        fontSize: '11px',
-        fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
-      },
-      '.cm-lineNumbers .cm-gutterElement.cm-activeLineGutter': {
-        color: mistColors.lineNumberActive,
-        fontWeight: '500',
-      },
-      '.cm-foldGutter': {
-        width: '14px',
-      },
-      '.cm-matchingBracket': {
-        backgroundColor: 'rgba(125, 211, 252, 0.15)',
-        outline: '1px solid rgba(125, 211, 252, 0.5)',
-        borderRadius: '2px',
-      },
-      '.cm-nonmatchingBracket': {
-        backgroundColor: 'rgba(255, 69, 58, 0.2)',
-        outline: '1px solid rgba(255, 69, 58, 0.5)',
-      },
-      '.cm-scroller': {
-        fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
-        overflow: 'auto',
-      },
-      '.cm-scroller::-webkit-scrollbar': {
-        width: '8px',
-        height: '8px',
-      },
-      '.cm-scroller::-webkit-scrollbar-track': {
-        background: 'transparent',
-      },
-      '.cm-scroller::-webkit-scrollbar-thumb': {
-        background: 'rgba(125, 211, 252, 0.12)',
-        borderRadius: '4px',
-      },
-      '.cm-scroller::-webkit-scrollbar-thumb:hover': {
-        background: 'rgba(125, 211, 252, 0.2)',
-      },
-      '.cm-tooltip': {
-        backgroundColor: 'rgba(15, 20, 25, 0.95)',
-        backdropFilter: 'blur(12px)',
-        border: '1px solid rgba(125, 211, 252, 0.15)',
-        borderRadius: '8px',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(125, 211, 252, 0.1)',
-      },
-      '.cm-tooltip-autocomplete': {
-        '& > ul': {
+  // Custom Ethereal Mist editor theme (font size is dynamic)
+  function createMistTheme(editorFontSize: number) {
+    // Line number font size scales with editor font size
+    const lineNumberFontSize = Math.max(9, Math.round(editorFontSize * 0.85));
+    return EditorView.theme(
+      {
+        '&': {
+          height: '100%',
+          fontSize: `${editorFontSize}px`,
+          backgroundColor: mistColors.bg,
+          color: mistColors.fg,
+        },
+        '.cm-content': {
+          padding: '16px 0',
+          caretColor: mistColors.cursor,
+          fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
+          lineHeight: '1.7',
+          letterSpacing: '0.02em',
+        },
+        '.cm-cursor, .cm-dropCursor': {
+          borderLeftColor: mistColors.cursor,
+          borderLeftWidth: '2px',
+        },
+        '&.cm-focused .cm-cursor': {
+          borderLeftColor: mistColors.cursor,
+        },
+        '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection': {
+          backgroundColor: `${mistColors.selection} !important`,
+        },
+        '.cm-activeLine': {
+          backgroundColor: 'rgba(125, 211, 252, 0.03)',
+        },
+        '.cm-activeLineGutter': {
+          backgroundColor: 'rgba(125, 211, 252, 0.03)',
+        },
+        '.cm-gutters': {
+          backgroundColor: mistColors.bg,
+          borderRight: '1px solid rgba(125, 211, 252, 0.08)',
+          color: mistColors.lineNumber,
+          paddingRight: '8px',
+        },
+        '.cm-lineNumbers .cm-gutterElement': {
+          minWidth: '48px',
+          padding: '0 12px 0 8px',
+          fontSize: `${lineNumberFontSize}px`,
           fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
-          fontSize: '12px',
         },
-        '& > ul > li': {
-          padding: '6px 12px',
-          borderRadius: '4px',
-          margin: '2px 4px',
+        '.cm-lineNumbers .cm-gutterElement.cm-activeLineGutter': {
+          color: mistColors.lineNumberActive,
+          fontWeight: '500',
         },
-        '& > ul > li[aria-selected]': {
+        '.cm-foldGutter': {
+          width: '14px',
+        },
+        '.cm-matchingBracket': {
           backgroundColor: 'rgba(125, 211, 252, 0.15)',
-          color: mistColors.accent,
+          outline: '1px solid rgba(125, 211, 252, 0.5)',
+          borderRadius: '2px',
+        },
+        '.cm-nonmatchingBracket': {
+          backgroundColor: 'rgba(255, 69, 58, 0.2)',
+          outline: '1px solid rgba(255, 69, 58, 0.5)',
+        },
+        '.cm-scroller': {
+          fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
+          overflow: 'auto',
+        },
+        '.cm-scroller::-webkit-scrollbar': {
+          width: '8px',
+          height: '8px',
+        },
+        '.cm-scroller::-webkit-scrollbar-track': {
+          background: 'transparent',
+        },
+        '.cm-scroller::-webkit-scrollbar-thumb': {
+          background: 'rgba(125, 211, 252, 0.12)',
+          borderRadius: '4px',
+        },
+        '.cm-scroller::-webkit-scrollbar-thumb:hover': {
+          background: 'rgba(125, 211, 252, 0.2)',
+        },
+        '.cm-tooltip': {
+          backgroundColor: 'rgba(15, 20, 25, 0.95)',
+          backdropFilter: 'blur(12px)',
+          border: '1px solid rgba(125, 211, 252, 0.15)',
+          borderRadius: '8px',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(125, 211, 252, 0.1)',
+        },
+        '.cm-tooltip-autocomplete': {
+          '& > ul': {
+            fontFamily: "'JetBrains Mono', 'SF Mono', monospace",
+            fontSize: '12px',
+          },
+          '& > ul > li': {
+            padding: '6px 12px',
+            borderRadius: '4px',
+            margin: '2px 4px',
+          },
+          '& > ul > li[aria-selected]': {
+            backgroundColor: 'rgba(125, 211, 252, 0.15)',
+            color: mistColors.accent,
+          },
         },
       },
-    },
-    { dark: true }
-  );
+      { dark: true }
+    );
+  }
 
   function setModified(value: boolean) {
     if (modified !== value) {
@@ -299,13 +307,16 @@
       return;
     }
 
+    // Get current font size from store
+    const currentFontSize = $fontSize;
+
     const extensions = [
       lineNumbers(),
       highlightActiveLine(),
       bracketMatching(),
       drawSelection(),
       syntaxHighlighting(mistHighlightStyle),
-      mistTheme,
+      themeCompartment.of(createMistTheme(currentFontSize)),
       ...gitDiffExtension(),
       keymap.of([
         ...defaultKeymap,
@@ -354,6 +365,19 @@
 
   onMount(() => {
     loadFile();
+
+    // Subscribe to font size changes and update editor theme
+    const unsubscribe = fontSize.subscribe((size) => {
+      if (view) {
+        view.dispatch({
+          effects: themeCompartment.reconfigure(createMistTheme(size)),
+        });
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   });
 
   onDestroy(() => {

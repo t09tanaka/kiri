@@ -9,6 +9,7 @@
   import { CanvasAddon } from '@xterm/addon-canvas';
   import { tabStore, getAllPaneIds, type TerminalTab } from '@/lib/stores/tabStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
+  import { fontSize } from '@/lib/stores/settingsStore';
   import { peekStore } from '@/lib/stores/peekStore';
   import { openerService } from '@/lib/services/openerService';
   import { notificationService } from '@/lib/services/notificationService';
@@ -387,12 +388,15 @@
     // Check if there's an existing PTY for this pane (from store)
     const existingTerminalId = getExistingTerminalId();
 
+    // Get current font size from store
+    const currentFontSize = get(fontSize);
+
     terminal = new Terminal({
       cursorBlink: true,
       cursorStyle: 'bar',
       cursorWidth: 2,
       fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Menlo', monospace",
-      fontSize: 13,
+      fontSize: currentFontSize,
       fontWeight: '400',
       fontWeightBold: '500',
       lineHeight: 1.2,
@@ -791,6 +795,17 @@
     // Initialize notification service for OSC 9/777 notifications
     notificationService.init();
 
+    // Subscribe to font size changes and update terminal
+    const unsubscribeFontSize = fontSize.subscribe((size) => {
+      if (terminal) {
+        terminal.options.fontSize = size;
+        // Fit terminal to container after font size change
+        requestAnimationFrame(() => {
+          fitTerminalToContainer();
+        });
+      }
+    });
+
     // Use ResizeObserver to detect container size changes
     resizeObserver = new ResizeObserver((entries) => {
       // Only resize if the size actually changed meaningfully
@@ -819,6 +834,7 @@
     window.addEventListener('terminal-resize', handleTerminalResize);
 
     return () => {
+      unsubscribeFontSize();
       window.removeEventListener('terminal-resize', handleTerminalResize);
     };
   });
