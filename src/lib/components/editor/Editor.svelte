@@ -56,6 +56,15 @@
     property: '#f87171',
     operator: '#fdba74',
     punctuation: '#8b99a8',
+    // Markdown-specific colors
+    heading: '#7dd3fc',
+    emphasis: '#c4b5fd',
+    strong: '#f0abfc',
+    link: '#4ade80',
+    url: '#5c6b7a',
+    code: '#fbbf24',
+    quote: '#a5b4fc',
+    list: '#fdba74',
   };
 
   // Custom Mist highlight style
@@ -89,6 +98,21 @@
     { tag: tags.tagName, color: mistColors.keyword },
     { tag: tags.attributeName, color: mistColors.variable },
     { tag: tags.attributeValue, color: mistColors.string },
+    // Markdown-specific tags
+    { tag: tags.heading, color: mistColors.heading, fontWeight: '600' },
+    { tag: tags.heading1, color: mistColors.heading, fontWeight: '700', fontSize: '1.4em' },
+    { tag: tags.heading2, color: mistColors.heading, fontWeight: '600', fontSize: '1.2em' },
+    { tag: tags.heading3, color: mistColors.heading, fontWeight: '600', fontSize: '1.1em' },
+    { tag: tags.emphasis, color: mistColors.emphasis, fontStyle: 'italic' },
+    { tag: tags.strong, color: mistColors.strong, fontWeight: '600' },
+    { tag: tags.strikethrough, textDecoration: 'line-through', color: mistColors.fgMuted },
+    { tag: tags.link, color: mistColors.link, textDecoration: 'underline' },
+    { tag: tags.url, color: mistColors.url },
+    { tag: tags.monospace, color: mistColors.code, fontFamily: 'monospace' },
+    { tag: tags.quote, color: mistColors.quote, fontStyle: 'italic' },
+    { tag: tags.list, color: mistColors.list },
+    { tag: tags.contentSeparator, color: mistColors.fgMuted },
+    { tag: tags.processingInstruction, color: mistColors.fgMuted },
   ]);
 
   // Custom Ethereal Mist editor theme
