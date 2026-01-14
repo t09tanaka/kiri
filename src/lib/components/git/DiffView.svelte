@@ -4,9 +4,11 @@
 
   const allDiffs = $derived($gitStore.allDiffs);
   const isLoading = $derived($gitStore.isDiffsLoading);
-  const changeCount = $derived(
-    $gitStore.repoInfo?.statuses.filter((s) => s.status !== 'Ignored').length ?? 0
-  );
+  const additions = $derived($gitStore.repoInfo?.additions ?? 0);
+  const deletions = $derived($gitStore.repoInfo?.deletions ?? 0);
+
+  // Currently selected file in sidebar
+  let selectedFile = $state<string | null>(null);
 
   // Track which sections are visible and should render their content
   // Use $state to trigger reactivity when the set changes
@@ -84,6 +86,14 @@
 
   function getDiffId(path: string): string {
     return `diff-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
+  }
+
+  function scrollToFile(path: string) {
+    selectedFile = path;
+    const element = document.getElementById(getDiffId(path));
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   }
 
   // Count lines for placeholder height estimation
@@ -187,28 +197,6 @@
 </script>
 
 <div class="diff-view">
-  <div class="diff-header">
-    <div class="header-title">
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <circle cx="12" cy="12" r="10"></circle>
-        <path d="M12 6v6l4 2"></path>
-      </svg>
-      <span>CHANGES</span>
-      {#if changeCount > 0}
-        <span class="badge">{changeCount}</span>
-      {/if}
-    </div>
-  </div>
-
   {#if isLoading}
     <div class="loading-state">
       <svg
@@ -226,49 +214,80 @@
       <span>Loading diffs...</span>
     </div>
   {:else if allDiffs.length > 0}
-    <div class="diff-scroll">
-      {#each allDiffs as fileDiff (fileDiff.path)}
-        <div class="file-section" id={getDiffId(fileDiff.path)} use:lazyLoad={fileDiff.path}>
-          <div class="file-header" use:trackHeader={fileDiff.path}>
-            <span class="status-badge" style="color: {getStatusColor(fileDiff.status)}">
-              {getStatusIcon(fileDiff.status)}
-            </span>
-            <span class="file-name">{getFileName(fileDiff.path)}</span>
-            <span class="file-path">{fileDiff.path}</span>
-          </div>
-
-          <div class="diff-content">
-            {#if visibleSections.has(fileDiff.path)}
-              {@const lines = parseDiff(fileDiff.path, fileDiff.diff)}
-              {#if lines.length > 0}
-                {#each lines as line, index (index)}
-                  <div class="diff-line {line.type}">
-                    <span class="line-number">
-                      {line.lineNumber ?? ''}
-                    </span>
-                    <span class="line-prefix">
-                      {#if line.type === 'add'}+{:else if line.type === 'remove'}-{:else if line.type === 'context'}&nbsp;{/if}
-                    </span>
-                    <span class="line-content">{line.content}</span>
-                  </div>
-                {/each}
-              {:else}
-                <div class="no-diff">
-                  <span>No visible changes</span>
-                </div>
-              {/if}
-            {:else}
-              <!-- Placeholder while not visible -->
-              <div
-                class="diff-placeholder"
-                style="height: {estimateLineCount(fileDiff.diff) * 22}px"
-              >
-                <span class="placeholder-text">Scroll to load diff...</span>
-              </div>
-            {/if}
-          </div>
+    <div class="split-layout">
+      <!-- File list sidebar -->
+      <div class="file-sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">FILES</span>
+          <span class="file-stats">
+            <span class="stat-additions">+{additions}</span>
+            <span class="stat-deletions">-{deletions}</span>
+          </span>
         </div>
-      {/each}
+        <div class="file-list">
+          {#each allDiffs as fileDiff (fileDiff.path)}
+            <button
+              class="file-item"
+              class:selected={selectedFile === fileDiff.path}
+              onclick={() => scrollToFile(fileDiff.path)}
+              title={fileDiff.path}
+            >
+              <span class="file-status" style="color: {getStatusColor(fileDiff.status)}">
+                {getStatusIcon(fileDiff.status)}
+              </span>
+              <span class="file-item-name">{getFileName(fileDiff.path)}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Diff content area -->
+      <div class="diff-main">
+        <div class="diff-scroll">
+          {#each allDiffs as fileDiff (fileDiff.path)}
+            <div class="file-section" id={getDiffId(fileDiff.path)} use:lazyLoad={fileDiff.path}>
+              <div class="file-header" use:trackHeader={fileDiff.path}>
+                <span class="status-badge" style="color: {getStatusColor(fileDiff.status)}">
+                  {getStatusIcon(fileDiff.status)}
+                </span>
+                <span class="file-name">{getFileName(fileDiff.path)}</span>
+                <span class="file-path">{fileDiff.path}</span>
+              </div>
+
+              <div class="diff-content">
+                {#if visibleSections.has(fileDiff.path)}
+                  {@const lines = parseDiff(fileDiff.path, fileDiff.diff)}
+                  {#if lines.length > 0}
+                    {#each lines as line, index (index)}
+                      <div class="diff-line {line.type}">
+                        <span class="line-number">
+                          {line.lineNumber ?? ''}
+                        </span>
+                        <span class="line-prefix">
+                          {#if line.type === 'add'}+{:else if line.type === 'remove'}-{:else if line.type === 'context'}&nbsp;{/if}
+                        </span>
+                        <span class="line-content">{line.content}</span>
+                      </div>
+                    {/each}
+                  {:else}
+                    <div class="no-diff">
+                      <span>No visible changes</span>
+                    </div>
+                  {/if}
+                {:else}
+                  <!-- Placeholder while not visible -->
+                  <div
+                    class="diff-placeholder"
+                    style="height: {estimateLineCount(fileDiff.diff) * 22}px"
+                  >
+                    <span class="placeholder-text">Scroll to load diff...</span>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      </div>
     </div>
   {:else}
     <div class="no-selection">
@@ -300,43 +319,104 @@
     overflow: hidden;
   }
 
-  .diff-header {
+  .split-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* File sidebar */
+  .file-sidebar {
+    width: 200px;
+    min-width: 150px;
+    max-width: 300px;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border-color);
+    flex-shrink: 0;
+  }
+
+  .sidebar-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     height: var(--tabbar-height, 44px);
-    padding: 0 var(--space-4);
+    padding: 0 var(--space-3);
     background: var(--bg-tertiary);
     border-bottom: 1px solid var(--border-color);
     flex-shrink: 0;
   }
 
-  .header-title {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--text-muted);
+  .sidebar-title {
     font-size: 11px;
     font-weight: 500;
     letter-spacing: 0.08em;
+    color: var(--text-muted);
   }
 
-  .header-title svg {
-    color: var(--git-modified);
-    opacity: 0.8;
+  .file-stats {
+    display: flex;
+    gap: var(--space-2);
+    font-size: 10px;
+    font-weight: 600;
   }
 
-  .badge {
+  .stat-additions {
+    color: var(--git-added);
+  }
+
+  .stat-deletions {
+    color: var(--git-deleted);
+  }
+
+  .file-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-2) 0;
+  }
+
+  .file-item {
     display: flex;
     align-items: center;
-    justify-content: center;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
-    background: var(--git-modified);
-    color: var(--bg-primary);
+    gap: var(--space-2);
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--transition-fast);
+  }
+
+  .file-item:hover {
+    background: var(--bg-elevated);
+  }
+
+  .file-item.selected {
+    background: var(--accent-subtle);
+  }
+
+  .file-status {
     font-size: 10px;
     font-weight: 700;
-    border-radius: 9px;
+    flex-shrink: 0;
+  }
+
+  .file-item-name {
+    font-size: 12px;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Diff main area */
+  .diff-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .diff-scroll {
