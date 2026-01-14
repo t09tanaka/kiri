@@ -74,6 +74,13 @@
   // When Ink renders at exactly terminal height, unintended scrolling occurs
   const PTY_ROW_MARGIN = 1;
 
+  // Resize stability: buffer output during resize to prevent partial frame rendering
+  // This acts as an additional sync layer on top of Mode 2026
+  let isResizing = false;
+  let resizeBuffer = '';
+  let resizeStabilityTimeout: ReturnType<typeof setTimeout> | null = null;
+  const RESIZE_STABILITY_DELAY = 50; // ms to wait after resize before flushing
+
   // Watch for tab activation to focus terminal
   const isActiveTab = $derived($tabStore.activeTabId === tabId);
 
@@ -514,7 +521,12 @@
       // Flush all pending writes in a single animation frame
       const flushWrites = () => {
         if (pendingWrite && terminal) {
-          terminal.write(pendingWrite);
+          // If resizing, add to resize buffer instead of writing directly
+          if (isResizing) {
+            resizeBuffer += pendingWrite;
+          } else {
+            terminal.write(pendingWrite);
+          }
           pendingWrite = '';
         }
         writeScheduled = false;
@@ -522,6 +534,11 @@
 
       // Schedule a batched write using requestAnimationFrame
       const scheduleWrite = (data: string) => {
+        // If resizing, add directly to resize buffer for later flush
+        if (isResizing) {
+          resizeBuffer += data;
+          return;
+        }
         pendingWrite += data;
         if (!writeScheduled) {
           writeScheduled = true;
@@ -686,8 +703,34 @@
     }
   }
 
+  /**
+   * Flush the resize buffer after stability delay
+   */
+  function flushResizeBuffer() {
+    if (resizeBuffer && terminal) {
+      terminal.write(resizeBuffer);
+      resizeBuffer = '';
+    }
+    isResizing = false;
+  }
+
+  /**
+   * Schedule the resize buffer flush after stability delay
+   */
+  function scheduleResizeFlush() {
+    if (resizeStabilityTimeout) {
+      clearTimeout(resizeStabilityTimeout);
+    }
+    resizeStabilityTimeout = setTimeout(() => {
+      requestAnimationFrame(flushResizeBuffer);
+    }, RESIZE_STABILITY_DELAY);
+  }
+
   function handleResize() {
     if (terminal) {
+      // Start resize buffering to prevent partial frame rendering
+      isResizing = true;
+
       // Debounce resize to avoid rapid calls during window resize
       if (resizeTimeout) {
         clearTimeout(resizeTimeout);
@@ -696,6 +739,8 @@
         // RAF to ensure layout is complete
         requestAnimationFrame(() => {
           fitTerminalToContainer();
+          // Schedule buffer flush after resize completes
+          scheduleResizeFlush();
         });
       }, 16); // ~1 frame at 60fps
     }
@@ -723,9 +768,13 @@
 
     // Listen for custom terminal-resize event (dispatched when pane sizes change)
     const handleTerminalResize = () => {
+      // Start resize buffering
+      isResizing = true;
       // Force immediate resize without debounce
       requestAnimationFrame(() => {
         fitTerminalToContainer();
+        // Schedule buffer flush after resize completes
+        scheduleResizeFlush();
       });
     };
     window.addEventListener('terminal-resize', handleTerminalResize);
@@ -738,6 +787,10 @@
   onDestroy(() => {
     if (resizeTimeout) {
       clearTimeout(resizeTimeout);
+    }
+
+    if (resizeStabilityTimeout) {
+      clearTimeout(resizeStabilityTimeout);
     }
 
     window.removeEventListener('resize', handleResize);
