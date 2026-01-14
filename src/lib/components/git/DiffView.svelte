@@ -1,7 +1,6 @@
 <script lang="ts">
   import { gitStore, getStatusIcon, getStatusColor } from '@/lib/stores/gitStore';
   import { onDestroy } from 'svelte';
-  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
   const allDiffs = $derived($gitStore.allDiffs);
   const isLoading = $derived($gitStore.isDiffsLoading);
@@ -10,10 +9,12 @@
   );
 
   // Track which sections are visible and should render their content
-  const visibleSections = new SvelteSet<string>();
+  // Use $state to trigger reactivity when the set changes
+  let visibleSections = $state(new Set<string>());
 
-  // Track visible file headers for active state
-  const visibleHeaders = new SvelteMap<string, number>();
+  // Track visible file headers for active state (non-reactive, used only in $effect)
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally non-reactive
+  const visibleHeaders = new Map<string, number>();
 
   interface DiffLine {
     type: 'add' | 'remove' | 'context' | 'header';
@@ -21,8 +22,9 @@
     lineNumber: number | null;
   }
 
-  // Cache parsed diffs to avoid re-parsing
-  const parsedDiffCache = new SvelteMap<string, DiffLine[]>();
+  // Cache parsed diffs to avoid re-parsing (non-reactive cache)
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally non-reactive to avoid state_unsafe_mutation
+  const parsedDiffCache = new Map<string, DiffLine[]>();
 
   function parseDiff(path: string, diffContent: string): DiffLine[] {
     if (parsedDiffCache.has(path)) {
@@ -30,8 +32,9 @@
     }
 
     if (!diffContent) {
-      parsedDiffCache.set(path, []);
-      return [];
+      const result: DiffLine[] = [];
+      parsedDiffCache.set(path, result);
+      return result;
     }
 
     const lines: DiffLine[] = [];
@@ -95,7 +98,8 @@
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
-            visibleSections.add(path);
+            // Create a new Set to trigger reactivity
+            visibleSections = new Set([...visibleSections, path]);
             // Once visible, no need to observe anymore
             observer.unobserve(node);
           }
@@ -177,7 +181,7 @@
   $effect(() => {
     if (allDiffs) {
       parsedDiffCache.clear();
-      visibleSections.clear();
+      visibleSections = new Set<string>();
     }
   });
 </script>

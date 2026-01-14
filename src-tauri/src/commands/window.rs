@@ -47,7 +47,7 @@ pub fn create_window(
 /// Create a new window specifically for DiffView
 /// Opens a smaller window with URL parameter to indicate diffview mode
 #[tauri::command]
-pub fn create_diffview_window(app: AppHandle) -> Result<String, String> {
+pub fn create_diffview_window(app: AppHandle, project_path: String) -> Result<String, String> {
     let id = DIFFVIEW_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("diffview-{}", id);
 
@@ -55,7 +55,11 @@ pub fn create_diffview_window(app: AppHandle) -> Result<String, String> {
     let win_width = 800.0;
     let win_height = 600.0;
 
-    WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("?mode=diffview".into()))
+    // URL encode the project path for safe transmission
+    let encoded_path = urlencoding::encode(&project_path);
+    let url = format!("?mode=diffview&path={}", encoded_path);
+
+    WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
         .title("Kiri - Changes")
         .inner_size(win_width, win_height)
         .min_inner_size(400.0, 300.0)

@@ -2,8 +2,7 @@
   import { FileTree } from '@/lib/components/filetree';
   import { gitStore } from '@/lib/stores/gitStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
-  import { invoke } from '@tauri-apps/api/core';
-  import { emit } from '@tauri-apps/api/event';
+  import { windowService } from '@/lib/services/windowService';
 
   interface Props {
     width?: number;
@@ -18,14 +17,13 @@
   );
 
   async function openDiffViewWindow() {
+    const projectPath = $currentProjectPath;
+    if (!projectPath) {
+      console.warn('No project path available');
+      return;
+    }
     try {
-      await invoke('create_diffview_window');
-      // Emit project path to the new window after a short delay
-      if ($currentProjectPath) {
-        setTimeout(async () => {
-          await emit('project-path-changed', { path: $currentProjectPath });
-        }, 500);
-      }
+      await windowService.createDiffViewWindow(projectPath);
     } catch (error) {
       console.error('Failed to open DiffView window:', error);
     }

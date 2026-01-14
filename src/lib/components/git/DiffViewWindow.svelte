@@ -3,47 +3,45 @@
   import { gitStore } from '@/lib/stores/gitStore';
   import { projectStore, currentProjectPath } from '@/lib/stores/projectStore';
   import { onMount, onDestroy } from 'svelte';
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+  import { eventService, type UnlistenFn } from '@/lib/services/eventService';
 
   // Local loading state for this window
   let isLoading = $state(false);
 
   // Real-time update listeners
-  let unlistenProject: UnlistenFn | null = null;
   let unlistenGitStatus: UnlistenFn | null = null;
   let unlistenFsChanged: UnlistenFn | null = null;
   let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   onMount(async () => {
-    // Listen for project path changes from main window
-    unlistenProject = await listen<{ path: string }>('project-path-changed', async (event) => {
-      if (event.payload.path) {
-        projectStore.setCurrentPath(event.payload.path);
-        await loadDiffs(event.payload.path);
-      }
-    });
+    // Get project path from URL parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    const pathFromUrl = urlParams.get('path');
+
+    if (pathFromUrl) {
+      const decodedPath = decodeURIComponent(pathFromUrl);
+      projectStore.setCurrentPath(decodedPath);
+      await loadDiffs(decodedPath);
+    }
 
     // Listen for git status changes (real-time updates)
-    unlistenGitStatus = await listen<{ repo_root: string }>('git-status-changed', (event) => {
-      const path = $currentProjectPath;
-      if (path && path.startsWith(event.payload.repo_root)) {
-        scheduleRefresh();
+    unlistenGitStatus = await eventService.listen<{ repo_root: string }>(
+      'git-status-changed',
+      (event) => {
+        const path = $currentProjectPath;
+        if (path && path.startsWith(event.payload.repo_root)) {
+          scheduleRefresh();
+        }
       }
-    });
+    );
 
     // Listen for file system changes (real-time updates)
-    unlistenFsChanged = await listen<{ path: string }>('fs-changed', (event) => {
+    unlistenFsChanged = await eventService.listen<{ path: string }>('fs-changed', (event) => {
       const path = $currentProjectPath;
       if (path && event.payload.path === path) {
         scheduleRefresh();
       }
     });
-
-    // Get initial project path from main window or use current
-    const path = $currentProjectPath;
-    if (path) {
-      await loadDiffs(path);
-    }
   });
 
   onDestroy(() => {
@@ -51,7 +49,6 @@
     if (refreshDebounceTimer) {
       clearTimeout(refreshDebounceTimer);
     }
-    unlistenProject?.();
     unlistenGitStatus?.();
     unlistenFsChanged?.();
   });
