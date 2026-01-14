@@ -83,6 +83,24 @@ kiri/
 | Editor | [CodeMirror 6](https://codemirror.net/) |
 | Terminal | [xterm.js](https://xtermjs.org/) |
 
+## Terminal: Ink-based CLI Compatibility
+
+The terminal is optimized for [Ink](https://github.com/vadimdemedes/ink)-based CLI tools like Claude Code, Aider, and other AI coding agents.
+
+### Implemented Countermeasures
+
+| Issue | Solution |
+|-------|----------|
+| Partial frame rendering causes flickering | Synchronized Output Mode (DEC Private Mode 2026) buffering |
+| Spinner/progress bar breaks at 140+ columns | Terminal width capped at 120 columns |
+| Full-height rendering causes unwanted scrolling | PTY rows reduced by 1 (Ink issue [#450](https://github.com/vadimdemedes/ink/issues/450)) |
+| Resize during output causes artifacts | Resize buffering with delayed flush |
+| Incorrect initial size breaks layout | Layout completion waiting before PTY creation |
+
+### Why These Are Needed
+
+xterm.js doesn't natively support Synchronized Output Mode (DEC 2026), which Ink uses to batch screen updates. Without manual buffering, rapid output from AI agents appears as chaotic flickering instead of smooth animations.
+
 ## Roadmap
 
 ### v0.0.1 (Current)

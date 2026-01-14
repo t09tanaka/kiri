@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { fileService } from '@/lib/services/fileService';
+  import { gitService } from '@/lib/services/gitService';
+  import { projectStore } from '@/lib/stores/projectStore';
+  import { gitDiffExtension, updateGitDiff } from './extensions';
   import {
     EditorView,
     keymap,
@@ -212,11 +215,35 @@
     try {
       const content = await fileService.readFile(filePath);
       createEditor(content);
+      // Load git diff after editor is created (fire-and-forget to avoid blocking)
+      loadGitDiff();
     } catch (e) {
       error = String(e);
       console.error('Failed to read file:', e);
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadGitDiff() {
+    if (!filePath || !view) return;
+
+    const repoPath = projectStore.getCurrentPath();
+    if (!repoPath) return;
+
+    try {
+      // Convert absolute file path to relative path
+      const relativePath = filePath.startsWith(repoPath + '/')
+        ? filePath.slice(repoPath.length + 1)
+        : filePath;
+
+      const diff = await gitService.getFileDiff(repoPath, relativePath);
+      // Only update if view still exists (might have been destroyed during await)
+      if (view) {
+        updateGitDiff(view, diff);
+      }
+    } catch {
+      // Not a git repo or file not tracked - silently ignore
     }
   }
 
@@ -228,6 +255,8 @@
       await fileService.writeFile(filePath, content);
       setModified(false);
       onSave?.();
+      // Refresh git diff after save
+      await loadGitDiff();
     } catch (e) {
       console.error('Failed to save file:', e);
       error = String(e);
@@ -246,6 +275,7 @@
       drawSelection(),
       syntaxHighlighting(mistHighlightStyle),
       mistTheme,
+      ...gitDiffExtension(),
       keymap.of([
         ...defaultKeymap,
         indentWithTab,
