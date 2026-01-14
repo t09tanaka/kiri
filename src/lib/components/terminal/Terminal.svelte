@@ -69,6 +69,11 @@
   // Wide terminals (140+ cols) can cause spinner glitches due to cursor movement calculations
   const MAX_TERMINAL_COLS = 120;
 
+  // Reserve 1 row for PTY to prevent Ink full-height flickering issue
+  // See: https://github.com/vadimdemedes/ink/issues/450
+  // When Ink renders at exactly terminal height, unintended scrolling occurs
+  const PTY_ROW_MARGIN = 1;
+
   // Watch for tab activation to focus terminal
   const isActiveTab = $derived($tabStore.activeTabId === tabId);
 
@@ -476,11 +481,12 @@
         // Now create PTY with correct initial size
         // Cap cols to MAX_TERMINAL_COLS to prevent Ink spinner issues
         const cols = Math.min(terminal.cols, MAX_TERMINAL_COLS);
-        const rows = terminal.rows;
+        // Apply row margin to prevent Ink full-height flickering
+        const rows = Math.max(terminal.rows - PTY_ROW_MARGIN, 10);
 
         // If we capped the cols, resize the terminal to match
         if (terminal.cols > MAX_TERMINAL_COLS) {
-          terminal.resize(cols, rows);
+          terminal.resize(cols, terminal.rows);
         }
 
         terminalId = await terminalService.createTerminal(cwd, cols, rows);
@@ -500,6 +506,10 @@
       let inSyncMode = false;
       let pendingWrite = '';
       let writeScheduled = false;
+      let syncFrameCount = 0; // Debug: count synced frames
+
+      // Debug flag - set to true to enable sync mode logging
+      const DEBUG_SYNC_MODE = false;
 
       // Flush all pending writes in a single animation frame
       const flushWrites = () => {
@@ -534,6 +544,12 @@
                 syncBuffer += data.substring(0, endIndex);
                 // Schedule the entire buffered frame for next animation frame
                 scheduleWrite(syncBuffer);
+                syncFrameCount++;
+                if (DEBUG_SYNC_MODE) {
+                  console.log(
+                    `[SyncOutput] Frame #${syncFrameCount} flushed (${syncBuffer.length} bytes)`
+                  );
+                }
                 syncBuffer = '';
                 inSyncMode = false;
                 // Continue processing remaining data
@@ -553,6 +569,9 @@
                 }
                 inSyncMode = true;
                 syncBuffer = '';
+                if (DEBUG_SYNC_MODE) {
+                  console.log('[SyncOutput] Sync mode started');
+                }
                 // Continue processing after start marker
                 data = data.substring(startIndex + SYNC_START.length);
               } else {
@@ -585,10 +604,12 @@
         }
       });
 
-      // Handle resize
+      // Handle resize - apply row margin for Ink apps
       terminal.onResize(({ cols, rows }) => {
         if (terminalId !== null) {
-          terminalService.resizeTerminal(terminalId, cols, rows);
+          // Apply row margin to prevent Ink full-height flickering
+          const ptyRows = Math.max(rows - PTY_ROW_MARGIN, 10);
+          terminalService.resizeTerminal(terminalId, cols, ptyRows);
         }
       });
 
@@ -658,11 +679,8 @@
         terminal.resize(cols, rows);
       }
 
-      // Explicitly send resize to PTY after fit
-      // This ensures Ink-based apps get the correct size immediately
-      if (terminalId !== null && cols > 0 && rows > 0) {
-        terminalService.resizeTerminal(terminalId, cols, rows);
-      }
+      // Note: PTY resize is handled by terminal.onResize handler
+      // which applies row margin for Ink-based apps
     } catch (e) {
       console.warn('FitAddon.fit() error:', e);
     }
