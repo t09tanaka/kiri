@@ -45,28 +45,47 @@ pub fn create_window(
 }
 
 /// Create a new window specifically for DiffView
-/// Opens a smaller window with URL parameter to indicate diffview mode
+/// Opens at the same size and position as the main window
 #[tauri::command]
 pub fn create_diffview_window(app: AppHandle, project_path: String) -> Result<String, String> {
     let id = DIFFVIEW_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("diffview-{}", id);
 
-    // Default size for diffview window (narrower, focused on diffs)
-    let win_width = 800.0;
-    let win_height = 600.0;
+    // Get main window's size and position, or use defaults
+    let main_window = app.get_webview_window("main");
+    let (win_width, win_height, pos_x, pos_y) = match main_window {
+        Some(window) => {
+            let scale_factor = window.scale_factor().unwrap_or(1.0);
+            let size = window
+                .inner_size()
+                .map(|s| (s.width as f64 / scale_factor, s.height as f64 / scale_factor))
+                .unwrap_or((1200.0, 800.0));
+            let position = window
+                .outer_position()
+                .map(|p| (p.x as f64 / scale_factor, p.y as f64 / scale_factor))
+                .ok();
+            (size.0, size.1, position.map(|p| p.0), position.map(|p| p.1))
+        }
+        None => (1200.0, 800.0, None, None),
+    };
 
     // URL encode the project path for safe transmission
     let encoded_path = urlencoding::encode(&project_path);
     let url = format!("?mode=diffview&path={}", encoded_path);
 
-    WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
+    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
         .title("Kiri - Changes")
         .inner_size(win_width, win_height)
         .min_inner_size(400.0, 300.0)
         .visible(true)
-        .focused(true)
-        .build()
-        .map_err(|e| e.to_string())?;
+        .focused(true);
+
+    // Set position if available
+    if let (Some(x), Some(y)) = (pos_x, pos_y) {
+        builder = builder.position(x, y);
+    }
+
+    builder.build().map_err(|e| e.to_string())?;
 
     Ok(label)
 }
