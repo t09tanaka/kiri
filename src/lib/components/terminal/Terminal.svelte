@@ -10,6 +10,7 @@
   import { tabStore, getAllPaneIds, type TerminalTab } from '@/lib/stores/tabStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
   import { peekStore } from '@/lib/stores/peekStore';
+  import { openerService } from '@/lib/services/openerService';
   import { createFilePathLinkProvider } from '@/lib/services/filePathLinkProvider';
   import {
     getSuggestions,
@@ -396,7 +397,11 @@
 
     fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
-    terminal.loadAddon(new WebLinksAddon());
+    terminal.loadAddon(
+      new WebLinksAddon((_event, uri) => {
+        openerService.openUrl(uri);
+      })
+    );
     terminal.loadAddon(new CanvasAddon());
 
     // Register file path link provider for peek editor
