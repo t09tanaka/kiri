@@ -27,12 +27,30 @@ export default [
       },
     },
   },
+  // Restrict direct Tauri API imports in components
+  {
+    files: ['src/lib/components/**/*.svelte', 'src/lib/components/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@tauri-apps/api/*', '@tauri-apps/plugin-*'],
+              message:
+                'Components should not import Tauri APIs directly. Use service layer instead (src/lib/services/).',
+            },
+          ],
+        },
+      ],
+    },
+  },
   {
     rules: {
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
   {
-    ignores: ['src-tauri/**/*', 'dist/**/*', 'node_modules/**/*'],
+    ignores: ['src-tauri/**/*', 'dist/**/*', 'node_modules/**/*', 'coverage/**/*'],
   },
 ];
