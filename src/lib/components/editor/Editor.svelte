@@ -2,7 +2,9 @@
   import { onMount, onDestroy } from 'svelte';
   import { fileService } from '@/lib/services/fileService';
   import { gitService } from '@/lib/services/gitService';
+  import { eventService } from '@/lib/services/eventService';
   import { projectStore } from '@/lib/stores/projectStore';
+  import { tabStore } from '@/lib/stores/tabStore';
   import { gitDiffExtension, updateGitDiff } from './extensions';
   import {
     EditorView,
@@ -32,6 +34,7 @@
   let error = $state<string | null>(null);
   let modified = $state(false);
   let isFocused = $state(false);
+  let unlistenFileChange: (() => void) | null = null;
 
   // KIRI Mist theme colors - soft atmospheric palette
   const mistColors = {
@@ -235,6 +238,8 @@
     loading = true;
     error = null;
     setModified(false);
+    // Clear externally modified flag when file is reloaded
+    tabStore.setExternallyModifiedByPath(filePath, false);
 
     try {
       const content = await fileService.readFile(filePath);
@@ -278,6 +283,8 @@
       const content = view.state.doc.toString();
       await fileService.writeFile(filePath, content);
       setModified(false);
+      // Clear externally modified flag when file is saved
+      tabStore.setExternallyModifiedByPath(filePath, false);
       onSave?.();
       // Refresh git diff after save
       await loadGitDiff();
@@ -345,13 +352,46 @@
     });
   }
 
+  interface FsFileChangeEvent {
+    paths: string[];
+  }
+
+  function handleExternalFileChange(changedPaths: string[]) {
+    if (!filePath) return;
+
+    // Check if current file is in the changed paths
+    const isCurrentFileChanged = changedPaths.some((path) => path === filePath);
+    if (!isCurrentFileChanged) return;
+
+    if (modified) {
+      // File has unsaved changes - mark as externally modified in tab
+      tabStore.setExternallyModifiedByPath(filePath, true);
+    } else {
+      // No unsaved changes - reload the file
+      loadFile();
+    }
+  }
+
+  async function setupFileChangeListener() {
+    unlistenFileChange = await eventService.listen<FsFileChangeEvent>(
+      'fs-file-changed',
+      (event) => {
+        handleExternalFileChange(event.payload.paths);
+      }
+    );
+  }
+
   onMount(() => {
     loadFile();
+    setupFileChangeListener();
   });
 
   onDestroy(() => {
     if (view) {
       view.destroy();
+    }
+    if (unlistenFileChange) {
+      unlistenFileChange();
     }
   });
 
