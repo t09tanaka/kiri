@@ -29,6 +29,7 @@ export default defineConfig({
             '@xterm/addon-fit',
             '@xterm/addon-web-links',
             '@xterm/addon-canvas',
+            '@xterm/addon-webgl',
           ],
         },
       },

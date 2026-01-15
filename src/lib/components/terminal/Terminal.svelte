@@ -395,12 +395,14 @@
     }
 
     // Dynamic imports for xterm modules
-    const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { CanvasAddon }] = await Promise.all([
-      import('@xterm/xterm'),
-      import('@xterm/addon-fit'),
-      import('@xterm/addon-web-links'),
-      import('@xterm/addon-canvas'),
-    ]);
+    const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { CanvasAddon }, { WebglAddon }] =
+      await Promise.all([
+        import('@xterm/xterm'),
+        import('@xterm/addon-fit'),
+        import('@xterm/addon-web-links'),
+        import('@xterm/addon-canvas'),
+        import('@xterm/addon-webgl'),
+      ]);
 
     // Get current font size from store
     const currentFontSize = get(fontSize);
@@ -455,7 +457,23 @@
         openerService.openUrl(uri);
       })
     );
-    terminal.loadAddon(new CanvasAddon());
+
+    // Try WebGL first for GPU-accelerated rendering (better performance)
+    // Fall back to Canvas if WebGL is not available or fails
+    let webglAddon: InstanceType<typeof WebglAddon> | null = null;
+    try {
+      webglAddon = new WebglAddon();
+      // Handle WebGL context loss - browser may drop context for various reasons (OOM, suspend, etc.)
+      webglAddon.onContextLoss(() => {
+        console.warn('[Terminal] WebGL context lost, falling back to Canvas renderer');
+        webglAddon?.dispose();
+        terminal.loadAddon(new CanvasAddon());
+      });
+      terminal.loadAddon(webglAddon);
+    } catch (e) {
+      console.warn('[Terminal] WebGL not available, using Canvas renderer:', e);
+      terminal.loadAddon(new CanvasAddon());
+    }
 
     // Register file path link provider for peek editor
     terminal.registerLinkProvider(
