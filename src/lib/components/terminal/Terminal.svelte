@@ -3,10 +3,8 @@
   import { get } from 'svelte/store';
   import { terminalService } from '@/lib/services/terminalService';
   import { eventService, type UnlistenFn } from '@/lib/services/eventService';
-  import { Terminal } from '@xterm/xterm';
-  import { FitAddon } from '@xterm/addon-fit';
-  import { WebLinksAddon } from '@xterm/addon-web-links';
-  import { CanvasAddon } from '@xterm/addon-canvas';
+  import type { Terminal as TerminalType } from '@xterm/xterm';
+  import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
   import { tabStore, getAllPaneIds, type TerminalTab } from '@/lib/stores/tabStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
   import { fontSize } from '@/lib/stores/settingsStore';
@@ -20,7 +18,9 @@
     type Suggestion,
   } from '@/lib/services/suggestService';
   import TerminalSuggest from './TerminalSuggest.svelte';
-  import '@xterm/xterm/css/xterm.css';
+
+  // Lazy-loaded xterm modules (loaded on first terminal creation)
+  let xtermLoaded = false;
 
   interface TerminalOutput {
     id: number;
@@ -50,8 +50,8 @@
   let terminalWrapper: HTMLDivElement;
   let terminalPadding: HTMLDivElement;
   let terminalContainer: HTMLDivElement;
-  let terminal: Terminal | null = null;
-  let fitAddon: FitAddon | null = null;
+  let terminal: TerminalType | null = null;
+  let fitAddon: FitAddonType | null = null;
   let terminalId: number | null = null;
   let unlisten: UnlistenFn | null = null;
   let resizeObserver: ResizeObserver | null = null;
@@ -387,6 +387,20 @@
 
     // Check if there's an existing PTY for this pane (from store)
     const existingTerminalId = getExistingTerminalId();
+
+    // Lazy load xterm and addons on first use
+    if (!xtermLoaded) {
+      await import('@xterm/xterm/css/xterm.css');
+      xtermLoaded = true;
+    }
+
+    // Dynamic imports for xterm modules
+    const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { CanvasAddon }] = await Promise.all([
+      import('@xterm/xterm'),
+      import('@xterm/addon-fit'),
+      import('@xterm/addon-web-links'),
+      import('@xterm/addon-canvas'),
+    ]);
 
     // Get current font size from store
     const currentFontSize = get(fontSize);

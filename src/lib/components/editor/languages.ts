@@ -1,40 +1,86 @@
-import { javascript } from '@codemirror/lang-javascript';
-import { rust } from '@codemirror/lang-rust';
-import { json } from '@codemirror/lang-json';
-import { markdown } from '@codemirror/lang-markdown';
-import { css } from '@codemirror/lang-css';
-import { html } from '@codemirror/lang-html';
 import type { Extension } from '@codemirror/state';
 
-export function getLanguageExtension(filename: string): Extension | null {
-  const ext = filename.split('.').pop()?.toLowerCase();
+// Cache for loaded language extensions to avoid re-importing
+
+const languageCache = new Map<string, Extension>();
+
+/**
+ * Get the file extension from a filename
+ */
+function getFileExtension(filename: string): string | undefined {
+  return filename.split('.').pop()?.toLowerCase();
+}
+
+/**
+ * Get language extension for CodeMirror editor (async, lazy-loaded)
+ * Languages are loaded on-demand and cached for reuse
+ */
+export async function getLanguageExtension(filename: string): Promise<Extension | null> {
+  const ext = getFileExtension(filename);
+  if (!ext) return null;
+
+  // Check cache first
+  const cacheKey = ext;
+  if (languageCache.has(cacheKey)) {
+    return languageCache.get(cacheKey) || null;
+  }
+
+  let langExt: Extension | null = null;
 
   switch (ext) {
     case 'ts':
-    case 'tsx':
-      return javascript({ typescript: true, jsx: ext === 'tsx' });
+    case 'tsx': {
+      const { javascript } = await import('@codemirror/lang-javascript');
+      langExt = javascript({ typescript: true, jsx: ext === 'tsx' });
+      break;
+    }
     case 'js':
-    case 'jsx':
-      return javascript({ jsx: ext === 'jsx' });
-    case 'rs':
-      return rust();
-    case 'json':
-      return json();
-    case 'md':
-      return markdown();
+    case 'jsx': {
+      const { javascript } = await import('@codemirror/lang-javascript');
+      langExt = javascript({ jsx: ext === 'jsx' });
+      break;
+    }
+    case 'rs': {
+      const { rust } = await import('@codemirror/lang-rust');
+      langExt = rust();
+      break;
+    }
+    case 'json': {
+      const { json } = await import('@codemirror/lang-json');
+      langExt = json();
+      break;
+    }
+    case 'md': {
+      const { markdown } = await import('@codemirror/lang-markdown');
+      langExt = markdown();
+      break;
+    }
     case 'css':
-    case 'scss':
-      return css();
+    case 'scss': {
+      const { css } = await import('@codemirror/lang-css');
+      langExt = css();
+      break;
+    }
     case 'html':
-    case 'svelte':
-      return html();
+    case 'svelte': {
+      const { html } = await import('@codemirror/lang-html');
+      langExt = html();
+      break;
+    }
     default:
       return null;
   }
+
+  // Cache the loaded extension
+  if (langExt) {
+    languageCache.set(cacheKey, langExt);
+  }
+
+  return langExt;
 }
 
 export function getLanguageName(filename: string): string {
-  const ext = filename.split('.').pop()?.toLowerCase();
+  const ext = getFileExtension(filename);
 
   switch (ext) {
     case 'ts':

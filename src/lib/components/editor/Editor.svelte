@@ -250,7 +250,7 @@
       loading = false;
       // Wait for DOM to update (editor-container to be rendered)
       await tick();
-      createEditor(content);
+      await createEditor(content);
       // Load git diff after editor is created (fire-and-forget to avoid blocking)
       loadGitDiff();
     } catch (e) {
@@ -298,7 +298,7 @@
     }
   }
 
-  function createEditor(content: string) {
+  async function createEditor(content: string) {
     if (view) {
       view.destroy();
     }
@@ -336,9 +336,9 @@
       }),
     ];
 
-    // Add language extension if available
+    // Add language extension if available (lazy-loaded)
     if (filePath) {
-      const langExt = getLanguageExtension(filePath);
+      const langExt = await getLanguageExtension(filePath);
       if (langExt) {
         extensions.push(langExt);
       }

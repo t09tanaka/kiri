@@ -235,7 +235,7 @@
     }
   });
 
-  function createEditor(content: string) {
+  async function createEditor(content: string) {
     if (view) {
       view.destroy();
       view = null;
@@ -257,8 +257,8 @@
       highlightField,
     ];
 
-    // Add language extension if available
-    const langExt = getLanguageExtension(filePath);
+    // Add language extension if available (lazy-loaded)
+    const langExt = await getLanguageExtension(filePath);
     if (langExt) {
       extensions.push(langExt);
     }

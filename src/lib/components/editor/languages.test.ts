@@ -3,74 +3,82 @@ import { getLanguageExtension, getLanguageName } from './languages';
 
 describe('languages', () => {
   describe('getLanguageExtension', () => {
-    it('should return TypeScript extension for .ts files', () => {
-      const ext = getLanguageExtension('file.ts');
+    it('should return TypeScript extension for .ts files', async () => {
+      const ext = await getLanguageExtension('file.ts');
       expect(ext).not.toBeNull();
     });
 
-    it('should return TypeScript JSX extension for .tsx files', () => {
-      const ext = getLanguageExtension('file.tsx');
+    it('should return TypeScript JSX extension for .tsx files', async () => {
+      const ext = await getLanguageExtension('file.tsx');
       expect(ext).not.toBeNull();
     });
 
-    it('should return JavaScript extension for .js files', () => {
-      const ext = getLanguageExtension('file.js');
+    it('should return JavaScript extension for .js files', async () => {
+      const ext = await getLanguageExtension('file.js');
       expect(ext).not.toBeNull();
     });
 
-    it('should return JavaScript JSX extension for .jsx files', () => {
-      const ext = getLanguageExtension('file.jsx');
+    it('should return JavaScript JSX extension for .jsx files', async () => {
+      const ext = await getLanguageExtension('file.jsx');
       expect(ext).not.toBeNull();
     });
 
-    it('should return Rust extension for .rs files', () => {
-      const ext = getLanguageExtension('file.rs');
+    it('should return Rust extension for .rs files', async () => {
+      const ext = await getLanguageExtension('file.rs');
       expect(ext).not.toBeNull();
     });
 
-    it('should return JSON extension for .json files', () => {
-      const ext = getLanguageExtension('file.json');
+    it('should return JSON extension for .json files', async () => {
+      const ext = await getLanguageExtension('file.json');
       expect(ext).not.toBeNull();
     });
 
-    it('should return Markdown extension for .md files', () => {
-      const ext = getLanguageExtension('file.md');
+    it('should return Markdown extension for .md files', async () => {
+      const ext = await getLanguageExtension('file.md');
       expect(ext).not.toBeNull();
     });
 
-    it('should return CSS extension for .css files', () => {
-      const ext = getLanguageExtension('file.css');
+    it('should return CSS extension for .css files', async () => {
+      const ext = await getLanguageExtension('file.css');
       expect(ext).not.toBeNull();
     });
 
-    it('should return CSS extension for .scss files', () => {
-      const ext = getLanguageExtension('file.scss');
+    it('should return CSS extension for .scss files', async () => {
+      const ext = await getLanguageExtension('file.scss');
       expect(ext).not.toBeNull();
     });
 
-    it('should return HTML extension for .html files', () => {
-      const ext = getLanguageExtension('file.html');
+    it('should return HTML extension for .html files', async () => {
+      const ext = await getLanguageExtension('file.html');
       expect(ext).not.toBeNull();
     });
 
-    it('should return HTML extension for .svelte files', () => {
-      const ext = getLanguageExtension('file.svelte');
+    it('should return HTML extension for .svelte files', async () => {
+      const ext = await getLanguageExtension('file.svelte');
       expect(ext).not.toBeNull();
     });
 
-    it('should return null for unknown extensions', () => {
-      const ext = getLanguageExtension('file.unknown');
+    it('should return null for unknown extensions', async () => {
+      const ext = await getLanguageExtension('file.unknown');
       expect(ext).toBeNull();
     });
 
-    it('should return null for files without extension', () => {
-      const ext = getLanguageExtension('noextension');
+    it('should return null for files without extension', async () => {
+      const ext = await getLanguageExtension('noextension');
       expect(ext).toBeNull();
     });
 
-    it('should handle uppercase extensions', () => {
-      const ext = getLanguageExtension('file.TS');
+    it('should handle uppercase extensions', async () => {
+      const ext = await getLanguageExtension('file.TS');
       expect(ext).not.toBeNull();
+    });
+
+    it('should cache loaded extensions', async () => {
+      // Load same extension twice
+      const ext1 = await getLanguageExtension('file1.ts');
+      const ext2 = await getLanguageExtension('file2.ts');
+      // Both should return the same cached extension
+      expect(ext1).toBe(ext2);
     });
   });
 
