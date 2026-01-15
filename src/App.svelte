@@ -15,6 +15,8 @@
   import { appStore } from '@/lib/stores/appStore';
   import { projectStore, isProjectOpen } from '@/lib/stores/projectStore';
   import { settingsStore } from '@/lib/stores/settingsStore';
+  import { performanceService } from '@/lib/services/performanceService';
+  import { setupLongTaskObserver } from '@/lib/utils/performanceMarker';
   import {
     loadMultiWindowSession,
     saveMainWindowState,
@@ -319,10 +321,16 @@
   }
 
   onMount(async () => {
+    performanceService.markStartupPhase('app-mount-start');
+
+    // Setup long task observer (dev only)
+    const cleanupLongTaskObserver = setupLongTaskObserver();
+
     // DiffView windows have simplified initialization
     if (isDiffViewWindow) {
       await projectStore.init();
-      return;
+      performanceService.markStartupPhase('app-mount-complete');
+      return cleanupLongTaskObserver;
     }
 
     // Initialize project store first (loads recent projects)
@@ -438,6 +446,8 @@
       handleOpenDirectory();
     });
 
+    performanceService.markStartupPhase('app-mount-complete');
+
     return () => {
       if (saveTimeout) clearTimeout(saveTimeout);
       unsubscribeTabStore();
@@ -451,6 +461,7 @@
       unlistenResized();
       unlistenMoved();
       unlistenMenu();
+      cleanupLongTaskObserver();
     };
   });
 </script>

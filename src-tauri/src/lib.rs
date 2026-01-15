@@ -1,9 +1,10 @@
 mod commands;
 
 use commands::{
-    close_terminal, create_diffview_window, create_terminal, create_window, get_all_git_diffs,
-    get_command_history, get_file_suggestions, get_git_diff, get_git_file_status, get_git_status,
-    get_home_directory, get_path_commands, get_window_geometry, read_directory, read_file,
+    clear_performance_timings, close_terminal, create_diffview_window, create_terminal,
+    create_window, get_all_git_diffs, get_command_history, get_file_suggestions, get_git_diff,
+    get_git_file_status, get_git_status, get_home_directory, get_memory_metrics, get_path_commands,
+    get_performance_report, get_window_geometry, read_directory, read_file, record_command_timing,
     resize_terminal, reveal_in_finder, search_content, search_files, set_window_geometry,
     setup_menu, start_watching, stop_all_watching, stop_watching, write_file, write_terminal,
     TerminalState, WatcherState,
@@ -60,6 +61,11 @@ pub fn run() {
             start_watching,
             stop_watching,
             stop_all_watching,
+            // Performance commands (debug builds only)
+            get_memory_metrics,
+            get_performance_report,
+            record_command_timing,
+            clear_performance_timings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -4,3 +4,8 @@ npx lint-staged
 # Run fast unit tests (frontend + backend)
 npm run test
 npm run test:rust
+
+# Check bundle size if dist exists (skip if not built)
+if [ -d "dist" ]; then
+  npm run perf:check
+fi

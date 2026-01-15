@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "updated": "2025-01-15T00:00:00Z",
+  "targets": {
+    "startup_ms": {
+      "max": 1000,
+      "description": "Maximum acceptable startup time (ms)"
+    },
+    "memory_idle_bytes": {
+      "max": 52428800,
+      "description": "Maximum acceptable idle memory usage (50MB)"
+    },
+    "bundle_size_bytes": {
+      "max": 10485760,
+      "description": "Maximum acceptable app bundle size (10MB)"
+    }
+  },
+  "current": {
+    "startup_ms": null,
+    "memory_idle_bytes": null,
+    "bundle_size_bytes": null
+  },
+  "history": []
+}
