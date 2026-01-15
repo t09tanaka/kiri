@@ -12,10 +12,14 @@ export const terminalService = {
     invoke('create_terminal', { cwd, cols, rows }),
 
   /**
-   * Write data to terminal
+   * Write data to terminal (fire-and-forget for low latency)
    */
-  writeTerminal: (id: number, data: string): Promise<void> =>
-    invoke('write_terminal', { id, data }),
+  writeTerminal: (id: number, data: string): void => {
+    invoke('write_terminal', { id, data }).catch((err) => {
+      // Log error but don't block - terminal might be closing
+      console.warn('[Terminal] Write failed:', err);
+    });
+  },
 
   /**
    * Resize terminal
