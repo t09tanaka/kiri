@@ -1,8 +1,8 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Kiri",
-  "version": "0.1.0",
-  "identifier": "io.github.tanakatakuto.kiri",
+  "version": "0.0.1",
+  "identifier": "io.github.t09tanaka.kiri",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",

@@ -27,7 +27,8 @@
     "test:rust:coverage": "LLVM_COV=$(brew --prefix llvm)/bin/llvm-cov LLVM_PROFDATA=$(brew --prefix llvm)/bin/llvm-profdata cargo llvm-cov --manifest-path src-tauri/Cargo.toml --ignore-filename-regex '(main|lib|menu|window|terminal_commands|watcher_commands|fs_gitignore|fs_io|file_io|git_diff|git_status_map|suggest_io)\\.rs$|/rustc-.*-src/|/private/tmp/' --summary-only",
     "perf:check": "tsx scripts/perf-check.ts --check-size --compare-baseline",
     "perf:measure": "tsx scripts/perf-measure.ts",
-    "perf:measure:json": "tsx scripts/perf-measure.ts --json"
+    "perf:measure:json": "tsx scripts/perf-measure.ts --json",
+    "release": "tsx scripts/release.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
