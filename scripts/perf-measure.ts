@@ -2,7 +2,7 @@
 /**
  * Performance Measurement Script
  *
- * Connects to a running Kiri app via MCP Bridge and measures performance metrics.
+ * Connects to a running kiri app via MCP Bridge and measures performance metrics.
  *
  * Usage:
  *   1. Start the app: npm run tauri dev
@@ -276,7 +276,7 @@ function formatResults(results: PerformanceResults): string {
 
   lines.push('');
   lines.push('╔════════════════════════════════════════════════════════════════╗');
-  lines.push('║              Kiri Performance Measurement Report               ║');
+  lines.push('║              kiri Performance Measurement Report               ║');
   lines.push('╠════════════════════════════════════════════════════════════════╣');
   lines.push(`║  Timestamp: ${results.timestamp.padEnd(49)}║`);
   lines.push(`║  Platform:  ${results.memory.platform.padEnd(49)}║`);
@@ -331,7 +331,7 @@ async function main(): Promise<void> {
   const port = portIndex !== -1 ? parseInt(args[portIndex + 1], 10) : 9225;
   const jsonOutput = args.includes('--json');
 
-  console.log('🔍 Kiri Performance Measurement');
+  console.log('🔍 kiri Performance Measurement');
   console.log('================================\n');
 
   const client = new McpBridgeClient();

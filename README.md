@@ -1,4 +1,4 @@
-# Kiri 霧
+# kiri 霧
 
 > Light as mist, with only the features you need.
 

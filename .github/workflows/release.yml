@@ -30,8 +30,8 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: context.ref.replace('refs/tags/', ''),
-              name: `Kiri v${{ steps.get_version.outputs.VERSION }}`,
-              body: `## What's Changed\n\nSee [CHANGELOG](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CHANGELOG.md) for details.\n\n## Downloads\n\n| Platform | File |\n|----------|------|\n| macOS (Apple Silicon) | \`Kiri_${{ steps.get_version.outputs.VERSION }}_aarch64.dmg\` |\n| macOS (Intel) | \`Kiri_${{ steps.get_version.outputs.VERSION }}_x64.dmg\` |\n| Windows | \`Kiri_${{ steps.get_version.outputs.VERSION }}_x64-setup.exe\` |\n| Linux (deb) | \`kiri_${{ steps.get_version.outputs.VERSION }}_amd64.deb\` |\n| Linux (AppImage) | \`kiri_${{ steps.get_version.outputs.VERSION }}_amd64.AppImage\` |`,
+              name: `kiri v${{ steps.get_version.outputs.VERSION }}`,
+              body: `## What's Changed\n\nSee [CHANGELOG](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CHANGELOG.md) for details.\n\n## Downloads\n\n| Platform | File |\n|----------|------|\n| macOS (Apple Silicon) | \`kiri_${{ steps.get_version.outputs.VERSION }}_aarch64.dmg\` |\n| macOS (Intel) | \`kiri_${{ steps.get_version.outputs.VERSION }}_x64.dmg\` |\n| Windows | \`kiri_${{ steps.get_version.outputs.VERSION }}_x64-setup.exe\` |\n| Linux (deb) | \`kiri_${{ steps.get_version.outputs.VERSION }}_amd64.deb\` |\n| Linux (AppImage) | \`kiri_${{ steps.get_version.outputs.VERSION }}_amd64.AppImage\` |`,
               draft: true,
               prerelease: false
             })

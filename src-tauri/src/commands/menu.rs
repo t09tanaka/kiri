@@ -9,15 +9,15 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     // App menu (macOS)
     #[cfg(target_os = "macos")]
     let app_menu = {
-        let about = PredefinedMenuItem::about(handle, Some("About Kiri"), None)?;
-        let quit = PredefinedMenuItem::quit(handle, Some("Quit Kiri"))?;
-        let hide = PredefinedMenuItem::hide(handle, Some("Hide Kiri"))?;
+        let about = PredefinedMenuItem::about(handle, Some("About kiri"), None)?;
+        let quit = PredefinedMenuItem::quit(handle, Some("Quit kiri"))?;
+        let hide = PredefinedMenuItem::hide(handle, Some("Hide kiri"))?;
         let hide_others = PredefinedMenuItem::hide_others(handle, Some("Hide Others"))?;
         let show_all = PredefinedMenuItem::show_all(handle, Some("Show All"))?;
 
         Submenu::with_items(
             handle,
-            "Kiri",
+            "kiri",
             true,
             &[
                 &about,

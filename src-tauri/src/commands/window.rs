@@ -28,7 +28,7 @@ pub fn create_window(
     };
 
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::default())
-        .title("Kiri")
+        .title("kiri")
         .inner_size(win_width, win_height)
         .min_inner_size(600.0, 400.0)
         .visible(true)
@@ -74,7 +74,7 @@ pub fn create_diffview_window(app: AppHandle, project_path: String) -> Result<St
     let url = format!("?mode=diffview&path={}", encoded_path);
 
     let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
-        .title("Kiri - Changes")
+        .title("kiri - Changes")
         .inner_size(win_width, win_height)
         .min_inner_size(400.0, 300.0)
         .visible(true)

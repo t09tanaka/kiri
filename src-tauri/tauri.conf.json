@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Kiri",
+  "productName": "kiri",
   "version": "0.0.1",
   "identifier": "io.github.t09tanaka.kiri",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Kiri",
+        "title": "kiri",
         "width": 1200,
         "height": 800,
         "minWidth": 600,

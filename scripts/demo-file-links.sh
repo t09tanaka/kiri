@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Demo script for testing file path links in Kiri terminal
-# Run this script in the Kiri terminal to see clickable file paths
+# Demo script for testing file path links in kiri terminal
+# Run this script in the kiri terminal to see clickable file paths
 
 echo ""
 echo "============================================"
-echo "  Kiri File Link Demo"
+echo "  kiri File Link Demo"
 echo "  ファイルパスリンクのデモ"
 echo "============================================"
 echo ""

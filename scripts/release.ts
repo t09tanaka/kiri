@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * Release script for Kiri
+ * Release script for kiri
  *
  * Usage:
  *   npx tsx scripts/release.ts <version>
@@ -117,7 +117,7 @@ function main(): void {
   const currentVersion = getCurrentVersion();
   const newVersion = bumpVersion(currentVersion, versionArg);
 
-  console.log(`\n🚀 Releasing Kiri`);
+  console.log(`\n🚀 Releasing kiri`);
   console.log(`   Current version: ${currentVersion}`);
   console.log(`   New version: ${newVersion}\n`);
 
