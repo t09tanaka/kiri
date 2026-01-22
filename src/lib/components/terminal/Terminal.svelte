@@ -67,6 +67,11 @@
   let resizeStabilityTimeout: ReturnType<typeof setTimeout> | null = null;
   const RESIZE_STABILITY_DELAY = 50; // ms to wait after resize before flushing
 
+  // Track last sent PTY size to prevent duplicate resize calls
+  // This is needed because fitTerminalToContainer() may trigger onResize twice:
+  // once from fitAddon.fit() and once from terminal.resize() for MAX_TERMINAL_COLS capping
+  let lastSentPtySize: { cols: number; rows: number } | null = null;
+
   // Watch for tab activation to focus terminal
   const isActiveTab = $derived($tabStore.activeTabId === tabId);
 
@@ -175,12 +180,19 @@
       unlisten = existingInstance.unlisten;
 
       // Move the terminal's DOM element to the new container
-      if (terminal.element && terminal.element.parentElement) {
+      if (terminal.element) {
         // xterm.js manages its own DOM, so we need to manually move it
+        // Note: We check only if element exists, not if it has a parent.
+        // When component is destroyed, the parent container is removed from DOM,
+        // leaving the terminal element orphaned. We can still re-append it.
         // eslint-disable-next-line svelte/no-dom-manipulating
         terminalContainer.appendChild(terminal.element);
+
+        // Force a refresh to redraw the terminal content
+        // This is necessary because WebGL context may need to be refreshed after DOM move
+        terminal.refresh(0, terminal.rows - 1);
       } else {
-        // If element doesn't exist, reopen the terminal
+        // If element doesn't exist, open the terminal (first time or error recovery)
         terminal.open(terminalContainer);
       }
 
@@ -190,10 +202,15 @@
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
               fitTerminalToContainer();
+              // Force another refresh after fit to ensure content is visible
+              if (terminal) {
+                terminal.refresh(0, terminal.rows - 1);
+              }
               // If size seems wrong (too small), wait more and try again
               if (terminal && (terminal.cols < 40 || terminal.rows < 10)) {
                 setTimeout(() => {
                   fitTerminalToContainer();
+                  terminal?.refresh(0, terminal.rows - 1);
                   terminal?.focus();
                 }, 100);
               } else {
@@ -337,12 +354,22 @@
             requestAnimationFrame(() => {
               requestAnimationFrame(() => {
                 if (fitAddon && terminal) {
-                  fitAddon.fit();
+                  // Use proposeDimensions to calculate, then resize with capped cols
+                  const dimensions = fitAddon.proposeDimensions();
+                  if (dimensions) {
+                    const cols = Math.min(dimensions.cols, MAX_TERMINAL_COLS);
+                    const rows = dimensions.rows;
+                    terminal.resize(cols, rows);
+                  }
 
                   // If size seems wrong (too small), wait more and try again
                   if (terminal.cols < 40 || terminal.rows < 10) {
                     setTimeout(() => {
-                      fitAddon.fit();
+                      const dims = fitAddon.proposeDimensions();
+                      if (dims) {
+                        const cols = Math.min(dims.cols, MAX_TERMINAL_COLS);
+                        terminal.resize(cols, dims.rows);
+                      }
                       resolve();
                     }, 100);
                     return;
@@ -365,18 +392,14 @@
         await waitForLayout();
       } else {
         // Wait for layout before creating PTY
+        // waitForLayout already caps cols at MAX_TERMINAL_COLS
         await waitForLayout();
 
         // Now create PTY with correct initial size
-        // Cap cols to MAX_TERMINAL_COLS to prevent Ink spinner issues
-        const cols = Math.min(terminal.cols, MAX_TERMINAL_COLS);
+        // Note: cols is already capped by waitForLayout()
+        const cols = terminal.cols;
         // Apply row margin to prevent Ink full-height flickering
         const rows = Math.max(terminal.rows - PTY_ROW_MARGIN, 10);
-
-        // If we capped the cols, resize the terminal to match
-        if (terminal.cols > MAX_TERMINAL_COLS) {
-          terminal.resize(cols, terminal.rows);
-        }
 
         terminalId = await terminalService.createTerminal(cwd, cols, rows);
         // Store terminal ID in tab store
@@ -518,6 +541,17 @@
         if (terminalId !== null) {
           // Apply row margin to prevent Ink full-height flickering
           const ptyRows = Math.max(rows - PTY_ROW_MARGIN, 10);
+
+          // Skip if size hasn't changed (prevents duplicate calls during MAX_TERMINAL_COLS capping)
+          if (
+            lastSentPtySize &&
+            lastSentPtySize.cols === cols &&
+            lastSentPtySize.rows === ptyRows
+          ) {
+            return;
+          }
+
+          lastSentPtySize = { cols, rows: ptyRows };
           terminalService.resizeTerminal(terminalId, cols, ptyRows);
         }
       });
@@ -576,15 +610,21 @@
     }
 
     try {
-      fitAddon.fit();
+      // Use proposeDimensions() to calculate size without applying,
+      // then apply capped size in a single resize to avoid duplicate PTY updates
+      const dimensions = fitAddon.proposeDimensions();
+      if (!dimensions) return;
+
+      let { cols, rows } = dimensions;
 
       // Cap terminal width to prevent issues with Ink-based CLI apps
       // Very wide terminals can cause spinner/progress bar rendering glitches
-      let cols = terminal.cols;
-      const rows = terminal.rows;
-
       if (cols > MAX_TERMINAL_COLS) {
         cols = MAX_TERMINAL_COLS;
+      }
+
+      // Only resize if size actually changed
+      if (terminal.cols !== cols || terminal.rows !== rows) {
         terminal.resize(cols, rows);
       }
 

@@ -8,88 +8,104 @@
   function handleEditorModified(tabId: string, modified: boolean) {
     tabStore.setModified(tabId, modified);
   }
+
+  // Counter to force {#key} block to re-render when tabs change
+  // This is needed because Svelte's {#key} doesn't properly re-render
+  // when the key returns to a previous value (A -> B -> A)
+  let tabChangeCounter = $state(0);
+  let prevActiveTabId = $state<string | null>(null);
+  let prevTabCount = $state(0);
+
+  $effect(() => {
+    const currentActiveTabId = $tabStore.activeTabId;
+    const currentTabCount = $tabStore.tabs.length;
+
+    if (prevActiveTabId !== currentActiveTabId || prevTabCount !== currentTabCount) {
+      tabChangeCounter++;
+      prevActiveTabId = currentActiveTabId;
+      prevTabCount = currentTabCount;
+    }
+  });
 </script>
 
 <main class="main-content">
   <TabBar tabs={$tabStore.tabs} activeTabId={$tabStore.activeTabId} />
   <div class="content-area">
-    {#if $activeTab}
-      {#if $activeTab.type === 'terminal'}
-        {#key $activeTab.id}
+    {#key tabChangeCounter}
+      {#if $activeTab}
+        {#if $activeTab.type === 'terminal'}
           <TerminalContainer
             tabId={$activeTab.id}
             pane={$activeTab.rootPane}
             cwd={$currentProjectPath}
             isOnlyPane={getAllPaneIds($activeTab.rootPane).length === 1}
           />
-        {/key}
-      {:else if $activeTab.type === 'editor'}
-        {#key $activeTab.id}
+        {:else if $activeTab.type === 'editor'}
           <Editor
             filePath={$activeTab.filePath}
             onModifiedChange={(modified) => handleEditorModified($activeTab.id, modified)}
           />
-        {/key}
-      {/if}
-    {:else}
-      <div class="no-tabs">
-        <div class="bg-layer bg-gradient"></div>
-        <div class="bg-layer bg-noise"></div>
-        <div class="bg-layer bg-grid"></div>
-        <div class="bg-layer bg-aurora"></div>
+        {/if}
+      {:else}
+        <div class="no-tabs">
+          <div class="bg-layer bg-gradient"></div>
+          <div class="bg-layer bg-noise"></div>
+          <div class="bg-layer bg-grid"></div>
+          <div class="bg-layer bg-aurora"></div>
 
-        <!-- Floating particles -->
-        <div class="particles">
-          {#each Array(8) as _, i (i)}
-            <div class="particle" style="--i: {i}"></div>
-          {/each}
-        </div>
-
-        <div class="empty-state">
-          <div class="empty-icon-container">
-            <div class="icon-glow"></div>
-            <div class="empty-icon">
-              <svg
-                width="56"
-                height="56"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <polyline points="4 17 10 11 4 5"></polyline>
-                <line x1="12" y1="19" x2="20" y2="19"></line>
-              </svg>
-            </div>
+          <!-- Floating particles -->
+          <div class="particles">
+            {#each Array(8) as _, i (i)}
+              <div class="particle" style="--i: {i}"></div>
+            {/each}
           </div>
-          <h2 class="empty-title">No tabs open</h2>
-          <p class="empty-description">Open a terminal or select a file from the explorer</p>
-          <button class="open-terminal-btn" onclick={() => tabStore.addTerminalTab()}>
-            <span class="btn-icon">
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-            </span>
-            <span>New Terminal</span>
-          </button>
-          <p class="shortcut-hint">
-            <kbd>⌘</kbd> + <kbd>`</kbd>
-          </p>
+
+          <div class="empty-state">
+            <div class="empty-icon-container">
+              <div class="icon-glow"></div>
+              <div class="empty-icon">
+                <svg
+                  width="56"
+                  height="56"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="4 17 10 11 4 5"></polyline>
+                  <line x1="12" y1="19" x2="20" y2="19"></line>
+                </svg>
+              </div>
+            </div>
+            <h2 class="empty-title">No tabs open</h2>
+            <p class="empty-description">Open a terminal or select a file from the explorer</p>
+            <button class="open-terminal-btn" onclick={() => tabStore.addTerminalTab()}>
+              <span class="btn-icon">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+              </span>
+              <span>New Terminal</span>
+            </button>
+            <p class="shortcut-hint">
+              <kbd>⌘</kbd> + <kbd>`</kbd>
+            </p>
+          </div>
         </div>
-      </div>
-    {/if}
+      {/if}
+    {/key}
   </div>
 </main>
 
