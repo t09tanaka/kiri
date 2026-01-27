@@ -84,6 +84,23 @@
     return path.split('/').pop() ?? path;
   }
 
+  function getImageMimeType(path: string): string {
+    const ext = path.split('.').pop()?.toLowerCase() ?? '';
+    const mimeTypes: Record<string, string> = {
+      png: 'png',
+      jpg: 'jpeg',
+      jpeg: 'jpeg',
+      gif: 'gif',
+      ico: 'x-icon',
+      webp: 'webp',
+      bmp: 'bmp',
+      svg: 'svg+xml',
+      tiff: 'tiff',
+      tif: 'tiff',
+    };
+    return mimeTypes[ext] ?? 'png';
+  }
+
   function getDiffId(path: string): string {
     return `diff-${path.replace(/[^a-zA-Z0-9]/g, '-')}`;
   }
@@ -256,29 +273,81 @@
 
               <div class="diff-content">
                 {#if visibleSections.has(fileDiff.path)}
-                  {@const lines = parseDiff(fileDiff.path, fileDiff.diff)}
-                  {#if lines.length > 0}
-                    {#each lines as line, index (index)}
-                      <div class="diff-line {line.type}">
-                        <span class="line-number">
-                          {line.lineNumber ?? ''}
-                        </span>
-                        <span class="line-prefix">
-                          {#if line.type === 'add'}+{:else if line.type === 'remove'}-{:else if line.type === 'context'}&nbsp;{/if}
-                        </span>
-                        <span class="line-content">{line.content}</span>
-                      </div>
-                    {/each}
-                  {:else}
-                    <div class="no-diff">
-                      <span>No visible changes</span>
+                  {#if fileDiff.is_binary}
+                    <!-- Binary/Image file display -->
+                    <div class="binary-diff">
+                      {#if fileDiff.original_content_base64 || fileDiff.current_content_base64}
+                        <div class="image-comparison">
+                          {#if fileDiff.original_content_base64}
+                            <div class="image-panel original">
+                              <div class="image-label">Original</div>
+                              <img
+                                src="data:image/{getImageMimeType(
+                                  fileDiff.path
+                                )};base64,{fileDiff.original_content_base64}"
+                                alt="Original: {fileDiff.path}"
+                              />
+                            </div>
+                          {/if}
+                          {#if fileDiff.current_content_base64}
+                            <div class="image-panel current">
+                              <div class="image-label">
+                                {fileDiff.original_content_base64 ? 'Current' : 'New'}
+                              </div>
+                              <img
+                                src="data:image/{getImageMimeType(
+                                  fileDiff.path
+                                )};base64,{fileDiff.current_content_base64}"
+                                alt="Current: {fileDiff.path}"
+                              />
+                            </div>
+                          {/if}
+                        </div>
+                      {:else}
+                        <div class="binary-notice">
+                          <svg
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                            <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                            <polyline points="21 15 16 10 5 21"></polyline>
+                          </svg>
+                          <span>Binary file changed</span>
+                        </div>
+                      {/if}
                     </div>
+                  {:else}
+                    {@const lines = parseDiff(fileDiff.path, fileDiff.diff)}
+                    {#if lines.length > 0}
+                      {#each lines as line, index (index)}
+                        <div class="diff-line {line.type}">
+                          <span class="line-number">
+                            {line.lineNumber ?? ''}
+                          </span>
+                          <span class="line-prefix">
+                            {#if line.type === 'add'}+{:else if line.type === 'remove'}-{:else if line.type === 'context'}&nbsp;{/if}
+                          </span>
+                          <span class="line-content">{line.content}</span>
+                        </div>
+                      {/each}
+                    {:else}
+                      <div class="no-diff">
+                        <span>No visible changes</span>
+                      </div>
+                    {/if}
                   {/if}
                 {:else}
                   <!-- Placeholder while not visible -->
                   <div
                     class="diff-placeholder"
-                    style="height: {estimateLineCount(fileDiff.diff) * 22}px"
+                    style="height: {fileDiff.is_binary
+                      ? 200
+                      : estimateLineCount(fileDiff.diff) * 22}px"
                   >
                     <span class="placeholder-text">Scroll to load diff...</span>
                   </div>
@@ -565,6 +634,76 @@
     text-align: center;
     color: var(--text-muted);
     font-size: 12px;
+  }
+
+  /* Binary/Image diff styles */
+  .binary-diff {
+    padding: var(--space-4);
+  }
+
+  .image-comparison {
+    display: flex;
+    gap: var(--space-4);
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .image-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+    max-width: 400px;
+  }
+
+  .image-panel.original {
+    border: 1px solid var(--git-deleted);
+  }
+
+  .image-panel.current {
+    border: 1px solid var(--git-added);
+  }
+
+  .image-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+  }
+
+  .image-panel.original .image-label {
+    color: var(--git-deleted);
+  }
+
+  .image-panel.current .image-label {
+    color: var(--git-added);
+  }
+
+  .image-panel img {
+    max-width: 100%;
+    max-height: 300px;
+    object-fit: contain;
+    border-radius: var(--radius-sm);
+    background: repeating-conic-gradient(#808080 0% 25%, transparent 0% 50%) 50% / 16px 16px;
+  }
+
+  .binary-notice {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    padding: var(--space-6);
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .binary-notice svg {
+    opacity: 0.5;
   }
 
   .loading-state {

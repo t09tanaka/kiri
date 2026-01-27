@@ -24,6 +24,11 @@ pub struct GitFileDiff {
     pub path: String,
     pub status: GitFileStatus,
     pub diff: String,
+    pub is_binary: bool,
+    /// Base64 encoded current file content (for binary/image files)
+    pub current_content_base64: Option<String>,
+    /// Base64 encoded original file content from HEAD (for binary/image files)
+    pub original_content_base64: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -242,8 +247,10 @@ pub fn get_git_diff(repo_path: String, file_path: String) -> Result<String, Stri
     Ok(diff_text)
 }
 
-// get_file_diff_internal is in git_diff.rs (excluded from coverage)
-use super::git_diff::get_file_diff_internal;
+// get_file_diff_internal and binary file helpers are in git_diff.rs (excluded from coverage)
+use super::git_diff::{
+    get_current_file_base64, get_file_diff_internal, get_original_file_base64, is_image_file,
+};
 
 #[tauri::command]
 pub fn get_all_git_diffs(repo_path: String) -> Result<Vec<GitFileDiff>, String> {
@@ -269,12 +276,31 @@ pub fn get_all_git_diffs(repo_path: String) -> Result<Vec<GitFileDiff>, String> 
             None => continue, // Skip unchanged files
         };
 
-        let diff = get_file_diff_internal(&repo, &repo_path, &path);
+        // Check if this is a binary/image file
+        let is_binary = is_image_file(&path);
+
+        let (diff, current_content_base64, original_content_base64) = if is_binary {
+            // For binary files, get base64 encoded content instead of text diff
+            let current = get_current_file_base64(&repo_path, &path);
+            let original = if file_status != GitFileStatus::Untracked {
+                get_original_file_base64(&repo, &path)
+            } else {
+                None
+            };
+            (String::new(), current, original)
+        } else {
+            // For text files, get the regular diff
+            let diff = get_file_diff_internal(&repo, &repo_path, &path);
+            (diff, None, None)
+        };
 
         diffs.push(GitFileDiff {
             path,
             status: file_status,
             diff,
+            is_binary,
+            current_content_base64,
+            original_content_base64,
         });
     }
 
@@ -376,10 +402,16 @@ mod tests {
             path: "test.txt".to_string(),
             status: GitFileStatus::Added,
             diff: "+ new line".to_string(),
+            is_binary: false,
+            current_content_base64: None,
+            original_content_base64: None,
         };
         assert_eq!(diff.path, "test.txt");
         assert_eq!(diff.status, GitFileStatus::Added);
         assert_eq!(diff.diff, "+ new line");
+        assert!(!diff.is_binary);
+        assert!(diff.current_content_base64.is_none());
+        assert!(diff.original_content_base64.is_none());
     }
 
     #[test]

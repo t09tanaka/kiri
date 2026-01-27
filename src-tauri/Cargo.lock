@@ -2098,6 +2098,7 @@ dependencies = [
 name = "kiri"
 version = "0.0.1"
 dependencies = [
+ "base64 0.22.1",
  "dirs 5.0.1",
  "git2",
  "lazy_static",

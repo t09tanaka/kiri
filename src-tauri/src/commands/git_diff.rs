@@ -1,8 +1,39 @@
 // This file contains git diff operations with error handling that requires
 // system-level failures to test. Covered via E2E tests.
 
+use base64::Engine;
 use git2::{DiffOptions, Repository};
 use std::path::Path;
+
+/// Binary file extensions that should be displayed as images
+const IMAGE_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "ico", "webp", "bmp", "svg", "tiff", "tif",
+];
+
+/// Check if a file path has an image extension
+pub fn is_image_file(path: &str) -> bool {
+    let path_lower = path.to_lowercase();
+    IMAGE_EXTENSIONS
+        .iter()
+        .any(|ext| path_lower.ends_with(&format!(".{}", ext)))
+}
+
+/// Get base64 encoded content of the current working directory file
+pub fn get_current_file_base64(repo_path: &str, file_path: &str) -> Option<String> {
+    let full_path = Path::new(repo_path).join(file_path);
+    std::fs::read(&full_path)
+        .ok()
+        .map(|bytes| base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+/// Get base64 encoded content of the file from HEAD
+pub fn get_original_file_base64(repo: &Repository, file_path: &str) -> Option<String> {
+    let head = repo.head().ok()?;
+    let tree = head.peel_to_tree().ok()?;
+    let entry = tree.get_path(Path::new(file_path)).ok()?;
+    let blob = repo.find_blob(entry.id()).ok()?;
+    Some(base64::engine::general_purpose::STANDARD.encode(blob.content()))
+}
 
 /// Get file diff - internal implementation with error handling
 /// Returns empty string on any error

@@ -19,6 +19,11 @@ export interface GitFileDiff {
   path: string;
   status: GitFileStatus;
   diff: string;
+  is_binary: boolean;
+  /** Base64 encoded current file content (for binary/image files) */
+  current_content_base64: string | null;
+  /** Base64 encoded original file content from HEAD (for binary/image files) */
+  original_content_base64: string | null;
 }
 
 export interface GitRepoInfo {
