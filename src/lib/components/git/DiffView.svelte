@@ -82,6 +82,38 @@
     return path.split('/').pop() ?? path;
   }
 
+  interface DiffStats {
+    additions: number;
+    deletions: number;
+  }
+
+  // Cache for file diff stats (non-reactive cache)
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally non-reactive to avoid state_unsafe_mutation
+  const diffStatsCache = new Map<string, DiffStats>();
+
+  function getDiffStats(path: string, diffContent: string): DiffStats {
+    if (diffStatsCache.has(path)) {
+      return diffStatsCache.get(path)!;
+    }
+
+    let additions = 0;
+    let deletions = 0;
+
+    if (diffContent) {
+      for (const line of diffContent.split('\n')) {
+        if (line.startsWith('+ ')) {
+          additions++;
+        } else if (line.startsWith('- ')) {
+          deletions++;
+        }
+      }
+    }
+
+    const stats = { additions, deletions };
+    diffStatsCache.set(path, stats);
+    return stats;
+  }
+
   function getImageMimeType(path: string): string {
     const ext = path.split('.').pop()?.toLowerCase() ?? '';
     const mimeTypes: Record<string, string> = {
@@ -207,6 +239,7 @@
   $effect(() => {
     if (allDiffs) {
       parsedDiffCache.clear();
+      diffStatsCache.clear();
       visibleSections = new Set<string>();
     }
   });
@@ -242,6 +275,7 @@
         </div>
         <div class="file-list">
           {#each allDiffs as fileDiff (fileDiff.path)}
+            {@const stats = getDiffStats(fileDiff.path, fileDiff.diff)}
             <button
               class="file-item"
               class:selected={currentVisibleFile === fileDiff.path}
@@ -252,6 +286,16 @@
                 {getStatusIcon(fileDiff.status)}
               </span>
               <span class="file-item-name">{getFileName(fileDiff.path)}</span>
+              {#if stats.additions > 0 || stats.deletions > 0}
+                <span class="file-item-stats">
+                  {#if stats.additions > 0}
+                    <span class="stat-add">+{stats.additions}</span>
+                  {/if}
+                  {#if stats.deletions > 0}
+                    <span class="stat-del">-{stats.deletions}</span>
+                  {/if}
+                </span>
+              {/if}
             </button>
           {/each}
         </div>
@@ -477,6 +521,24 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .file-item-stats {
+    display: flex;
+    gap: 4px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+  }
+
+  .file-item-stats .stat-add {
+    color: var(--git-added);
+  }
+
+  .file-item-stats .stat-del {
+    color: var(--git-deleted);
   }
 
   /* Diff main area */
