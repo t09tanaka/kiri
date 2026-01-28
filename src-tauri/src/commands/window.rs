@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
 
 static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
-static DIFFVIEW_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 #[tauri::command]
 pub fn create_window(
@@ -42,52 +41,6 @@ pub fn create_window(
     builder.build().map_err(|e| e.to_string())?;
 
     Ok(())
-}
-
-/// Create a new window specifically for DiffView
-/// Opens at the same size and position as the main window
-#[tauri::command]
-pub fn create_diffview_window(app: AppHandle, project_path: String) -> Result<String, String> {
-    let id = DIFFVIEW_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let label = format!("diffview-{}", id);
-
-    // Get main window's size and position, or use defaults
-    let main_window = app.get_webview_window("main");
-    let (win_width, win_height, pos_x, pos_y) = match main_window {
-        Some(window) => {
-            let scale_factor = window.scale_factor().unwrap_or(1.0);
-            let size = window
-                .inner_size()
-                .map(|s| (s.width as f64 / scale_factor, s.height as f64 / scale_factor))
-                .unwrap_or((1200.0, 800.0));
-            let position = window
-                .outer_position()
-                .map(|p| (p.x as f64 / scale_factor, p.y as f64 / scale_factor))
-                .ok();
-            (size.0, size.1, position.map(|p| p.0), position.map(|p| p.1))
-        }
-        None => (1200.0, 800.0, None, None),
-    };
-
-    // URL encode the project path for safe transmission
-    let encoded_path = urlencoding::encode(&project_path);
-    let url = format!("?mode=diffview&path={}", encoded_path);
-
-    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App(url.into()))
-        .title("kiri - Changes")
-        .inner_size(win_width, win_height)
-        .min_inner_size(400.0, 300.0)
-        .visible(true)
-        .focused(true);
-
-    // Set position if available
-    if let (Some(x), Some(y)) = (pos_x, pos_y) {
-        builder = builder.position(x, y);
-    }
-
-    builder.build().map_err(|e| e.to_string())?;
-
-    Ok(label)
 }
 
 /// Get window geometry (position and size) for the specified window label
@@ -162,15 +115,6 @@ mod tests {
     }
 
     #[test]
-    fn test_diffview_counter_increments() {
-        // fetch_add returns the previous value and atomically increments
-        let prev = DIFFVIEW_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let current = DIFFVIEW_COUNTER.load(Ordering::SeqCst);
-        // current should be at least prev + 1 (other tests may also increment)
-        assert!(current > prev);
-    }
-
-    #[test]
     fn test_window_counter_is_atomic() {
         // Test atomicity by verifying all fetch_add calls return unique values
         // This proves no race conditions occur
@@ -181,32 +125,6 @@ mod tests {
                 let results = Arc::clone(&results);
                 thread::spawn(move || {
                     let prev = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
-                    results.lock().unwrap().push(prev);
-                })
-            })
-            .collect();
-
-        for handle in handles {
-            handle.join().unwrap();
-        }
-
-        // All returned values should be unique (no two threads got same value)
-        let results = results.lock().unwrap();
-        let unique: HashSet<_> = results.iter().collect();
-        assert_eq!(unique.len(), 10, "All fetch_add results should be unique");
-    }
-
-    #[test]
-    fn test_diffview_counter_is_atomic() {
-        // Test atomicity by verifying all fetch_add calls return unique values
-        // This proves no race conditions occur
-        let results = Arc::new(std::sync::Mutex::new(Vec::new()));
-
-        let handles: Vec<_> = (0..10)
-            .map(|_| {
-                let results = Arc::clone(&results);
-                thread::spawn(move || {
-                    let prev = DIFFVIEW_COUNTER.fetch_add(1, Ordering::SeqCst);
                     results.lock().unwrap().push(prev);
                 })
             })

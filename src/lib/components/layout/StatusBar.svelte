@@ -2,7 +2,7 @@
   import { tabStore, activeTab } from '@/lib/stores/tabStore';
   import { gitStore } from '@/lib/stores/gitStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
-  import { windowService } from '@/lib/services/windowService';
+  import { diffViewStore } from '@/lib/stores/diffViewStore';
 
   interface Props {
     onShowShortcuts?: () => void;
@@ -27,16 +27,12 @@
     $gitStore.repoInfo?.statuses.filter((s) => s.status !== 'Ignored').length ?? 0
   );
 
-  async function handleChangesClick() {
+  function handleChangesClick() {
     if (!$currentProjectPath) {
       console.error('No project path available');
       return;
     }
-    try {
-      await windowService.createDiffViewWindow($currentProjectPath);
-    } catch (error) {
-      console.error('Failed to open DiffView window:', error);
-    }
+    diffViewStore.open($currentProjectPath);
   }
 </script>
 
@@ -116,8 +112,8 @@
       <button
         class="status-item git-changes"
         onclick={handleChangesClick}
-        title="Open Changes Window ({changeCount} files, +{gitInfo?.additions ??
-          0} -{gitInfo?.deletions ?? 0})"
+        title="Open Changes ({changeCount} files, +{gitInfo?.additions ?? 0} -{gitInfo?.deletions ??
+          0})"
       >
         <svg
           width="12"

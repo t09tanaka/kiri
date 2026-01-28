@@ -2,7 +2,7 @@
   import { FileTree } from '@/lib/components/filetree';
   import { gitStore } from '@/lib/stores/gitStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
-  import { windowService } from '@/lib/services/windowService';
+  import { diffViewStore } from '@/lib/stores/diffViewStore';
 
   interface Props {
     width?: number;
@@ -16,17 +16,13 @@
     $gitStore.repoInfo?.statuses.filter((s) => s.status !== 'Ignored').length ?? 0
   );
 
-  async function openDiffViewWindow() {
+  function openDiffViewModal() {
     const projectPath = $currentProjectPath;
     if (!projectPath) {
       console.warn('No project path available');
       return;
     }
-    try {
-      await windowService.createDiffViewWindow(projectPath);
-    } catch (error) {
-      console.error('Failed to open DiffView window:', error);
-    }
+    diffViewStore.open(projectPath);
   }
 </script>
 
@@ -58,8 +54,8 @@
       type="button"
       class="changes-button"
       class:has-changes={changeCount > 0}
-      onclick={openDiffViewWindow}
-      title="Open Changes Window ({changeCount} files)"
+      onclick={openDiffViewModal}
+      title="Open Changes ({changeCount} files)"
     >
       <span>Changes</span>
       {#if changeCount > 0}

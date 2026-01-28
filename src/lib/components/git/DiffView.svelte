@@ -6,9 +6,7 @@
   const isLoading = $derived($gitStore.isDiffsLoading);
   const additions = $derived($gitStore.repoInfo?.additions ?? 0);
   const deletions = $derived($gitStore.repoInfo?.deletions ?? 0);
-
-  // Currently selected file in sidebar
-  let selectedFile = $state<string | null>(null);
+  const currentVisibleFile = $derived($gitStore.currentVisibleFile);
 
   // Track which sections are visible and should render their content
   // Use $state to trigger reactivity when the set changes
@@ -106,7 +104,6 @@
   }
 
   function scrollToFile(path: string) {
-    selectedFile = path;
     const element = document.getElementById(getDiffId(path));
     if (element) {
       element.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -148,38 +145,8 @@
     };
   }
 
-  // Track which file header is at the top of the viewport
-  function trackHeader(node: HTMLElement, path: string) {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            // Store the top position of this header
-            visibleHeaders.set(path, entry.boundingClientRect.top);
-          } else {
-            // Remove from visible headers
-            visibleHeaders.delete(path);
-          }
-        });
-      },
-      {
-        root: null,
-        rootMargin: '-44px 0px -80% 0px', // Top 20% of viewport after header
-        threshold: 0,
-      }
-    );
-
-    observer.observe(node);
-
-    return {
-      destroy() {
-        observer.disconnect();
-      },
-    };
-  }
-
-  // Update store with the topmost visible file
-  $effect(() => {
+  // Helper function to update the topmost visible file in the store
+  function updateCurrentVisibleFile() {
     if (visibleHeaders.size > 0) {
       // Find the header closest to the top (smallest positive value or largest negative)
       let topFile: string | null = null;
@@ -197,7 +164,39 @@
       // Default to first file if none visible
       gitStore.setCurrentVisibleFile(allDiffs[0].path);
     }
-  });
+  }
+
+  // Track which file header is at the top of the viewport
+  function trackHeader(node: HTMLElement, path: string) {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            // Store the top position of this header
+            visibleHeaders.set(path, entry.boundingClientRect.top);
+          } else {
+            // Remove from visible headers
+            visibleHeaders.delete(path);
+          }
+        });
+        // Update the current visible file after each intersection change
+        updateCurrentVisibleFile();
+      },
+      {
+        root: null,
+        rootMargin: '-44px 0px -80% 0px', // Top 20% of viewport after header
+        threshold: 0,
+      }
+    );
+
+    observer.observe(node);
+
+    return {
+      destroy() {
+        observer.disconnect();
+      },
+    };
+  }
 
   // Clear on unmount
   onDestroy(() => {
@@ -245,7 +244,7 @@
           {#each allDiffs as fileDiff (fileDiff.path)}
             <button
               class="file-item"
-              class:selected={selectedFile === fileDiff.path}
+              class:selected={currentVisibleFile === fileDiff.path}
               onclick={() => scrollToFile(fileDiff.path)}
               title={fileDiff.path}
             >

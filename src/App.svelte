@@ -7,10 +7,11 @@
   import { AppLayout, StartScreen } from '@/lib/components';
   import QuickOpen from '@/lib/components/search/QuickOpen.svelte';
   import KeyboardShortcuts from '@/lib/components/ui/KeyboardShortcuts.svelte';
-  import DiffViewWindow from '@/lib/components/git/DiffViewWindow.svelte';
+  import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { tabStore } from '@/lib/stores/tabStore';
   import { peekStore } from '@/lib/stores/peekStore';
+  import { diffViewStore } from '@/lib/stores/diffViewStore';
   import { PeekEditor } from '@/lib/components/peek';
   import { appStore } from '@/lib/stores/appStore';
   import { projectStore, isProjectOpen } from '@/lib/stores/projectStore';
@@ -28,9 +29,6 @@
     type PersistedWindowState,
     type PersistedWindowGeometry,
   } from '@/lib/services/persistenceService';
-
-  // Check if this window is a DiffView window
-  const isDiffViewWindow = new URLSearchParams(window.location.search).get('mode') === 'diffview';
 
   let showShortcuts = $state(false);
   let windowLabel = $state('');
@@ -326,13 +324,6 @@
     // Setup long task observer (dev only)
     const cleanupLongTaskObserver = setupLongTaskObserver();
 
-    // DiffView windows have simplified initialization
-    if (isDiffViewWindow) {
-      await projectStore.init();
-      performanceService.markStartupPhase('app-mount-complete');
-      return cleanupLongTaskObserver;
-    }
-
     // Initialize project store first (loads recent projects)
     await projectStore.init();
 
@@ -466,9 +457,7 @@
   });
 </script>
 
-{#if isDiffViewWindow}
-  <DiffViewWindow />
-{:else if $isProjectOpen}
+{#if $isProjectOpen}
   <AppLayout />
 
   {#if $isQuickOpenVisible}
@@ -481,6 +470,10 @@
       lineNumber={$peekStore.lineNumber}
       onClose={() => peekStore.close()}
     />
+  {/if}
+
+  {#if $diffViewStore.isOpen && $diffViewStore.projectPath}
+    <DiffViewModal projectPath={$diffViewStore.projectPath} onClose={() => diffViewStore.close()} />
   {/if}
 {:else}
   <StartScreen />
