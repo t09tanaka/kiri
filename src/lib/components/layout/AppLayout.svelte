@@ -4,11 +4,12 @@
   import { tabStore } from '@/lib/stores/tabStore';
   import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
-  import { dialogService } from '@/lib/services/dialogService';
+  import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
   import Sidebar from '@/lib/components/layout/Sidebar.svelte';
   import MainContent from '@/lib/components/layout/MainContent.svelte';
   import StatusBar from '@/lib/components/layout/StatusBar.svelte';
   import KeyboardShortcuts from '@/lib/components/ui/KeyboardShortcuts.svelte';
+  import ConfirmDialog from '@/lib/components/ui/ConfirmDialog.svelte';
 
   let isResizing = $state(false);
   let sidebarWidth = $state($appStore.sidebarWidth);
@@ -38,10 +39,14 @@
         const activeTab = $tabStore.tabs.find((t) => t.id === activeId);
         // Show confirmation dialog for terminal tabs
         if (activeTab?.type === 'terminal') {
-          const confirmed = await dialogService.confirm(
-            'Are you sure you want to close this terminal? Any running processes will be terminated.',
-            { title: 'Close Terminal' }
-          );
+          const confirmed = await confirmDialogStore.confirm({
+            title: 'Close Terminal',
+            message:
+              'Are you sure you want to close this terminal? Any running processes will be terminated.',
+            confirmLabel: 'Close',
+            cancelLabel: 'Cancel',
+            kind: 'warning',
+          });
           if (!confirmed) {
             return;
           }
@@ -162,6 +167,7 @@
 </div>
 
 <KeyboardShortcuts isOpen={showShortcuts} onClose={() => (showShortcuts = false)} />
+<ConfirmDialog />
 
 <style>
   .app-layout {

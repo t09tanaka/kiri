@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tabStore, type Tab } from '@/lib/stores/tabStore';
-  import { dialogService } from '@/lib/services/dialogService';
+  import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
 
   interface Props {
     tabs: Tab[];
@@ -17,10 +17,14 @@
     e.stopPropagation();
 
     // Show confirmation dialog for terminal tabs
-    const confirmed = await dialogService.confirm(
-      'Are you sure you want to close this terminal? Any running processes will be terminated.',
-      { title: 'Close Terminal' }
-    );
+    const confirmed = await confirmDialogStore.confirm({
+      title: 'Close Terminal',
+      message:
+        'Are you sure you want to close this terminal? Any running processes will be terminated.',
+      confirmLabel: 'Close',
+      cancelLabel: 'Cancel',
+      kind: 'warning',
+    });
     if (!confirmed) {
       return;
     }
