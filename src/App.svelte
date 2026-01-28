@@ -8,8 +8,10 @@
   import QuickOpen from '@/lib/components/search/QuickOpen.svelte';
   import KeyboardShortcuts from '@/lib/components/ui/KeyboardShortcuts.svelte';
   import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
+  import EditorModal from '@/lib/components/editor/EditorModal.svelte';
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { tabStore } from '@/lib/stores/tabStore';
+  import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { peekStore } from '@/lib/stores/peekStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
   import { PeekEditor } from '@/lib/components/peek';
@@ -315,7 +317,7 @@
   }
 
   function handleFileSelect(path: string) {
-    tabStore.addEditorTab(path);
+    editorModalStore.open(path);
   }
 
   onMount(async () => {
@@ -474,6 +476,10 @@
 
   {#if $diffViewStore.isOpen && $diffViewStore.projectPath}
     <DiffViewModal projectPath={$diffViewStore.projectPath} onClose={() => diffViewStore.close()} />
+  {/if}
+
+  {#if $editorModalStore.isOpen && $editorModalStore.filePath}
+    <EditorModal filePath={$editorModalStore.filePath} onClose={() => editorModalStore.close()} />
   {/if}
 {:else}
   <StartScreen />

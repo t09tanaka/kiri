@@ -22,36 +22,6 @@ describe('tabStore', () => {
     });
   });
 
-  describe('addEditorTab', () => {
-    it('should add an editor tab', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
-
-      const state = get(tabStore);
-      expect(state.tabs).toHaveLength(1);
-      expect(state.tabs[0].type).toBe('editor');
-      expect((state.tabs[0] as { filePath: string }).filePath).toBe('/path/to/file.ts');
-      expect(state.activeTabId).toBe(state.tabs[0].id);
-    });
-
-    it('should not duplicate editor tab for same file', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
-      tabStore.addEditorTab('/path/to/file.ts');
-
-      const state = get(tabStore);
-      expect(state.tabs).toHaveLength(1);
-    });
-
-    it('should switch to existing tab when adding same file', () => {
-      tabStore.addEditorTab('/path/to/file1.ts');
-      tabStore.addEditorTab('/path/to/file2.ts');
-      const firstTabId = get(tabStore).tabs[0].id;
-
-      tabStore.addEditorTab('/path/to/file1.ts');
-
-      expect(get(tabStore).activeTabId).toBe(firstTabId);
-    });
-  });
-
   describe('addTerminalTab', () => {
     it('should add a terminal tab', () => {
       tabStore.addTerminalTab();
@@ -59,7 +29,7 @@ describe('tabStore', () => {
       const state = get(tabStore);
       expect(state.tabs).toHaveLength(1);
       expect(state.tabs[0].type).toBe('terminal');
-      expect((state.tabs[0] as { title: string }).title).toBe('Terminal 1');
+      expect(state.tabs[0].title).toBe('Terminal 1');
     });
 
     it('should increment terminal count in title', () => {
@@ -68,15 +38,15 @@ describe('tabStore', () => {
       tabStore.addTerminalTab();
 
       const state = get(tabStore);
-      expect((state.tabs[0] as { title: string }).title).toBe('Terminal 1');
-      expect((state.tabs[1] as { title: string }).title).toBe('Terminal 2');
-      expect((state.tabs[2] as { title: string }).title).toBe('Terminal 3');
+      expect(state.tabs[0].title).toBe('Terminal 1');
+      expect(state.tabs[1].title).toBe('Terminal 2');
+      expect(state.tabs[2].title).toBe('Terminal 3');
     });
   });
 
   describe('closeTab', () => {
     it('should close a tab', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
+      tabStore.addTerminalTab();
       const tabId = get(tabStore).tabs[0].id;
 
       tabStore.closeTab(tabId);
@@ -85,9 +55,9 @@ describe('tabStore', () => {
     });
 
     it('should switch to adjacent tab when closing active tab', () => {
-      tabStore.addEditorTab('/path/to/file1.ts');
-      tabStore.addEditorTab('/path/to/file2.ts');
-      tabStore.addEditorTab('/path/to/file3.ts');
+      tabStore.addTerminalTab();
+      tabStore.addTerminalTab();
+      tabStore.addTerminalTab();
 
       const state = get(tabStore);
       const middleTabId = state.tabs[1].id;
@@ -97,13 +67,13 @@ describe('tabStore', () => {
 
       const newState = get(tabStore);
       expect(newState.tabs).toHaveLength(2);
-      // Should switch to the tab at the same index (file3)
+      // Should switch to the tab at the same index (third tab)
       expect(newState.activeTabId).toBe(newState.tabs[1].id);
     });
 
     it('should switch to last tab when closing last position active tab', () => {
-      tabStore.addEditorTab('/path/to/file1.ts');
-      tabStore.addEditorTab('/path/to/file2.ts');
+      tabStore.addTerminalTab();
+      tabStore.addTerminalTab();
 
       const state = get(tabStore);
       const lastTabId = state.tabs[1].id;
@@ -116,7 +86,7 @@ describe('tabStore', () => {
     });
 
     it('should set activeTabId to null when closing last tab', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
+      tabStore.addTerminalTab();
       const tabId = get(tabStore).tabs[0].id;
 
       tabStore.closeTab(tabId);
@@ -125,7 +95,7 @@ describe('tabStore', () => {
     });
 
     it('should do nothing when closing non-existent tab', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
+      tabStore.addTerminalTab();
 
       tabStore.closeTab('non-existent');
 
@@ -133,9 +103,9 @@ describe('tabStore', () => {
     });
 
     it('should not change activeTabId when closing non-active tab', () => {
-      tabStore.addEditorTab('/path/to/file1.ts');
-      tabStore.addEditorTab('/path/to/file2.ts');
-      tabStore.addEditorTab('/path/to/file3.ts');
+      tabStore.addTerminalTab();
+      tabStore.addTerminalTab();
+      tabStore.addTerminalTab();
 
       const state = get(tabStore);
       const firstTabId = state.tabs[0].id;
@@ -159,8 +129,8 @@ describe('tabStore', () => {
 
   describe('setActiveTab', () => {
     it('should set active tab', () => {
-      tabStore.addEditorTab('/path/to/file1.ts');
-      tabStore.addEditorTab('/path/to/file2.ts');
+      tabStore.addTerminalTab();
+      tabStore.addTerminalTab();
 
       const firstTabId = get(tabStore).tabs[0].id;
       tabStore.setActiveTab(firstTabId);
@@ -169,39 +139,17 @@ describe('tabStore', () => {
     });
   });
 
-  describe('setModified', () => {
-    it('should set modified flag for editor tab', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
-      const tabId = get(tabStore).tabs[0].id;
-
-      tabStore.setModified(tabId, true);
-
-      const tab = get(tabStore).tabs[0];
-      expect((tab as { modified: boolean }).modified).toBe(true);
-    });
-
-    it('should not affect terminal tabs', () => {
-      tabStore.addTerminalTab();
-      const tabId = get(tabStore).tabs[0].id;
-
-      tabStore.setModified(tabId, true);
-
-      const tab = get(tabStore).tabs[0];
-      expect(tab.type).toBe('terminal');
-    });
-  });
-
   describe('setTerminalId', () => {
     it('should set terminal ID for a pane', () => {
       tabStore.addTerminalTab();
       const state = get(tabStore);
       const tabId = state.tabs[0].id;
-      const terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      const terminalTab = state.tabs[0];
       const paneId = (terminalTab.rootPane as { id: string }).id;
 
       tabStore.setTerminalId(tabId, paneId, 123);
 
-      const updatedTab = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const updatedTab = get(tabStore).tabs[0];
       expect((updatedTab.rootPane as { terminalId: number }).terminalId).toBe(123);
     });
   });
@@ -211,12 +159,12 @@ describe('tabStore', () => {
       tabStore.addTerminalTab();
       const state = get(tabStore);
       const tabId = state.tabs[0].id;
-      const terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      const terminalTab = state.tabs[0];
       const paneId = (terminalTab.rootPane as { id: string }).id;
 
       tabStore.splitPane(tabId, paneId, 'horizontal');
 
-      const updatedTab = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const updatedTab = get(tabStore).tabs[0];
       expect(updatedTab.rootPane.type).toBe('split');
       if (updatedTab.rootPane.type === 'split') {
         expect(updatedTab.rootPane.direction).toBe('horizontal');
@@ -229,12 +177,12 @@ describe('tabStore', () => {
       tabStore.addTerminalTab();
       const state = get(tabStore);
       const tabId = state.tabs[0].id;
-      const terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      const terminalTab = state.tabs[0];
       const paneId = (terminalTab.rootPane as { id: string }).id;
 
       tabStore.splitPane(tabId, paneId, 'vertical');
 
-      const updatedTab = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const updatedTab = get(tabStore).tabs[0];
       expect(updatedTab.rootPane.type).toBe('split');
       if (updatedTab.rootPane.type === 'split') {
         expect(updatedTab.rootPane.direction).toBe('vertical');
@@ -247,18 +195,18 @@ describe('tabStore', () => {
       tabStore.addTerminalTab();
       const state = get(tabStore);
       const tabId = state.tabs[0].id;
-      const terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      const terminalTab = state.tabs[0];
       const paneId = (terminalTab.rootPane as { id: string }).id;
 
       tabStore.splitPane(tabId, paneId, 'horizontal');
 
-      const splitState = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const splitState = get(tabStore).tabs[0];
       const splitPane = splitState.rootPane as { children: TerminalPane[] };
       const secondPaneId = (splitPane.children[1] as { id: string }).id;
 
       tabStore.closePane(tabId, secondPaneId);
 
-      const finalTab = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const finalTab = get(tabStore).tabs[0];
       expect(finalTab.rootPane.type).toBe('terminal');
     });
   });
@@ -268,31 +216,31 @@ describe('tabStore', () => {
       tabStore.addTerminalTab();
       const state = get(tabStore);
       const tabId = state.tabs[0].id;
-      const terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      const terminalTab = state.tabs[0];
       const paneId = (terminalTab.rootPane as { id: string }).id;
 
       tabStore.splitPane(tabId, paneId, 'horizontal');
 
-      const splitState = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const splitState = get(tabStore).tabs[0];
       const firstChildId = (
         (splitState.rootPane as { children: TerminalPane[] }).children[0] as { id: string }
       ).id;
 
       tabStore.updatePaneSizes(tabId, firstChildId, [30, 70]);
 
-      const updatedTab = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const updatedTab = get(tabStore).tabs[0];
       expect((updatedTab.rootPane as { sizes: number[] }).sizes).toEqual([30, 70]);
     });
   });
 
   describe('getActiveTab', () => {
     it('should return active tab', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
+      tabStore.addTerminalTab();
 
       const active = tabStore.getActiveTab();
 
       expect(active).not.toBeNull();
-      expect(active?.type).toBe('editor');
+      expect(active?.type).toBe('terminal');
     });
 
     it('should return null when no tabs', () => {
@@ -304,16 +252,16 @@ describe('tabStore', () => {
 
   describe('getStateForPersistence', () => {
     it('should convert tabs to persisted format', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
+      tabStore.addTerminalTab();
       tabStore.addTerminalTab();
 
       const { tabs, activeTabId } = tabStore.getStateForPersistence();
 
       expect(tabs).toHaveLength(2);
-      expect(tabs[0].type).toBe('editor');
-      expect(tabs[0].filePath).toBe('/path/to/file.ts');
+      expect(tabs[0].type).toBe('terminal');
+      expect(tabs[0].title).toBe('Terminal 1');
       expect(tabs[1].type).toBe('terminal');
-      expect(tabs[1].title).toBe('Terminal 1');
+      expect(tabs[1].title).toBe('Terminal 2');
       expect(activeTabId).not.toBeNull();
     });
   });
@@ -321,8 +269,8 @@ describe('tabStore', () => {
   describe('restoreState', () => {
     it('should restore tabs from persisted format', () => {
       const persistedTabs = [
-        { id: 'tab-1', type: 'editor' as const, filePath: '/path/to/file.ts' },
-        { id: 'tab-2', type: 'terminal' as const, title: 'My Terminal' },
+        { id: 'tab-1', type: 'terminal' as const, title: 'My Terminal' },
+        { id: 'tab-2', type: 'terminal' as const, title: 'Terminal 2' },
       ];
 
       tabStore.restoreState(persistedTabs, 'tab-1');
@@ -333,27 +281,17 @@ describe('tabStore', () => {
     });
 
     it('should set activeTabId to null if not found', () => {
-      const persistedTabs = [
-        { id: 'tab-1', type: 'editor' as const, filePath: '/path/to/file.ts' },
-      ];
+      const persistedTabs = [{ id: 'tab-1', type: 'terminal' as const, title: 'Terminal' }];
 
       tabStore.restoreState(persistedTabs, 'non-existent');
 
       expect(get(tabStore).activeTabId).toBeNull();
     });
-
-    it('should handle editor tabs without filePath', () => {
-      const persistedTabs = [{ id: 'tab-1', type: 'editor' as const, filePath: undefined }];
-
-      tabStore.restoreState(persistedTabs, null);
-
-      expect(get(tabStore).tabs).toHaveLength(0);
-    });
   });
 
   describe('reset', () => {
     it('should reset to initial state', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
+      tabStore.addTerminalTab();
       tabStore.addTerminalTab();
 
       tabStore.reset();
@@ -375,11 +313,11 @@ describe('activeTab derived store', () => {
   });
 
   it('should return active tab', () => {
-    tabStore.addEditorTab('/path/to/file.ts');
+    tabStore.addTerminalTab();
 
     const active = get(activeTab);
     expect(active).not.toBeNull();
-    expect(active?.type).toBe('editor');
+    expect(active?.type).toBe('terminal');
   });
 });
 
@@ -470,7 +408,7 @@ describe('advanced tabStore operations', () => {
       tabStore.setTerminalId(tabId, 'non-existent-pane', 999);
 
       // Should not throw and pane should remain unchanged
-      const updatedTab = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const updatedTab = get(tabStore).tabs[0];
       expect((updatedTab.rootPane as { terminalId: number | null }).terminalId).toBeNull();
     });
 
@@ -478,75 +416,30 @@ describe('advanced tabStore operations', () => {
       tabStore.addTerminalTab();
       let state = get(tabStore);
       const tabId = state.tabs[0].id;
-      let terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      let terminalTab = state.tabs[0];
       const firstPaneId = (terminalTab.rootPane as { id: string }).id;
 
       // Create split with 2 panes
       tabStore.splitPane(tabId, firstPaneId, 'horizontal');
 
       state = get(tabStore);
-      terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      terminalTab = state.tabs[0];
       const splitPane = terminalTab.rootPane as { children: TerminalPane[] };
       const secondPaneId = (splitPane.children[1] as { id: string }).id;
 
       // Set terminal ID for the second pane (in the split)
       tabStore.setTerminalId(tabId, secondPaneId, 456);
 
-      const updatedTab = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const updatedTab = get(tabStore).tabs[0];
       const updatedSplit = updatedTab.rootPane as { children: TerminalPane[] };
       expect((updatedSplit.children[1] as { terminalId: number }).terminalId).toBe(456);
-    });
-
-    it('should handle splitPane for non-terminal tab', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
-      const tabId = get(tabStore).tabs[0].id;
-
-      // Try to split pane on editor tab (should do nothing)
-      tabStore.splitPane(tabId, 'some-pane', 'horizontal');
-
-      // Should not throw
-      expect(get(tabStore).tabs).toHaveLength(1);
-    });
-
-    it('should handle setTerminalId for non-terminal tab', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
-      const tabId = get(tabStore).tabs[0].id;
-
-      // Try to set terminal ID on editor tab (should do nothing)
-      tabStore.setTerminalId(tabId, 'some-pane', 999);
-
-      // Should not throw and tab should remain an editor
-      const tab = get(tabStore).tabs[0];
-      expect(tab.type).toBe('editor');
-    });
-
-    it('should handle closePane for non-terminal tab', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
-      const tabId = get(tabStore).tabs[0].id;
-
-      // Try to close pane on editor tab (should do nothing)
-      tabStore.closePane(tabId, 'some-pane');
-
-      // Should not throw
-      expect(get(tabStore).tabs).toHaveLength(1);
-    });
-
-    it('should handle updatePaneSizes for non-terminal tab', () => {
-      tabStore.addEditorTab('/path/to/file.ts');
-      const tabId = get(tabStore).tabs[0].id;
-
-      // Try to update pane sizes on editor tab (should do nothing)
-      tabStore.updatePaneSizes(tabId, 'some-pane', [40, 60]);
-
-      // Should not throw
-      expect(get(tabStore).tabs).toHaveLength(1);
     });
 
     it('should handle closePane returning null (all children removed)', () => {
       tabStore.addTerminalTab();
       const state = get(tabStore);
       const tabId = state.tabs[0].id;
-      const terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      const terminalTab = state.tabs[0];
       const paneId = (terminalTab.rootPane as { id: string }).id;
 
       // Close the only pane
@@ -560,7 +453,7 @@ describe('advanced tabStore operations', () => {
       tabStore.addTerminalTab();
       let state = get(tabStore);
       const tabId = state.tabs[0].id;
-      let terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      let terminalTab = state.tabs[0];
       const firstPaneId = (terminalTab.rootPane as { id: string }).id;
 
       // Create a nested structure: outer split with pane1 and inner split
@@ -568,7 +461,7 @@ describe('advanced tabStore operations', () => {
       tabStore.splitPane(tabId, firstPaneId, 'horizontal');
 
       state = get(tabStore);
-      terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      terminalTab = state.tabs[0];
       const outerSplit = terminalTab.rootPane as { children: TerminalPane[] };
       const secondPaneId = (outerSplit.children[1] as { id: string }).id;
 
@@ -576,7 +469,7 @@ describe('advanced tabStore operations', () => {
       tabStore.splitPane(tabId, secondPaneId, 'vertical');
 
       state = get(tabStore);
-      terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      terminalTab = state.tabs[0];
       const outerSplit2 = terminalTab.rootPane as { children: TerminalPane[] };
       const innerSplit = outerSplit2.children[1] as { children: TerminalPane[] };
       const pane2Id = (innerSplit.children[0] as { id: string }).id;
@@ -587,7 +480,7 @@ describe('advanced tabStore operations', () => {
       tabStore.closePane(tabId, pane3Id);
 
       // The inner split should be removed, leaving only pane1
-      const finalTab = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const finalTab = get(tabStore).tabs[0];
       expect(finalTab.rootPane.type).toBe('terminal');
     });
 
@@ -595,7 +488,7 @@ describe('advanced tabStore operations', () => {
       tabStore.addTerminalTab();
       const state = get(tabStore);
       const tabId = state.tabs[0].id;
-      const terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      const terminalTab = state.tabs[0];
       const paneId = (terminalTab.rootPane as { id: string }).id;
 
       tabStore.splitPane(tabId, paneId, 'horizontal');
@@ -604,7 +497,7 @@ describe('advanced tabStore operations', () => {
       tabStore.updatePaneSizes(tabId, 'non-existent', [40, 60]);
 
       // Should not throw and sizes should remain unchanged
-      const updatedTab = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const updatedTab = get(tabStore).tabs[0];
       expect((updatedTab.rootPane as { sizes: number[] }).sizes).toEqual([50, 50]);
     });
 
@@ -612,14 +505,14 @@ describe('advanced tabStore operations', () => {
       tabStore.addTerminalTab();
       let state = get(tabStore);
       const tabId = state.tabs[0].id;
-      let terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      let terminalTab = state.tabs[0];
       const firstPaneId = (terminalTab.rootPane as { id: string }).id;
 
       // First split
       tabStore.splitPane(tabId, firstPaneId, 'horizontal');
 
       state = get(tabStore);
-      terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      terminalTab = state.tabs[0];
       const splitPane = terminalTab.rootPane as { children: TerminalPane[] };
       const secondPaneId = (splitPane.children[1] as { id: string }).id;
 
@@ -629,7 +522,7 @@ describe('advanced tabStore operations', () => {
       // Update sizes of nested split
       tabStore.updatePaneSizes(tabId, secondPaneId, [30, 70]);
 
-      const finalTab = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const finalTab = get(tabStore).tabs[0];
       const finalSplit = finalTab.rootPane as { children: TerminalPane[] };
       const nestedSplit = finalSplit.children[1] as { sizes: number[] };
       expect(nestedSplit.sizes).toEqual([30, 70]);
@@ -641,14 +534,14 @@ describe('advanced tabStore operations', () => {
       tabStore.addTerminalTab();
       let state = get(tabStore);
       const tabId = state.tabs[0].id;
-      let terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      let terminalTab = state.tabs[0];
       const firstPaneId = (terminalTab.rootPane as { id: string }).id;
 
       // First split: [pane1, pane2]
       tabStore.splitPane(tabId, firstPaneId, 'horizontal');
 
       state = get(tabStore);
-      terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      terminalTab = state.tabs[0];
       const splitPane = terminalTab.rootPane as { children: TerminalPane[] };
       const pane1Id = (splitPane.children[0] as { id: string }).id;
 
@@ -656,7 +549,7 @@ describe('advanced tabStore operations', () => {
       tabStore.splitPane(tabId, pane1Id, 'vertical');
 
       state = get(tabStore);
-      terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      terminalTab = state.tabs[0];
       const outerSplit = terminalTab.rootPane as { children: TerminalPane[] };
       // First child is now a split (innerSplit)
       const innerSplit = outerSplit.children[0] as { children: TerminalPane[] };
@@ -669,7 +562,7 @@ describe('advanced tabStore operations', () => {
       tabStore.updatePaneSizes(tabId, innerFirstPaneId, [25, 75]);
 
       // The OUTER split's sizes should be updated
-      const finalTab = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const finalTab = get(tabStore).tabs[0];
       const finalOuterSplit = finalTab.rootPane as { sizes: number[] };
       expect(finalOuterSplit.sizes).toEqual([25, 75]);
     });
@@ -678,14 +571,14 @@ describe('advanced tabStore operations', () => {
       tabStore.addTerminalTab();
       let state = get(tabStore);
       const tabId = state.tabs[0].id;
-      let terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      let terminalTab = state.tabs[0];
       const firstPaneId = (terminalTab.rootPane as { id: string }).id;
 
       // Create split with 2 panes
       tabStore.splitPane(tabId, firstPaneId, 'horizontal');
 
       state = get(tabStore);
-      terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      terminalTab = state.tabs[0];
       const splitPane = terminalTab.rootPane as { children: TerminalPane[] };
       const secondPaneId = (splitPane.children[1] as { id: string }).id;
 
@@ -693,7 +586,7 @@ describe('advanced tabStore operations', () => {
       tabStore.splitPane(tabId, secondPaneId, 'vertical');
 
       state = get(tabStore);
-      terminalTab = state.tabs[0] as { rootPane: TerminalPane };
+      terminalTab = state.tabs[0];
       const outerSplit = terminalTab.rootPane as { children: TerminalPane[] };
       const innerSplit = outerSplit.children[1] as { children: TerminalPane[] };
       const thirdPaneId = (innerSplit.children[1] as { id: string }).id;
@@ -701,7 +594,7 @@ describe('advanced tabStore operations', () => {
       // Close one of the nested children
       tabStore.closePane(tabId, thirdPaneId);
 
-      const finalTab = get(tabStore).tabs[0] as { rootPane: TerminalPane };
+      const finalTab = get(tabStore).tabs[0];
       // After closing, the inner split should collapse
       expect(finalTab.rootPane.type).toBe('split');
     });
@@ -715,15 +608,15 @@ describe('advanced tabStore operations', () => {
 
       const state = get(tabStore);
       expect(state.tabs).toHaveLength(1);
-      const tab = state.tabs[0] as { title: string };
+      const tab = state.tabs[0];
       expect(tab.title).toBe('Terminal 1');
     });
 
     it('should update nextId based on existing tab IDs', () => {
-      const persistedTabs = [{ id: 'tab-100', type: 'editor' as const, filePath: '/path/file.ts' }];
+      const persistedTabs = [{ id: 'tab-100', type: 'terminal' as const, title: 'Terminal' }];
 
       tabStore.restoreState(persistedTabs, 'tab-100');
-      tabStore.addEditorTab('/new/file.ts');
+      tabStore.addTerminalTab();
 
       const state = get(tabStore);
       // New tab should have ID > 100
@@ -735,12 +628,12 @@ describe('advanced tabStore operations', () => {
     it('should handle non-standard tab ID format (fallback to 0)', () => {
       // Tab ID doesn't match tab-{number} pattern
       const persistedTabs = [
-        { id: 'custom-id', type: 'editor' as const, filePath: '/path/file.ts' },
-        { id: 'another-custom', type: 'editor' as const, filePath: '/path/file2.ts' },
+        { id: 'custom-id', type: 'terminal' as const, title: 'Terminal 1' },
+        { id: 'another-custom', type: 'terminal' as const, title: 'Terminal 2' },
       ];
 
       tabStore.restoreState(persistedTabs, 'custom-id');
-      tabStore.addEditorTab('/new/file.ts');
+      tabStore.addTerminalTab();
 
       const state = get(tabStore);
       // New tab should have ID starting from 1 (since non-standard IDs return 0)
@@ -760,7 +653,7 @@ describe('advanced tabStore operations', () => {
 
       const state = get(tabStore);
       expect(state.tabs).toHaveLength(2);
-      const newTerminalTab = state.tabs[1] as { rootPane: TerminalPane };
+      const newTerminalTab = state.tabs[1];
       expect((newTerminalTab.rootPane as { id: string }).id).toMatch(/^pane-\d+$/);
     });
   });

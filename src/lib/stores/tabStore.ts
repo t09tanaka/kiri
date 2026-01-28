@@ -1,13 +1,6 @@
 import { writable, derived, get } from 'svelte/store';
 import type { PersistedTab } from '@/lib/services/persistenceService';
 
-export interface EditorTab {
-  id: string;
-  type: 'editor';
-  filePath: string;
-  modified: boolean;
-}
-
 // Terminal pane types for split support
 export interface TerminalPaneLeaf {
   type: 'terminal';
@@ -31,7 +24,7 @@ export interface TerminalTab {
   rootPane: TerminalPane;
 }
 
-export type Tab = EditorTab | TerminalTab;
+export type Tab = TerminalTab;
 
 let nextPaneId = 1;
 
@@ -206,31 +199,9 @@ function createTabStore() {
   return {
     subscribe,
 
-    addEditorTab: (filePath: string) => {
-      update((state) => {
-        // Check if file is already open
-        const existing = state.tabs.find((t) => t.type === 'editor' && t.filePath === filePath);
-        if (existing) {
-          return { ...state, activeTabId: existing.id };
-        }
-
-        const newTab: EditorTab = {
-          id: generateId(),
-          type: 'editor',
-          filePath,
-          modified: false,
-        };
-
-        return {
-          tabs: [...state.tabs, newTab],
-          activeTabId: newTab.id,
-        };
-      });
-    },
-
     addTerminalTab: () => {
       update((state) => {
-        const terminalCount = state.tabs.filter((t) => t.type === 'terminal').length;
+        const terminalCount = state.tabs.length;
         const newTab: TerminalTab = {
           id: generateId(),
           type: 'terminal',
@@ -274,13 +245,6 @@ function createTabStore() {
 
     setActiveTab: (id: string) => {
       update((state) => ({ ...state, activeTabId: id }));
-    },
-
-    setModified: (id: string, modified: boolean) => {
-      update((state) => ({
-        ...state,
-        tabs: state.tabs.map((t) => (t.id === id && t.type === 'editor' ? { ...t, modified } : t)),
-      }));
     },
 
     setTerminalId: (tabId: string, paneId: string, terminalId: number) => {
@@ -365,21 +329,11 @@ function createTabStore() {
      */
     getStateForPersistence: (): { tabs: PersistedTab[]; activeTabId: string | null } => {
       const state = get({ subscribe });
-      const persistedTabs: PersistedTab[] = state.tabs.map((tab) => {
-        if (tab.type === 'editor') {
-          return {
-            id: tab.id,
-            type: 'editor' as const,
-            filePath: tab.filePath,
-          };
-        } else {
-          return {
-            id: tab.id,
-            type: 'terminal' as const,
-            title: tab.title,
-          };
-        }
-      });
+      const persistedTabs: PersistedTab[] = state.tabs.map((tab) => ({
+        id: tab.id,
+        type: 'terminal' as const,
+        title: tab.title,
+      }));
       return {
         tabs: persistedTabs,
         activeTabId: state.activeTabId,
@@ -394,14 +348,7 @@ function createTabStore() {
       let terminalCount = 0;
 
       for (const pTab of persistedTabs) {
-        if (pTab.type === 'editor' && pTab.filePath) {
-          tabs.push({
-            id: pTab.id,
-            type: 'editor',
-            filePath: pTab.filePath,
-            modified: false,
-          });
-        } else if (pTab.type === 'terminal') {
+        if (pTab.type === 'terminal') {
           terminalCount++;
           tabs.push({
             id: pTab.id,
@@ -427,7 +374,6 @@ function createTabStore() {
 
       // Update nextPaneId to avoid ID collisions
       const maxPaneId = tabs
-        .filter((t): t is TerminalTab => t.type === 'terminal')
         .flatMap((t) => getAllPaneIds(t.rootPane))
         .map((id) => {
           const match = id.match(/^pane-(\d+)$/);

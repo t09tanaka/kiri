@@ -1,6 +1,5 @@
 <script lang="ts">
   import { tabStore, type Tab } from '@/lib/stores/tabStore';
-  import { getFileIconInfo } from '@/lib/utils/fileIcons';
   import { dialogService } from '@/lib/services/dialogService';
 
   interface Props {
@@ -10,19 +9,6 @@
 
   let { tabs, activeTabId }: Props = $props();
 
-  function getTabLabel(tab: Tab): string {
-    if (tab.type === 'terminal') {
-      return tab.title;
-    }
-    return tab.filePath.split('/').pop() || 'Untitled';
-  }
-
-  function getFileColor(tab: Tab): string {
-    if (tab.type === 'terminal') return 'var(--accent-color)';
-    const filename = tab.filePath.split('/').pop() || '';
-    return getFileIconInfo(filename).color;
-  }
-
   function handleTabClick(tab: Tab) {
     tabStore.setActiveTab(tab.id);
   }
@@ -31,14 +17,12 @@
     e.stopPropagation();
 
     // Show confirmation dialog for terminal tabs
-    if (tab.type === 'terminal') {
-      const confirmed = await dialogService.confirm(
-        'Are you sure you want to close this terminal? Any running processes will be terminated.',
-        { title: 'Close Terminal' }
-      );
-      if (!confirmed) {
-        return;
-      }
+    const confirmed = await dialogService.confirm(
+      'Are you sure you want to close this terminal? Any running processes will be terminated.',
+      { title: 'Close Terminal' }
+    );
+    if (!confirmed) {
+      return;
     }
 
     tabStore.closeTab(tab.id);
@@ -71,44 +55,25 @@
         onkeydown={(e) => e.key === 'Enter' && handleTabClick(tab)}
         role="tab"
         tabindex="0"
-        title={tab.type === 'editor' ? tab.filePath : tab.title}
+        title={tab.title}
         style="--tab-index: {index}"
       >
-        <span class="tab-icon" style="color: {getFileColor(tab)}">
-          {#if tab.type === 'terminal'}
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <polyline points="4 17 10 11 4 5"></polyline>
-              <line x1="12" y1="19" x2="20" y2="19"></line>
-            </svg>
-          {:else}
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-              <polyline points="14 2 14 8 20 8"></polyline>
-            </svg>
-          {/if}
+        <span class="tab-icon">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="4 17 10 11 4 5"></polyline>
+            <line x1="12" y1="19" x2="20" y2="19"></line>
+          </svg>
         </span>
-        <span class="tab-label">{getTabLabel(tab)}</span>
-        {#if tab.type === 'editor' && tab.modified}
-          <span class="modified-indicator"></span>
-        {/if}
+        <span class="tab-label">{tab.title}</span>
         <button
           class="close-btn"
           onclick={(e) => handleCloseClick(e, tab)}

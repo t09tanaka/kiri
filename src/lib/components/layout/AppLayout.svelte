@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { appStore } from '@/lib/stores/appStore';
   import { tabStore } from '@/lib/stores/tabStore';
+  import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
   import { dialogService } from '@/lib/services/dialogService';
   import Sidebar from '@/lib/components/layout/Sidebar.svelte';
@@ -15,7 +16,7 @@
   let isWindowFocused = $state(true);
 
   function handleFileSelect(path: string) {
-    tabStore.addEditorTab(path);
+    editorModalStore.open(path);
   }
 
   async function handleKeyDown(e: KeyboardEvent) {

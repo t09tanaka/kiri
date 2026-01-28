@@ -7,7 +7,7 @@
   import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
   import { tags } from '@lezer/highlight';
   import { getLanguageExtension } from '../editor/languages';
-  import { tabStore } from '@/lib/stores/tabStore';
+  import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { projectStore } from '@/lib/stores/projectStore';
   import { fontSize } from '@/lib/stores/settingsStore';
   import { Spinner } from '@/lib/components/ui';
@@ -304,7 +304,7 @@
 
   function handleOpenInEditor() {
     const absolutePath = resolveFilePath(filePath);
-    tabStore.addEditorTab(absolutePath);
+    editorModalStore.open(absolutePath);
     onClose();
   }
 

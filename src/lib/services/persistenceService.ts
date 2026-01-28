@@ -1,5 +1,4 @@
 import { Store } from '@tauri-apps/plugin-store';
-import { invoke } from '@tauri-apps/api/core';
 import type { SidebarMode } from '@/lib/stores/appStore';
 
 const STORE_PATH = 'kiri-settings.json';
@@ -16,9 +15,8 @@ const DEFAULT_SETTINGS: PersistedSettings = {
 // Persisted tab structure (minimal data needed for restoration)
 export interface PersistedTab {
   id: string;
-  type: 'editor' | 'terminal';
-  filePath?: string; // editor only
-  title?: string; // terminal only
+  type: 'terminal';
+  title?: string;
 }
 
 // UI state to persist
@@ -77,18 +75,6 @@ async function getStore(): Promise<Store> {
 }
 
 /**
- * Check if a file exists by trying to read it
- */
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await invoke('read_file', { path });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Load persisted session state
  */
 export async function loadSessionState(): Promise<PersistedState | null> {
@@ -101,18 +87,8 @@ export async function loadSessionState(): Promise<PersistedState | null> {
       return null;
     }
 
-    // Validate editor tab file paths exist
-    const validatedTabs: PersistedTab[] = [];
-    for (const tab of state.tabs) {
-      if (tab.type === 'editor' && tab.filePath) {
-        const exists = await fileExists(tab.filePath);
-        if (exists) {
-          validatedTabs.push(tab);
-        }
-      } else if (tab.type === 'terminal') {
-        validatedTabs.push(tab);
-      }
-    }
+    // All tabs are terminal tabs now
+    const validatedTabs: PersistedTab[] = state.tabs.filter((tab) => tab.type === 'terminal');
 
     // If active tab was removed, pick first available
     let activeTabId = state.activeTabId;
@@ -178,20 +154,12 @@ export function getDefaultUI(): PersistedUI {
 /**
  * Validate tabs for a window state
  */
-async function validateWindowTabs(
-  tabs: PersistedTab[]
-): Promise<{ tabs: PersistedTab[]; activeTabId: string | null }> {
-  const validatedTabs: PersistedTab[] = [];
-  for (const tab of tabs) {
-    if (tab.type === 'editor' && tab.filePath) {
-      const exists = await fileExists(tab.filePath);
-      if (exists) {
-        validatedTabs.push(tab);
-      }
-    } else if (tab.type === 'terminal') {
-      validatedTabs.push(tab);
-    }
-  }
+function validateWindowTabs(tabs: PersistedTab[]): {
+  tabs: PersistedTab[];
+  activeTabId: string | null;
+} {
+  // All tabs are terminal tabs now
+  const validatedTabs = tabs.filter((tab) => tab.type === 'terminal');
   return {
     tabs: validatedTabs,
     activeTabId: validatedTabs.length > 0 ? validatedTabs[0].id : null,
@@ -229,7 +197,7 @@ export async function loadMultiWindowSession(): Promise<PersistedSession | null>
       // Include geometry for main window (always restore main window geometry)
       let mainWindow: PersistedWindowState | null = null;
       if (session.mainWindow && hasWindowData(session.mainWindow, true)) {
-        const { tabs, activeTabId } = await validateWindowTabs(session.mainWindow.tabs || []);
+        const { tabs, activeTabId } = validateWindowTabs(session.mainWindow.tabs || []);
         mainWindow = {
           ...session.mainWindow,
           label: 'main',
@@ -246,7 +214,7 @@ export async function loadMultiWindowSession(): Promise<PersistedSession | null>
       const otherWindows: Omit<PersistedWindowState, 'label'>[] = [];
       for (const win of session.otherWindows || []) {
         if (hasWindowData(win)) {
-          const { tabs, activeTabId } = await validateWindowTabs(win.tabs || []);
+          const { tabs, activeTabId } = validateWindowTabs(win.tabs || []);
           otherWindows.push({
             ...win,
             tabs,

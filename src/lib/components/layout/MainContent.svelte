@@ -2,12 +2,7 @@
   import { tabStore, activeTab, getAllPaneIds } from '@/lib/stores/tabStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
   import { TerminalContainer } from '@/lib/components/terminal';
-  import { Editor } from '@/lib/components/editor';
   import TabBar from './TabBar.svelte';
-
-  function handleEditorModified(tabId: string, modified: boolean) {
-    tabStore.setModified(tabId, modified);
-  }
 
   // Counter to force {#key} block to re-render when tabs change
   // This is needed because Svelte's {#key} doesn't properly re-render
@@ -33,19 +28,12 @@
   <div class="content-area">
     {#key tabChangeCounter}
       {#if $activeTab}
-        {#if $activeTab.type === 'terminal'}
-          <TerminalContainer
-            tabId={$activeTab.id}
-            pane={$activeTab.rootPane}
-            cwd={$currentProjectPath}
-            isOnlyPane={getAllPaneIds($activeTab.rootPane).length === 1}
-          />
-        {:else if $activeTab.type === 'editor'}
-          <Editor
-            filePath={$activeTab.filePath}
-            onModifiedChange={(modified) => handleEditorModified($activeTab.id, modified)}
-          />
-        {/if}
+        <TerminalContainer
+          tabId={$activeTab.id}
+          pane={$activeTab.rootPane}
+          cwd={$currentProjectPath}
+          isOnlyPane={getAllPaneIds($activeTab.rootPane).length === 1}
+        />
       {:else}
         <div class="no-tabs">
           <div class="bg-layer bg-gradient"></div>

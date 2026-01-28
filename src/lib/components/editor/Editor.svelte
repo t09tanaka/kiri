@@ -455,16 +455,6 @@
     height: 100%;
     background: linear-gradient(180deg, #060810 0%, #080b10 100%);
     overflow: hidden;
-    animation: editorFadeIn 0.4s ease-out;
-  }
-
-  @keyframes editorFadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
   }
 
   /* Ambient corner glow */
