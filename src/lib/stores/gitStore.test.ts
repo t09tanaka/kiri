@@ -161,13 +161,38 @@ describe('gitStore helper functions', () => {
       const map = new Map<string, GitFileStatus>();
       // Cast unknown status to GitFileStatus to test the fallback ?? 0
       map.set('src/file1.ts', 'UnknownStatus' as GitFileStatus);
-      map.set('src/file2.ts', 'Ignored'); // Priority 0
 
-      // UnknownStatus has fallback priority 0, same as Ignored
-      // First one encountered wins when priorities are equal
       const result = getDirectoryStatusColor('src', map);
-      // The result should be based on whichever was processed first with priority > -1
       expect(result).toBe('inherit'); // UnknownStatus → getStatusColor returns 'inherit'
+    });
+
+    it('should not propagate Ignored status to parent directories', () => {
+      const map = new Map<string, GitFileStatus>();
+      map.set('src/ignored-file.log', 'Ignored');
+
+      // Ignored status should not affect parent directory color
+      expect(getDirectoryStatusColor('src', map)).toBe('');
+    });
+
+    it('should show other status colors even when Ignored files exist', () => {
+      const map = new Map<string, GitFileStatus>();
+      map.set('src/ignored-file.log', 'Ignored');
+      map.set('src/modified-file.ts', 'Modified');
+
+      // Modified status should be shown, Ignored should be ignored
+      expect(getDirectoryStatusColor('src', map)).toBe('var(--git-modified)');
+    });
+
+    it('should return empty string when only Ignored files exist in directory', () => {
+      const map = new Map<string, GitFileStatus>();
+      map.set('src/file1.log', 'Ignored');
+      map.set('src/file2.log', 'Ignored');
+      map.set('other/file.ts', 'Modified');
+
+      // Directory with only Ignored files should have no color
+      expect(getDirectoryStatusColor('src', map)).toBe('');
+      // Other directory with Modified should show color
+      expect(getDirectoryStatusColor('other', map)).toBe('var(--git-modified)');
     });
   });
 });

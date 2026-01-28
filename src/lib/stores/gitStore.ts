@@ -220,6 +220,10 @@ export function getDirectoryStatusColor(
   const prefix = dirRelativePath ? dirRelativePath + '/' : '';
 
   for (const [filePath, status] of gitStatusMap) {
+    // Skip Ignored status - it shouldn't propagate to parent directories
+    // Only actual changes (Modified, Added, etc.) should affect directory color
+    if (status === 'Ignored') continue;
+
     // Check if file is inside this directory
     // Note: When prefix is empty, startsWith('') is always true for any string,
     // so we only need to check startsWith(prefix)
