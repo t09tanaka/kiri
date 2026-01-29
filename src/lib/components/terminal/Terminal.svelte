@@ -60,12 +60,16 @@
   // When Ink renders at exactly terminal height, unintended scrolling occurs
   const PTY_ROW_MARGIN = 1;
 
-  // Resize stability: buffer output during resize to prevent partial frame rendering
+  // Resize stability: drop output during resize to prevent partial frame rendering
   // This acts as an additional sync layer on top of Mode 2026
+  // NOTE: We DROP (not buffer) output during resize because:
+  // - Buffered content is rendered for the OLD terminal size
+  // - Writing old-size content after resize causes cursor position mismatches
+  // - This manifests as character corruption and unnatural line breaks in Ink apps
+  // - The Ink app will receive SIGWINCH and redraw with the new size anyway
   let isResizing = false;
-  let resizeBuffer = '';
   let resizeStabilityTimeout: ReturnType<typeof setTimeout> | null = null;
-  const RESIZE_STABILITY_DELAY = 50; // ms to wait after resize before flushing
+  const RESIZE_STABILITY_DELAY = 50; // ms to wait after resize before resuming output
 
   // Track last sent PTY size to prevent duplicate resize calls
   // This is needed because fitTerminalToContainer() may trigger onResize twice:
@@ -426,12 +430,14 @@
       // Flush all pending writes in a single animation frame
       const flushWrites = () => {
         if (pendingWrite && terminal) {
-          // If resizing, add to resize buffer instead of writing directly
+          // If resizing, drop the pending write - it's based on old terminal size
+          // Ink apps will redraw after receiving SIGWINCH
           if (isResizing) {
-            resizeBuffer += pendingWrite;
-          } else {
-            terminal.write(pendingWrite);
+            pendingWrite = '';
+            writeScheduled = false;
+            return;
           }
+          terminal.write(pendingWrite);
           pendingWrite = '';
         }
         writeScheduled = false;
@@ -439,9 +445,9 @@
 
       // Schedule a batched write using requestAnimationFrame
       const scheduleWrite = (data: string) => {
-        // If resizing, add directly to resize buffer for later flush
+        // If resizing, drop the data - it's based on old terminal size
+        // Ink apps will redraw after receiving SIGWINCH
         if (isResizing) {
-          resizeBuffer += data;
           return;
         }
         pendingWrite += data;
@@ -636,25 +642,22 @@
   }
 
   /**
-   * Flush the resize buffer after stability delay
+   * End resize mode after stability delay
+   * This allows output to flow again after resize is complete
    */
-  function flushResizeBuffer() {
-    if (resizeBuffer && terminal) {
-      terminal.write(resizeBuffer);
-      resizeBuffer = '';
-    }
+  function endResizeMode() {
     isResizing = false;
   }
 
   /**
-   * Schedule the resize buffer flush after stability delay
+   * Schedule the end of resize mode after stability delay
    */
-  function scheduleResizeFlush() {
+  function scheduleResizeEnd() {
     if (resizeStabilityTimeout) {
       clearTimeout(resizeStabilityTimeout);
     }
     resizeStabilityTimeout = setTimeout(() => {
-      requestAnimationFrame(flushResizeBuffer);
+      requestAnimationFrame(endResizeMode);
     }, RESIZE_STABILITY_DELAY);
   }
 
@@ -671,8 +674,8 @@
         // RAF to ensure layout is complete
         requestAnimationFrame(() => {
           fitTerminalToContainer();
-          // Schedule buffer flush after resize completes
-          scheduleResizeFlush();
+          // Schedule buffer clear after resize completes
+          scheduleResizeEnd();
         });
       }, 16); // ~1 frame at 60fps
     }
@@ -716,8 +719,8 @@
       // Force immediate resize without debounce
       requestAnimationFrame(() => {
         fitTerminalToContainer();
-        // Schedule buffer flush after resize completes
-        scheduleResizeFlush();
+        // Schedule buffer clear after resize completes
+        scheduleResizeEnd();
       });
     };
     window.addEventListener('terminal-resize', handleTerminalResize);
