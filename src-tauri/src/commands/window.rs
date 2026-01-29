@@ -10,6 +10,7 @@ pub fn create_window(
     y: Option<i32>,
     width: Option<f64>,
     height: Option<f64>,
+    project_path: Option<String>,
 ) -> Result<(), String> {
     let id = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("window-{}", id);
@@ -26,7 +27,16 @@ pub fn create_window(
             .unwrap_or((1200.0, 800.0)),
     };
 
-    let mut builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::default())
+    // Build URL with optional project path parameter
+    let url = match &project_path {
+        Some(path) => {
+            let encoded = urlencoding::encode(path);
+            WebviewUrl::App(format!("?project={}", encoded).into())
+        }
+        None => WebviewUrl::default(),
+    };
+
+    let mut builder = WebviewWindowBuilder::new(&app, &label, url)
         .title("kiri")
         .inner_size(win_width, win_height)
         .min_inner_size(600.0, 400.0)

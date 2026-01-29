@@ -52,7 +52,7 @@
   <div class="sidebar-footer">
     <button
       type="button"
-      class="changes-button"
+      class="footer-btn changes-button"
       class:has-changes={changeCount > 0}
       onclick={openDiffViewModal}
       title="Open Changes ({changeCount} files)"
@@ -196,10 +196,10 @@
     background: var(--bg-tertiary);
   }
 
-  .changes-button {
+  .footer-btn {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
     gap: var(--space-2);
     width: 100%;
     padding: var(--space-2) var(--space-3);
@@ -214,14 +214,14 @@
     transition: all var(--transition-fast);
   }
 
-  .changes-button:hover {
+  .footer-btn:hover {
     background: var(--bg-glass-hover);
     border-color: var(--border-glow);
     color: var(--text-primary);
     transform: translateY(-1px);
   }
 
-  .changes-button:active {
+  .footer-btn:active {
     transform: translateY(0) scale(0.99);
   }
 
@@ -235,12 +235,12 @@
     background: rgba(251, 191, 36, 0.1);
   }
 
-  .changes-button svg {
+  .footer-btn svg {
     flex-shrink: 0;
     transition: transform var(--transition-fast);
   }
 
-  .changes-button:hover svg {
+  .footer-btn:hover svg {
     transform: scale(1.1);
   }
 

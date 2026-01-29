@@ -3,6 +3,8 @@
   import { gitStore } from '@/lib/stores/gitStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
+  import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
+  import { isWorktree, worktreeCount } from '@/lib/stores/worktreeStore';
 
   interface Props {
     onShowShortcuts?: () => void;
@@ -33,6 +35,14 @@
       return;
     }
     diffViewStore.open($currentProjectPath);
+  }
+
+  function handleWorktreesClick() {
+    if (!$currentProjectPath) {
+      console.error('No project path available');
+      return;
+    }
+    worktreeViewStore.open($currentProjectPath);
   }
 </script>
 
@@ -88,8 +98,12 @@
     </span>
   </div>
   <div class="status-right">
-    {#if gitInfo?.branch}
-      <span class="status-item git-branch" title="Git branch: {gitInfo.branch}">
+    {#if !$isWorktree && $worktreeCount > 0}
+      <button
+        class="status-item worktrees-btn"
+        onclick={handleWorktreesClick}
+        title="Worktrees ({$worktreeCount})"
+      >
         <svg
           width="12"
           height="12"
@@ -100,13 +114,55 @@
           stroke-linecap="round"
           stroke-linejoin="round"
         >
-          <line x1="6" y1="3" x2="6" y2="15"></line>
-          <circle cx="18" cy="6" r="3"></circle>
-          <circle cx="6" cy="18" r="3"></circle>
-          <path d="M18 9a9 9 0 0 1-9 9"></path>
+          <circle cx="18" cy="18" r="3"></circle>
+          <circle cx="6" cy="6" r="3"></circle>
+          <path d="M6 21V9a9 9 0 0 0 9 9"></path>
         </svg>
-        <span>{gitInfo.branch}</span>
-      </span>
+        <span>Worktrees</span>
+        <span class="worktrees-count">{$worktreeCount}</span>
+      </button>
+    {/if}
+    {#if gitInfo?.branch}
+      {#if $isWorktree}
+        <span class="status-item worktree-branch" title="Worktree: {gitInfo.branch}">
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="6" y1="3" x2="6" y2="15"></line>
+            <circle cx="18" cy="6" r="3"></circle>
+            <circle cx="6" cy="18" r="3"></circle>
+            <path d="M18 9a9 9 0 0 1-9 9"></path>
+          </svg>
+          <span class="worktree-label">WT</span>
+          <span>{gitInfo.branch}</span>
+        </span>
+      {:else}
+        <span class="status-item git-branch" title="Git branch: {gitInfo.branch}">
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="6" y1="3" x2="6" y2="15"></line>
+            <circle cx="18" cy="6" r="3"></circle>
+            <circle cx="6" cy="18" r="3"></circle>
+            <path d="M18 9a9 9 0 0 1-9 9"></path>
+          </svg>
+          <span>{gitInfo.branch}</span>
+        </span>
+      {/if}
     {/if}
     {#if changeCount > 0}
       <button
@@ -282,6 +338,31 @@
     background: rgba(125, 211, 252, 0.05);
   }
 
+  .worktrees-btn {
+    padding: 3px var(--space-2);
+    background: rgba(192, 132, 252, 0.1);
+    border: none;
+    border-radius: var(--radius-sm);
+    color: rgb(192, 132, 252);
+    font-weight: 500;
+    font-size: 10px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .worktrees-btn:hover {
+    background: rgba(192, 132, 252, 0.2);
+    transform: translateY(-1px);
+  }
+
+  .worktrees-btn:active {
+    transform: translateY(0) scale(0.97);
+  }
+
+  .worktrees-count {
+    font-weight: 700;
+  }
+
   .git-branch {
     padding: 3px var(--space-2);
     background: rgba(74, 222, 128, 0.1);
@@ -297,7 +378,33 @@
     transform: translateY(-1px);
   }
 
-  .git-branch:hover svg {
+  .worktree-branch {
+    padding: 3px var(--space-2);
+    background: rgba(251, 191, 36, 0.15);
+    border-radius: var(--radius-sm);
+    color: var(--git-modified);
+    font-weight: 500;
+    font-size: 10px;
+    transition: all var(--transition-fast);
+  }
+
+  .worktree-branch:hover {
+    background: rgba(251, 191, 36, 0.25);
+    transform: translateY(-1px);
+  }
+
+  .worktree-label {
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    background: rgba(251, 191, 36, 0.35);
+    color: var(--git-modified);
+    border-radius: 3px;
+    letter-spacing: 0.05em;
+  }
+
+  .git-branch:hover svg,
+  .worktree-branch:hover svg {
     animation: branchPulse 0.6s ease;
   }
 

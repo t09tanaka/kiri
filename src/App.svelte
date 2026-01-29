@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, emit } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -8,14 +9,20 @@
   import QuickOpen from '@/lib/components/search/QuickOpen.svelte';
   import KeyboardShortcuts from '@/lib/components/ui/KeyboardShortcuts.svelte';
   import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
+  import WorktreePanel from '@/lib/components/git/WorktreePanel.svelte';
   import EditorModal from '@/lib/components/editor/EditorModal.svelte';
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { tabStore } from '@/lib/stores/tabStore';
   import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { peekStore } from '@/lib/stores/peekStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
+  import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
+  import { worktreeStore, isWorktree } from '@/lib/stores/worktreeStore';
+  import { worktreeService } from '@/lib/services/worktreeService';
+  import { eventService } from '@/lib/services/eventService';
   import { PeekEditor } from '@/lib/components/peek';
   import { appStore } from '@/lib/stores/appStore';
+  import { gitStore } from '@/lib/stores/gitStore';
   import { projectStore, isProjectOpen } from '@/lib/stores/projectStore';
   import { settingsStore } from '@/lib/stores/settingsStore';
   import { performanceService } from '@/lib/services/performanceService';
@@ -368,6 +375,32 @@
       await restoreSession();
     }
 
+    // Handle ?project= URL parameter (for worktree windows)
+    const params = new URLSearchParams(window.location.search);
+    const projectParam = params.get('project');
+    if (projectParam) {
+      const decodedPath = decodeURIComponent(projectParam);
+      await projectStore.openProject(decodedPath);
+      const { tabs } = tabStore.getStateForPersistence();
+      if (tabs.length === 0) {
+        tabStore.addTerminalTab();
+      }
+    }
+
+    // Listen for worktree-removed event (close window if its worktree was removed)
+    const unlistenWorktreeRemoved = await listen<{ path: string }>('worktree-removed', (event) => {
+      const currentPath = projectStore.getCurrentPath();
+      if (currentPath && currentPath === event.payload.path) {
+        projectStore.closeProject();
+      }
+    });
+
+    // Load worktree info when project is open
+    const currentPath = projectStore.getCurrentPath();
+    if (currentPath) {
+      worktreeStore.refresh(currentPath);
+    }
+
     window.addEventListener('keydown', handleKeyDown);
 
     // Wait a bit before enabling auto-save, then save state
@@ -393,7 +426,13 @@
     const unsubscribeTabStore = tabStore.subscribe(debouncedSave);
 
     // Auto-save when project changes (for new windows opening projects)
-    const unsubscribeProjectStore = projectStore.subscribe(debouncedSave);
+    const unsubscribeProjectStore = projectStore.subscribe((state) => {
+      debouncedSave();
+      // Refresh worktree info when project changes
+      if (state.currentPath) {
+        worktreeStore.refresh(state.currentPath);
+      }
+    });
 
     // Auto-save settings when they change (main window only)
     let unsubscribeSettingsStore: (() => void) | null = null;
@@ -408,6 +447,29 @@
     // Save state before window closes
     const unlistenCloseRequested = await currentWindow.onCloseRequested(async (event) => {
       event.preventDefault();
+
+      // For worktree windows, automatically delete the worktree
+      const worktreeState = get(worktreeStore);
+      const worktreeContext = worktreeState.worktreeContext;
+      if (worktreeContext?.is_worktree && worktreeContext?.main_repo_path) {
+        const currentPath = projectStore.getCurrentPath();
+        if (currentPath) {
+          try {
+            // Get worktree name from path (last segment of the path)
+            const pathParts = currentPath.split('/');
+            const worktreeName = pathParts[pathParts.length - 1];
+
+            // Remove worktree using main repo path
+            await worktreeService.remove(worktreeContext.main_repo_path, worktreeName);
+
+            // Emit event to notify other windows
+            await eventService.emit('worktree-removed', { path: currentPath });
+          } catch (error) {
+            console.error('Failed to remove worktree:', error);
+          }
+        }
+      }
+
       try {
         if (isMainWindow) {
           // Main window: save state
@@ -448,6 +510,7 @@
       unsubscribeSettingsStore?.();
       unlistenRestore?.();
       unlistenAssignIndex?.();
+      unlistenWorktreeRemoved();
       window.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       unlistenCloseRequested();
@@ -460,7 +523,32 @@
 </script>
 
 {#if $isProjectOpen}
-  <AppLayout />
+  <div class="app-container">
+    {#if $isWorktree}
+      <div class="worktree-banner">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <line x1="6" y1="3" x2="6" y2="15"></line>
+          <circle cx="18" cy="6" r="3"></circle>
+          <circle cx="6" cy="18" r="3"></circle>
+          <path d="M18 9a9 9 0 0 1-9 9"></path>
+        </svg>
+        <span class="worktree-label">WT</span>
+        {#if $gitStore.repoInfo?.branch}
+          <span class="worktree-branch">{$gitStore.repoInfo.branch}</span>
+        {:else}
+          <span>Worktree</span>
+        {/if}
+      </div>
+    {/if}
+    <AppLayout />
+  </div>
 
   {#if $isQuickOpenVisible}
     <QuickOpen onSelect={handleFileSelect} />
@@ -481,7 +569,64 @@
   {#if $editorModalStore.isOpen && $editorModalStore.filePath}
     <EditorModal filePath={$editorModalStore.filePath} onClose={() => editorModalStore.close()} />
   {/if}
+
+  {#if $worktreeViewStore.isOpen && $worktreeViewStore.projectPath}
+    <WorktreePanel
+      projectPath={$worktreeViewStore.projectPath}
+      onClose={() => worktreeViewStore.close()}
+    />
+  {/if}
 {:else}
   <StartScreen />
   <KeyboardShortcuts isOpen={showShortcuts} onClose={() => (showShortcuts = false)} />
 {/if}
+
+<style>
+  .app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .app-container > :global(.app-layout) {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .worktree-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    height: 24px;
+    background: linear-gradient(90deg, rgba(251, 191, 36, 0.18) 0%, rgba(251, 191, 36, 0.08) 100%);
+    border-bottom: 1px solid rgba(251, 191, 36, 0.4);
+    color: var(--git-modified);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
+  }
+
+  .worktree-banner svg {
+    opacity: 0.9;
+  }
+
+  .worktree-banner .worktree-label {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    background: rgba(251, 191, 36, 0.3);
+    border-radius: 3px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .worktree-banner .worktree-branch {
+    font-family: var(--font-mono);
+    font-weight: 600;
+    text-transform: none;
+  }
+</style>
