@@ -98,7 +98,7 @@
     </span>
   </div>
   <div class="status-right">
-    {#if !$isWorktree && $worktreeCount > 0}
+    {#if !$isWorktree}
       <button
         class="status-item worktrees-btn"
         onclick={handleWorktreesClick}
@@ -119,7 +119,9 @@
           <path d="M6 21V9a9 9 0 0 0 9 9"></path>
         </svg>
         <span>Worktrees</span>
-        <span class="worktrees-count">{$worktreeCount}</span>
+        {#if $worktreeCount > 0}
+          <span class="worktrees-count">{$worktreeCount}</span>
+        {/if}
       </button>
     {/if}
     {#if gitInfo?.branch}
