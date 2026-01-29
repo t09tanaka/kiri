@@ -264,6 +264,34 @@
       return;
     }
 
+    // Cmd+D: Toggle Diff View (only when project is open)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'd' && $isProjectOpen) {
+      e.preventDefault();
+      const path = projectStore.getCurrentPath();
+      if (path) {
+        if ($diffViewStore.isOpen) {
+          diffViewStore.close();
+        } else {
+          diffViewStore.open(path);
+        }
+      }
+      return;
+    }
+
+    // Cmd+G: Toggle Worktrees (only when project is open and not in worktree)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'g' && $isProjectOpen && !$isWorktree) {
+      e.preventDefault();
+      const path = projectStore.getCurrentPath();
+      if (path) {
+        if ($worktreeViewStore.isOpen) {
+          worktreeViewStore.close();
+        } else {
+          worktreeViewStore.open(path);
+        }
+      }
+      return;
+    }
+
     // Cmd+Shift+N: New window
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'n') {
       e.preventDefault();

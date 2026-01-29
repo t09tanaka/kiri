@@ -98,32 +98,6 @@
     </span>
   </div>
   <div class="status-right">
-    {#if !$isWorktree}
-      <button
-        class="status-item worktrees-btn"
-        onclick={handleWorktreesClick}
-        title="Worktrees ({$worktreeCount})"
-      >
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <circle cx="18" cy="18" r="3"></circle>
-          <circle cx="6" cy="6" r="3"></circle>
-          <path d="M6 21V9a9 9 0 0 0 9 9"></path>
-        </svg>
-        <span>Worktrees</span>
-        {#if $worktreeCount > 0}
-          <span class="worktrees-count">{$worktreeCount}</span>
-        {/if}
-      </button>
-    {/if}
     {#if gitInfo?.branch}
       {#if $isWorktree}
         <span class="status-item worktree-branch" title="Worktree: {gitInfo.branch}">
@@ -166,13 +140,40 @@
         </span>
       {/if}
     {/if}
+    {#if !$isWorktree}
+      <button
+        class="status-item worktrees-btn"
+        onclick={handleWorktreesClick}
+        title="Worktrees ({$worktreeCount}) - ⌘G"
+      >
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <circle cx="18" cy="18" r="3"></circle>
+          <circle cx="6" cy="6" r="3"></circle>
+          <path d="M6 21V9a9 9 0 0 0 9 9"></path>
+        </svg>
+        <span>Worktrees</span>
+        {#if $worktreeCount > 0}
+          <span class="worktrees-count">{$worktreeCount}</span>
+        {/if}
+        <span class="shortcut-key">⌘G</span>
+      </button>
+    {/if}
     {#if gitInfo?.branch}
       <button
         class="status-item git-changes"
         class:has-changes={changeCount > 0}
         onclick={handleChangesClick}
         title="Open Changes ({changeCount} files, +{gitInfo?.additions ?? 0} -{gitInfo?.deletions ??
-          0})"
+          0}) - ⌘D"
       >
         <svg
           width="12"
@@ -196,6 +197,7 @@
         {:else}
           <span class="no-changes">No changes</span>
         {/if}
+        <span class="shortcut-key">⌘D</span>
       </button>
     {/if}
     {#if info.file}
@@ -368,6 +370,20 @@
 
   .worktrees-count {
     font-weight: 700;
+  }
+
+  .shortcut-key {
+    font-size: 10px;
+    padding: 2px 5px;
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+    color: var(--text-secondary);
+    font-family:
+      system-ui,
+      -apple-system,
+      sans-serif;
+    margin-left: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
   }
 
   .git-branch {
