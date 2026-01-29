@@ -166,9 +166,10 @@
         </span>
       {/if}
     {/if}
-    {#if changeCount > 0}
+    {#if gitInfo?.branch}
       <button
         class="status-item git-changes"
+        class:has-changes={changeCount > 0}
         onclick={handleChangesClick}
         title="Open Changes ({changeCount} files, +{gitInfo?.additions ?? 0} -{gitInfo?.deletions ??
           0})"
@@ -186,11 +187,15 @@
           <circle cx="12" cy="12" r="10"></circle>
           <path d="M12 6v6l4 2"></path>
         </svg>
-        <span class="change-summary">
-          <span class="file-count">{changeCount} files</span>
-          <span class="additions">+{gitInfo?.additions ?? 0}</span>
-          <span class="deletions">-{gitInfo?.deletions ?? 0}</span>
-        </span>
+        {#if changeCount > 0}
+          <span class="change-summary">
+            <span class="file-count">{changeCount} files</span>
+            <span class="additions">+{gitInfo?.additions ?? 0}</span>
+            <span class="deletions">-{gitInfo?.deletions ?? 0}</span>
+          </span>
+        {:else}
+          <span class="no-changes">No changes</span>
+        {/if}
       </button>
     {/if}
     {#if info.file}
@@ -422,19 +427,30 @@
 
   .git-changes {
     padding: 3px var(--space-2);
-    background: rgba(251, 191, 36, 0.1);
+    background: transparent;
     border: none;
     border-radius: var(--radius-sm);
-    color: var(--git-modified);
+    color: var(--text-muted);
     font-weight: 500;
     font-size: 10px;
     cursor: pointer;
     transition: all var(--transition-fast);
   }
 
+  .git-changes.has-changes {
+    background: rgba(251, 191, 36, 0.1);
+    color: var(--git-modified);
+  }
+
   .git-changes:hover {
-    background: rgba(251, 191, 36, 0.15);
+    background: rgba(125, 211, 252, 0.1);
+    color: var(--text-secondary);
     transform: translateY(-1px);
+  }
+
+  .git-changes.has-changes:hover {
+    background: rgba(251, 191, 36, 0.15);
+    color: var(--git-modified);
   }
 
   .git-changes:active {
@@ -443,6 +459,11 @@
 
   .git-changes:hover svg {
     animation: changesPulse 0.6s ease;
+  }
+
+  .no-changes {
+    color: var(--text-muted);
+    font-size: 10px;
   }
 
   @keyframes changesPulse {
