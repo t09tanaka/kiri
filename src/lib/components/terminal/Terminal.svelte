@@ -71,6 +71,11 @@
   let resizeStabilityTimeout: ReturnType<typeof setTimeout> | null = null;
   const RESIZE_STABILITY_DELAY = 50; // ms to wait after resize before resuming output
 
+  // Flag to track if initial setup is complete
+  // During initial setup, we don't drop output - the shell's initial prompt is valid
+  // After setup, resize events will drop output as Ink apps redraw on SIGWINCH
+  let initialSetupComplete = false;
+
   // Track last sent PTY size to prevent duplicate resize calls
   // This is needed because fitTerminalToContainer() may trigger onResize twice:
   // once from fitAddon.fit() and once from terminal.resize() for MAX_TERMINAL_COLS capping
@@ -430,9 +435,10 @@
       // Flush all pending writes in a single animation frame
       const flushWrites = () => {
         if (pendingWrite && terminal) {
-          // If resizing, drop the pending write - it's based on old terminal size
+          // If resizing AFTER initial setup, drop the pending write - it's based on old terminal size
           // Ink apps will redraw after receiving SIGWINCH
-          if (isResizing) {
+          // During initial setup, don't drop - the shell's initial prompt is valid
+          if (isResizing && initialSetupComplete) {
             pendingWrite = '';
             writeScheduled = false;
             return;
@@ -445,9 +451,10 @@
 
       // Schedule a batched write using requestAnimationFrame
       const scheduleWrite = (data: string) => {
-        // If resizing, drop the data - it's based on old terminal size
+        // If resizing AFTER initial setup, drop the data - it's based on old terminal size
         // Ink apps will redraw after receiving SIGWINCH
-        if (isResizing) {
+        // During initial setup, don't drop - the shell's initial prompt is valid
+        if (isResizing && initialSetupComplete) {
           return;
         }
         pendingWrite += data;
@@ -572,6 +579,12 @@
       setTimeout(() => {
         window.dispatchEvent(new Event('terminal-resize'));
       }, 250);
+
+      // Mark initial setup as complete after all resize events have settled
+      // After this point, resize events will drop output to prevent Ink app glitches
+      setTimeout(() => {
+        initialSetupComplete = true;
+      }, 400);
 
       // Track focus state for visual feedback
       terminal.textarea?.addEventListener('focus', () => {
