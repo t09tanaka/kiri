@@ -1,8 +1,5 @@
 <script lang="ts">
   import { FileTree } from '@/lib/components/filetree';
-  import { gitStore } from '@/lib/stores/gitStore';
-  import { currentProjectPath } from '@/lib/stores/projectStore';
-  import { diffViewStore } from '@/lib/stores/diffViewStore';
 
   interface Props {
     width?: number;
@@ -11,19 +8,6 @@
   }
 
   let { width = 250, rootPath = '', onFileSelect }: Props = $props();
-
-  const changeCount = $derived(
-    $gitStore.repoInfo?.statuses.filter((s) => s.status !== 'Ignored').length ?? 0
-  );
-
-  function openDiffViewModal() {
-    const projectPath = $currentProjectPath;
-    if (!projectPath) {
-      console.warn('No project path available');
-      return;
-    }
-    diffViewStore.open(projectPath);
-  }
 </script>
 
 <aside class="sidebar" data-testid="sidebar" style="width: {width}px">
@@ -47,21 +31,6 @@
 
   <div class="sidebar-content">
     <FileTree {rootPath} {onFileSelect} />
-  </div>
-
-  <div class="sidebar-footer">
-    <button
-      type="button"
-      class="footer-btn changes-button"
-      class:has-changes={changeCount > 0}
-      onclick={openDiffViewModal}
-      title="Open Changes ({changeCount} files)"
-    >
-      <span>Changes</span>
-      {#if changeCount > 0}
-        <span class="badge">{changeCount}</span>
-      {/if}
-    </button>
   </div>
 </aside>
 
@@ -186,91 +155,6 @@
     pointer-events: none;
     opacity: 0.8;
     z-index: 1;
-  }
-
-  .sidebar-footer {
-    position: relative;
-    z-index: 10;
-    padding: var(--space-2);
-    border-top: 1px solid var(--border-color);
-    background: var(--bg-tertiary);
-  }
-
-  .footer-btn {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-    width: 100%;
-    padding: var(--space-2) var(--space-3);
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    color: var(--text-secondary);
-    font-size: 11px;
-    font-weight: 500;
-    font-family: var(--font-sans);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .footer-btn:hover {
-    background: var(--bg-glass-hover);
-    border-color: var(--border-glow);
-    color: var(--text-primary);
-    transform: translateY(-1px);
-  }
-
-  .footer-btn:active {
-    transform: translateY(0) scale(0.99);
-  }
-
-  .changes-button.has-changes {
-    border-color: rgba(251, 191, 36, 0.3);
-    background: rgba(251, 191, 36, 0.05);
-  }
-
-  .changes-button.has-changes:hover {
-    border-color: rgba(251, 191, 36, 0.5);
-    background: rgba(251, 191, 36, 0.1);
-  }
-
-  .footer-btn svg {
-    flex-shrink: 0;
-    transition: transform var(--transition-fast);
-  }
-
-  .footer-btn:hover svg {
-    transform: scale(1.1);
-  }
-
-  .badge {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
-    background: var(--git-modified);
-    color: var(--bg-primary);
-    font-size: 10px;
-    font-weight: 700;
-    border-radius: 9px;
-    transition: all var(--transition-fast);
-  }
-
-  .changes-button.has-changes .badge {
-    animation: badgePulse 2s ease-in-out infinite;
-  }
-
-  @keyframes badgePulse {
-    0%,
-    100% {
-      box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.4);
-    }
-    50% {
-      box-shadow: 0 0 0 4px rgba(251, 191, 36, 0);
-    }
   }
 
   /* Scrollbar styling */
