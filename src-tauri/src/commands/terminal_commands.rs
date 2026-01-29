@@ -2,10 +2,11 @@
 //! These are thin wrappers that delegate to the core logic in terminal.rs
 
 use super::terminal::{
-    create_pty_size, open_pty_with_shell, resolve_cwd, resolve_terminal_size, PtyInstance,
-    TerminalOutput, TerminalState,
+    create_pty_size, find_utf8_boundary, open_pty_with_shell, resolve_cwd, resolve_terminal_size,
+    PtyInstance, TerminalOutput, TerminalState,
 };
 use std::io::Read;
+use std::str;
 use std::thread;
 use tauri::{AppHandle, Emitter};
 
@@ -51,18 +52,50 @@ pub fn create_terminal(
     let terminal_id = id;
     thread::spawn(move || {
         let mut buf = [0u8; 4096];
+        // Buffer for incomplete UTF-8 sequences from previous reads
+        let mut pending: Vec<u8> = Vec::new();
+
         loop {
-            match reader.read(&mut buf) {
+            // Calculate where to start reading (after any pending bytes)
+            let read_start = pending.len();
+            let read_len = buf.len() - read_start;
+
+            if read_len == 0 {
+                // Buffer is full of pending bytes, which shouldn't happen
+                // Reset and continue
+                pending.clear();
+                continue;
+            }
+
+            // Copy pending bytes to the start of buffer
+            buf[..read_start].copy_from_slice(&pending);
+
+            match reader.read(&mut buf[read_start..]) {
                 Ok(0) => break, // EOF
                 Ok(n) => {
-                    let data = String::from_utf8_lossy(&buf[..n]).to_string();
-                    let _ = app.emit(
-                        "terminal-output",
-                        TerminalOutput {
-                            id: terminal_id,
-                            data,
-                        },
-                    );
+                    let total_len = read_start + n;
+                    let data_slice = &buf[..total_len];
+
+                    // Find the last valid UTF-8 boundary
+                    let valid_len = find_utf8_boundary(data_slice);
+
+                    if valid_len > 0 {
+                        // Safety: we just validated this is valid UTF-8
+                        let data = unsafe { str::from_utf8_unchecked(&data_slice[..valid_len]) };
+                        let _ = app.emit(
+                            "terminal-output",
+                            TerminalOutput {
+                                id: terminal_id,
+                                data: data.to_string(),
+                            },
+                        );
+                    }
+
+                    // Save any incomplete bytes for the next read
+                    pending.clear();
+                    if valid_len < total_len {
+                        pending.extend_from_slice(&data_slice[valid_len..]);
+                    }
                 }
                 Err(_) => break,
             }

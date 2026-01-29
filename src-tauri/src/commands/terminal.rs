@@ -2,6 +2,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtyPair, PtySiz
 use serde::Serialize;
 use std::collections::HashMap;
 use std::io::Write;
+use std::str;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Serialize)]
@@ -85,6 +86,41 @@ pub fn build_shell_command(shell: &str, cwd: Option<&str>) -> CommandBuilder {
     }
 
     cmd
+}
+
+/// Find the last valid UTF-8 boundary in a byte slice.
+/// Returns the number of bytes that form valid UTF-8 from the start.
+/// Any remaining bytes are incomplete multi-byte sequences that should be
+/// preserved for the next read.
+///
+/// This is essential for handling PTY output correctly, as reads can split
+/// multi-byte UTF-8 characters (like Japanese, emojis, etc.) across buffer
+/// boundaries. Without proper boundary handling, these characters would be
+/// corrupted by `String::from_utf8_lossy`.
+pub fn find_utf8_boundary(buf: &[u8]) -> usize {
+    let len = buf.len();
+    if len == 0 {
+        return 0;
+    }
+
+    // Check if the entire buffer is valid UTF-8
+    if str::from_utf8(buf).is_ok() {
+        return len;
+    }
+
+    // Find the last valid UTF-8 boundary by checking from the end
+    // UTF-8 multi-byte sequences can be 1-4 bytes long
+    // We need to find where an incomplete sequence starts
+    for i in 1..=4.min(len) {
+        let check_pos = len - i;
+        if str::from_utf8(&buf[..check_pos]).is_ok() {
+            return check_pos;
+        }
+    }
+
+    // If we can't find a valid boundary, return 0
+    // This handles severely corrupted data
+    0
 }
 
 /// Result of opening a PTY with a spawned shell
@@ -284,5 +320,105 @@ mod tests {
         // Verify struct has expected fields accessible
         let _ = &pty.pair;
         let _ = &pty.child;
+    }
+
+    #[test]
+    fn test_find_utf8_boundary_empty() {
+        assert_eq!(find_utf8_boundary(&[]), 0);
+    }
+
+    #[test]
+    fn test_find_utf8_boundary_ascii() {
+        let data = b"Hello, World!";
+        assert_eq!(find_utf8_boundary(data), data.len());
+    }
+
+    #[test]
+    fn test_find_utf8_boundary_complete_utf8() {
+        // Japanese text: "こんにちは"
+        let data = "こんにちは".as_bytes();
+        assert_eq!(find_utf8_boundary(data), data.len());
+    }
+
+    #[test]
+    fn test_find_utf8_boundary_incomplete_2byte() {
+        // 2-byte UTF-8 sequence for 'é' (0xC3 0xA9)
+        // Split after first byte
+        let complete = "é".as_bytes();
+        assert_eq!(complete.len(), 2);
+        let incomplete = &[complete[0]]; // Just 0xC3
+        assert_eq!(find_utf8_boundary(incomplete), 0);
+    }
+
+    #[test]
+    fn test_find_utf8_boundary_incomplete_3byte() {
+        // 3-byte UTF-8 sequence for 'あ' (0xE3 0x81 0x82)
+        let complete = "あ".as_bytes();
+        assert_eq!(complete.len(), 3);
+
+        // Split after first byte
+        let incomplete1 = &[complete[0]];
+        assert_eq!(find_utf8_boundary(incomplete1), 0);
+
+        // Split after second byte
+        let incomplete2 = &[complete[0], complete[1]];
+        assert_eq!(find_utf8_boundary(incomplete2), 0);
+    }
+
+    #[test]
+    fn test_find_utf8_boundary_incomplete_4byte() {
+        // 4-byte UTF-8 sequence for emoji '😀' (0xF0 0x9F 0x98 0x80)
+        let complete = "😀".as_bytes();
+        assert_eq!(complete.len(), 4);
+
+        // Split after first byte
+        let incomplete1 = &[complete[0]];
+        assert_eq!(find_utf8_boundary(incomplete1), 0);
+
+        // Split after second byte
+        let incomplete2 = &[complete[0], complete[1]];
+        assert_eq!(find_utf8_boundary(incomplete2), 0);
+
+        // Split after third byte
+        let incomplete3 = &[complete[0], complete[1], complete[2]];
+        assert_eq!(find_utf8_boundary(incomplete3), 0);
+    }
+
+    #[test]
+    fn test_find_utf8_boundary_mixed_with_incomplete() {
+        // "Hello" followed by incomplete Japanese character
+        let hello = b"Hello";
+        let ja_char = "あ".as_bytes(); // 3 bytes
+        let mut data = Vec::new();
+        data.extend_from_slice(hello);
+        data.push(ja_char[0]); // Only first byte of 'あ'
+
+        // Should return 5 (just "Hello")
+        assert_eq!(find_utf8_boundary(&data), 5);
+    }
+
+    #[test]
+    fn test_find_utf8_boundary_mixed_complete() {
+        // "Hello" followed by complete Japanese character
+        let data = "Helloあ".as_bytes();
+        assert_eq!(find_utf8_boundary(data), data.len());
+    }
+
+    #[test]
+    fn test_find_utf8_boundary_realistic_scenario() {
+        // Simulate a buffer that might occur in practice:
+        // Some ASCII, a complete Japanese character, then an incomplete one
+        let mut data = Vec::new();
+        data.extend_from_slice(b"test ");
+        data.extend_from_slice("日本".as_bytes()); // Complete Japanese
+        data.push("語".as_bytes()[0]); // First byte of '語' (incomplete)
+
+        let boundary = find_utf8_boundary(&data);
+        // Should include "test " (5) + "日本" (6) = 11 bytes
+        assert_eq!(boundary, 11);
+
+        // Verify the valid portion
+        let valid = std::str::from_utf8(&data[..boundary]).unwrap();
+        assert_eq!(valid, "test 日本");
     }
 }
