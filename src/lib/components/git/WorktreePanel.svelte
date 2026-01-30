@@ -195,12 +195,17 @@
         <div class="create-form">
           <div class="form-group">
             <label class="form-label" for="wt-name">Worktree Name</label>
+            <!-- svelte-ignore a11y_autofocus -->
             <input
               id="wt-name"
               type="text"
               class="form-input"
               bind:value={createName}
               placeholder="e.g. fix-sidebar"
+              spellcheck="false"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
               autofocus
               onkeydown={(e) => {
                 if (e.key === 'Enter' && createName.trim()) handleCreate();
@@ -208,8 +213,8 @@
             />
           </div>
 
-          <div class="form-group">
-            <label class="form-label">Branch Mode</label>
+          <fieldset class="form-group mode-fieldset">
+            <legend class="form-label">Branch Mode</legend>
             <div class="mode-toggle">
               <button
                 type="button"
@@ -228,7 +233,7 @@
                 Existing Branch
               </button>
             </div>
-          </div>
+          </fieldset>
 
           {#if createMode === 'existing'}
             <div class="form-group">
@@ -515,33 +520,6 @@
     color: var(--text-secondary);
   }
 
-  .btn-sm {
-    padding: 4px var(--space-2);
-    font-size: 11px;
-  }
-
-  .btn-accent {
-    background: rgba(74, 222, 128, 0.1);
-    border-color: rgba(74, 222, 128, 0.3);
-    color: var(--git-added);
-  }
-
-  .btn-accent:hover {
-    background: rgba(74, 222, 128, 0.2);
-    border-color: rgba(74, 222, 128, 0.5);
-  }
-
-  .btn-danger {
-    background: rgba(248, 113, 113, 0.1);
-    border-color: rgba(248, 113, 113, 0.3);
-    color: var(--git-deleted);
-  }
-
-  .btn-danger:hover {
-    background: rgba(248, 113, 113, 0.2);
-    border-color: rgba(248, 113, 113, 0.5);
-  }
-
   /* Create Form */
   .create-form {
     padding: var(--space-4);
@@ -553,6 +531,12 @@
 
   .form-group {
     margin-bottom: var(--space-3);
+  }
+
+  .mode-fieldset {
+    border: none;
+    padding: 0;
+    margin: 0;
   }
 
   .form-label {
