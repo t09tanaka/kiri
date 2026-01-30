@@ -127,15 +127,21 @@ pub fn create_worktree(
     let branch_name = branch.unwrap_or_else(|| name.clone());
 
     if new_branch {
-        // Create new branch from HEAD
-        let head = repo.head().map_err(|e| e.to_string())?;
-        let head_commit = head
-            .peel_to_commit()
-            .map_err(|e| e.to_string())?;
+        // Check if branch already exists
+        let branch_exists = repo
+            .find_branch(&branch_name, git2::BranchType::Local)
+            .is_ok();
 
-        // Create the branch
-        repo.branch(&branch_name, &head_commit, false)
-            .map_err(|e| e.to_string())?;
+        if !branch_exists {
+            // Create new branch from HEAD
+            let head = repo.head().map_err(|e| e.to_string())?;
+            let head_commit = head.peel_to_commit().map_err(|e| e.to_string())?;
+
+            // Create the branch
+            repo.branch(&branch_name, &head_commit, false)
+                .map_err(|e| e.to_string())?;
+        }
+        // If branch exists, just use it for the worktree
     }
 
     // Create the worktree
@@ -362,6 +368,30 @@ mod tests {
 
         let wt = result.unwrap();
         assert_eq!(wt.branch, Some("existing-branch".to_string()));
+    }
+
+    #[test]
+    fn test_create_worktree_new_branch_already_exists() {
+        let dir = tempdir().unwrap();
+        let repo = create_repo_with_commit(dir.path());
+
+        // Create a branch first
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("pre-existing", &head, false).unwrap();
+
+        // Try to create worktree with new_branch=true for an existing branch
+        // This should succeed by reusing the existing branch
+        let result = create_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "wt-reuse".to_string(),
+            Some("pre-existing".to_string()),
+            true, // new_branch=true, but branch already exists
+        );
+        assert!(result.is_ok(), "Should succeed by reusing existing branch");
+
+        let wt = result.unwrap();
+        assert_eq!(wt.name, "wt-reuse");
+        assert_eq!(wt.branch, Some("pre-existing".to_string()));
     }
 
     #[test]
