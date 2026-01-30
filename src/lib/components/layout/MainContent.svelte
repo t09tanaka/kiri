@@ -1,38 +1,55 @@
 <script lang="ts">
-  import { tabStore, activeTab, getAllPaneIds } from '@/lib/stores/tabStore';
+  import { onMount, tick } from 'svelte';
+  import { tabStore, getAllPaneIds, type Tab } from '@/lib/stores/tabStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
   import { TerminalContainer } from '@/lib/components/terminal';
   import TabBar from './TabBar.svelte';
 
-  // Counter to force {#key} block to re-render when tabs change
-  // This is needed because Svelte's {#key} doesn't properly re-render
-  // when the key returns to a previous value (A -> B -> A)
-  let tabChangeCounter = $state(0);
-  let prevActiveTabId = $state<string | null>(null);
-  let prevTabCount = $state(0);
+  // Use $state for both active tab and container key
+  // This ensures reactivity when store changes via subscription
+  let currentActiveTab = $state<Tab | null>(null);
+  let containerKey = $state('none');
 
-  $effect(() => {
-    const currentActiveTabId = $tabStore.activeTabId;
-    const currentTabCount = $tabStore.tabs.length;
+  // Subscribe to store changes using onMount + store.subscribe
+  // This is more reliable than $derived for detecting nested object changes
+  // particularly when dealing with deeply nested rootPane structures
+  onMount(() => {
+    const unsubscribe = tabStore.subscribe(async (state) => {
+      // Update active tab
+      const newActiveTab = state.tabs.find((t) => t.id === state.activeTabId) || null;
 
-    if (prevActiveTabId !== currentActiveTabId || prevTabCount !== currentTabCount) {
-      tabChangeCounter++;
-      prevActiveTabId = currentActiveTabId;
-      prevTabCount = currentTabCount;
-    }
+      // Update container key - includes all pane IDs to detect structure changes
+      const newKey = newActiveTab
+        ? `${newActiveTab.id}-${getAllPaneIds(newActiveTab.rootPane).join(',')}`
+        : 'none';
+
+      const keyChanged = containerKey !== newKey;
+
+      // Update state
+      currentActiveTab = newActiveTab;
+      containerKey = newKey;
+
+      // Force Svelte to flush updates when key changes
+      // This ensures the {#key} block re-renders correctly
+      if (keyChanged) {
+        await tick();
+      }
+    });
+
+    return () => unsubscribe();
   });
 </script>
 
 <main class="main-content">
   <TabBar tabs={$tabStore.tabs} activeTabId={$tabStore.activeTabId} />
   <div class="content-area">
-    {#key tabChangeCounter}
-      {#if $activeTab}
+    {#key containerKey}
+      {#if currentActiveTab}
         <TerminalContainer
-          tabId={$activeTab.id}
-          pane={$activeTab.rootPane}
+          tabId={currentActiveTab.id}
+          pane={currentActiveTab.rootPane}
           cwd={$currentProjectPath}
-          isOnlyPane={getAllPaneIds($activeTab.rootPane).length === 1}
+          isOnlyPane={getAllPaneIds(currentActiveTab.rootPane).length === 1}
         />
       {:else}
         <div class="no-tabs">

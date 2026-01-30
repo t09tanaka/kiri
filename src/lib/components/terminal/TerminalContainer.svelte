@@ -34,8 +34,8 @@
     });
   }
 
-  function handleClose(paneId: string) {
-    tabStore.closePane(tabId, paneId);
+  function handleClose(closingPaneId: string) {
+    tabStore.closePane(tabId, closingPaneId);
     // Trigger resize after close
     requestAnimationFrame(() => {
       window.dispatchEvent(new Event('terminal-resize'));
@@ -133,42 +133,44 @@
   }
 </script>
 
-{#if pane.type === 'terminal'}
-  <Terminal
-    {tabId}
-    paneId={pane.id}
-    {cwd}
-    showControls={true}
-    onSplitHorizontal={() => handleSplitHorizontal(pane.id)}
-    onSplitVertical={() => handleSplitVertical(pane.id)}
-    onClose={isOnlyPane ? undefined : () => handleClose(pane.id)}
-  />
-{:else}
-  <div
-    bind:this={containerRef}
-    class="split-container"
-    class:horizontal={pane.direction === 'horizontal'}
-    class:vertical={pane.direction === 'vertical'}
-    class:dragging={isDragging}
-  >
-    {#each pane.children as child, index (child.type === 'terminal' ? child.id : index)}
-      <div class="split-pane" style="flex: 0 0 {pane.sizes[index]}%;">
-        <TerminalContainer {tabId} pane={child} {cwd} isOnlyPane={false} />
-      </div>
-      {#if index < pane.children.length - 1}
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <div
-          class="split-divider"
-          class:horizontal={pane.direction === 'horizontal'}
-          class:vertical={pane.direction === 'vertical'}
-          onmousedown={(e) => handleDividerMouseDown(e, index)}
-          role="separator"
-          aria-orientation={pane.direction}
-        ></div>
-      {/if}
-    {/each}
-  </div>
-{/if}
+{#key pane.type}
+  {#if pane.type === 'terminal'}
+    <Terminal
+      {tabId}
+      paneId={pane.id}
+      {cwd}
+      showControls={true}
+      onSplitHorizontal={() => handleSplitHorizontal(pane.id)}
+      onSplitVertical={() => handleSplitVertical(pane.id)}
+      onClose={isOnlyPane ? undefined : () => handleClose(pane.id)}
+    />
+  {:else}
+    <div
+      bind:this={containerRef}
+      class="split-container"
+      class:horizontal={pane.direction === 'horizontal'}
+      class:vertical={pane.direction === 'vertical'}
+      class:dragging={isDragging}
+    >
+      {#each pane.children as child, index (child.type === 'terminal' ? child.id : index)}
+        <div class="split-pane" style="flex: 0 0 {pane.sizes[index]}%;">
+          <TerminalContainer {tabId} pane={child} {cwd} isOnlyPane={false} />
+        </div>
+        {#if index < pane.children.length - 1}
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <div
+            class="split-divider"
+            class:horizontal={pane.direction === 'horizontal'}
+            class:vertical={pane.direction === 'vertical'}
+            onmousedown={(e) => handleDividerMouseDown(e, index)}
+            role="separator"
+            aria-orientation={pane.direction}
+          ></div>
+        {/if}
+      {/each}
+    </div>
+  {/if}
+{/key}
 
 <style>
   .split-container {

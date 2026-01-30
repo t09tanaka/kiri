@@ -105,7 +105,7 @@ export function closePaneInTree(pane: TerminalPane, targetPaneId: string): Termi
     }
   }
 
-  // If only one child left, return that child (flatten the tree)
+  // If only one child left, return just that child (flatten the tree)
   if (newChildren.length === 1) {
     return newChildren[0];
   }

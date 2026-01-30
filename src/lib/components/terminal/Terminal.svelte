@@ -181,6 +181,7 @@
   async function initTerminal() {
     // Check if there's an existing terminal instance in the registry
     const existingInstance = terminalRegistry.get(paneId);
+
     if (existingInstance) {
       // Reattach existing terminal to new container
       terminal = existingInstance.terminal;
@@ -766,10 +767,12 @@
     if (paneStillExists) {
       // Pane still exists, terminal will be reattached
       // Don't dispose anything, keep the instance in the registry
+      console.log(`[Terminal] Preserving terminal for paneId=${paneId}`);
       return;
     }
 
     // Pane is being truly closed - clean up everything
+    console.log(`[Terminal] Closing terminal for paneId=${paneId}, terminalId=${terminalId}`);
     terminalRegistry.remove(paneId);
 
     if (unlisten) {
