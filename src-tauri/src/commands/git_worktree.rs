@@ -126,6 +126,39 @@ pub fn create_worktree(
 
     let branch_name = branch.unwrap_or_else(|| name.clone());
 
+    // Check if the branch is already checked out in the main worktree or any linked worktree
+    let current_branch = repo
+        .head()
+        .ok()
+        .and_then(|h| h.shorthand().map(|s| s.to_string()));
+
+    if let Some(ref current) = current_branch {
+        if current == &branch_name {
+            return Err(format!(
+                "Branch '{}' is currently checked out. Cannot create a worktree for the current branch.",
+                branch_name
+            ));
+        }
+    }
+
+    // Check if branch is already used by another worktree
+    let worktrees = repo.worktrees().map_err(|e| e.to_string())?;
+    for wt_name in worktrees.iter() {
+        if let Some(wt_name) = wt_name {
+            if let Ok(wt) = repo.find_worktree(wt_name) {
+                let wt_branch = get_worktree_branch(wt.path());
+                if let Some(ref wt_br) = wt_branch {
+                    if wt_br == &branch_name {
+                        return Err(format!(
+                            "Branch '{}' is already checked out in worktree '{}'",
+                            branch_name, wt_name
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
     if new_branch {
         // Check if branch already exists
         let branch_exists = repo
@@ -608,5 +641,89 @@ mod tests {
         };
         assert_eq!(info.name, "main");
         assert!(info.is_head);
+    }
+
+    #[test]
+    fn test_create_worktree_current_branch_error() {
+        let dir = tempdir().unwrap();
+        create_repo_with_commit(dir.path());
+
+        // Get current branch name (should be master or main)
+        let repo = Repository::open(dir.path()).unwrap();
+        let current_branch = repo.head().unwrap().shorthand().unwrap().to_string();
+
+        // Try to create worktree for current branch with new_branch=false
+        let result = create_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "wt-current".to_string(),
+            Some(current_branch.clone()),
+            false,
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("currently checked out"),
+            "Expected 'currently checked out' error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_create_worktree_current_branch_error_new_branch_true() {
+        let dir = tempdir().unwrap();
+        create_repo_with_commit(dir.path());
+
+        // Get current branch name (should be master or main)
+        let repo = Repository::open(dir.path()).unwrap();
+        let current_branch = repo.head().unwrap().shorthand().unwrap().to_string();
+
+        // Try to create worktree for current branch with new_branch=true
+        // This should also fail because the branch already exists and is checked out
+        let result = create_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "wt-current-new".to_string(),
+            Some(current_branch.clone()),
+            true, // new_branch=true, but branch already exists and is current
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("currently checked out"),
+            "Expected 'currently checked out' error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_create_worktree_branch_in_use_by_other_worktree() {
+        let dir = tempdir().unwrap();
+        create_repo_with_commit(dir.path());
+
+        // Create first worktree with a new branch
+        let result1 = create_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "wt-first".to_string(),
+            Some("feature-used".to_string()),
+            true,
+        );
+        assert!(result1.is_ok());
+
+        // Try to create second worktree with the same branch
+        let result2 = create_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "wt-second".to_string(),
+            Some("feature-used".to_string()),
+            false,
+        );
+
+        assert!(result2.is_err());
+        let err = result2.unwrap_err();
+        assert!(
+            err.contains("already checked out in worktree"),
+            "Expected 'already checked out in worktree' error, got: {}",
+            err
+        );
     }
 }

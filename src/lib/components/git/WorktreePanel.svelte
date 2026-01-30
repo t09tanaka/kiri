@@ -30,6 +30,36 @@
 
   const worktrees = $derived($worktreeStore.worktrees);
 
+  // Get current branch name (HEAD)
+  const currentBranch = $derived(() => {
+    const headBranch = branches.find((b) => b.is_head);
+    return headBranch?.name ?? null;
+  });
+
+  // Get branches that are already used by worktrees
+  const usedBranches = $derived(() => {
+    return new Set(worktrees.filter((w) => !w.is_main && w.branch).map((w) => w.branch!));
+  });
+
+  // Validate branch selection
+  const branchValidationError = $derived(() => {
+    const branchName = createMode === 'new' ? createName.trim() : createBranch;
+    if (!branchName) return null;
+
+    const current = currentBranch();
+    if (current && branchName === current) {
+      return `Branch '${branchName}' is currently checked out. Cannot create a worktree for the current branch.`;
+    }
+
+    const used = usedBranches();
+    if (used.has(branchName)) {
+      const wt = worktrees.find((w) => w.branch === branchName && !w.is_main);
+      return `Branch '${branchName}' is already checked out in worktree '${wt?.name ?? 'unknown'}'.`;
+    }
+
+    return null;
+  });
+
   // Compute worktree path preview
   const pathPreview = $derived(() => {
     if (!createName || !projectPath) return '';
@@ -82,7 +112,13 @@
     // Load branches for existing branch mode
     try {
       branches = await worktreeService.listBranches(projectPath);
-      if (branches.length > 0 && !createBranch) {
+      // Select first available branch (not HEAD and not in use by worktree)
+      const used = usedBranches();
+      const availableBranch = branches.find((b) => !b.is_head && !used.has(b.name));
+      if (availableBranch) {
+        createBranch = availableBranch.name;
+      } else if (branches.length > 0) {
+        // Fallback to first branch if no available branch
         createBranch = branches[0].name;
       }
     } catch {
@@ -240,8 +276,11 @@
               <label class="form-label" for="wt-branch">Branch</label>
               <select id="wt-branch" class="form-input" bind:value={createBranch}>
                 {#each branches as b (b.name)}
-                  <option value={b.name}>
-                    {b.name}{b.is_head ? ' (HEAD)' : ''}
+                  {@const isDisabled = b.is_head || usedBranches().has(b.name)}
+                  <option value={b.name} disabled={isDisabled}>
+                    {b.name}{b.is_head ? ' (current)' : ''}{usedBranches().has(b.name)
+                      ? ' (in use)'
+                      : ''}
                   </option>
                 {/each}
               </select>
@@ -253,6 +292,10 @@
               <span class="preview-label">Path:</span>
               <span class="preview-path">{pathPreview()}</span>
             </div>
+          {/if}
+
+          {#if branchValidationError()}
+            <div class="form-error form-warning">{branchValidationError()}</div>
           {/if}
 
           {#if createError}
@@ -267,7 +310,7 @@
               type="button"
               class="btn btn-primary"
               onclick={() => handleCreate()}
-              disabled={!createName.trim() || isCreating}
+              disabled={!createName.trim() || isCreating || !!branchValidationError()}
             >
               {#if isCreating}
                 <Spinner size={12} /> Creating...
@@ -629,6 +672,12 @@
     color: var(--git-deleted);
     font-size: 12px;
     margin-bottom: var(--space-3);
+  }
+
+  .form-warning {
+    background: rgba(251, 191, 36, 0.1);
+    border-color: rgba(251, 191, 36, 0.3);
+    color: var(--git-modified);
   }
 
   .form-actions {
