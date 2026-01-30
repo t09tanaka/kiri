@@ -804,6 +804,7 @@
     flex: 1;
     overflow-y: auto;
     padding: 8px;
+    max-height: 220px;
   }
 
   .branch-item {
@@ -849,6 +850,21 @@
 
   .branch-item:active {
     background: rgba(125, 211, 252, 0.1);
+  }
+
+  .branch-item:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent 0%,
+      rgba(125, 211, 252, 0.015) 50%,
+      transparent 100%
+    );
   }
 
   .branch-item-name {
