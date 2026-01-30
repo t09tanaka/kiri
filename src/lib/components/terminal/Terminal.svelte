@@ -916,6 +916,10 @@
     color: var(--accent-color);
   }
 
+  .control-btn.close-btn {
+    margin-left: auto;
+  }
+
   .control-btn.close-btn:hover {
     background: rgba(248, 113, 113, 0.1);
     color: #f87171;
