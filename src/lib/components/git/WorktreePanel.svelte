@@ -20,13 +20,12 @@
   let mounted = $state(false);
 
   // Create form state
-  let showCreateForm = $state(false);
   let createName = $state('');
-  let createMode = $state<'new' | 'existing'>('new');
-  let createBranch = $state('');
   let isCreating = $state(false);
   let branches = $state<BranchInfo[]>([]);
   let createError = $state<string | null>(null);
+  let showBranchDropdown = $state(false);
+  let isExistingBranch = $state(false);
 
   const worktrees = $derived($worktreeStore.worktrees);
 
@@ -43,7 +42,7 @@
 
   // Validate branch selection
   const branchValidationError = $derived(() => {
-    const branchName = createMode === 'new' ? createName.trim() : createBranch;
+    const branchName = createName.trim();
     if (!branchName) return null;
 
     const current = currentBranch();
@@ -60,6 +59,13 @@
     return null;
   });
 
+  // Filter branches for dropdown (exclude current and in-use)
+  const availableBranches = $derived(() => {
+    const current = currentBranch();
+    const used = usedBranches();
+    return branches.filter((b) => !b.is_head && b.name !== current && !used.has(b.name));
+  });
+
   // Compute worktree path preview
   const pathPreview = $derived(() => {
     if (!createName || !projectPath) return '';
@@ -72,23 +78,30 @@
   onMount(async () => {
     mounted = true;
     document.addEventListener('keydown', handleKeyDown, true);
+    document.addEventListener('click', handleDocumentClick, true);
     await loadWorktrees();
+    await loadBranches();
   });
 
   onDestroy(() => {
     document.removeEventListener('keydown', handleKeyDown, true);
+    document.removeEventListener('click', handleDocumentClick, true);
   });
 
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      if (showCreateForm) {
-        showCreateForm = false;
+      if (showBranchDropdown) {
+        showBranchDropdown = false;
       } else {
         onClose();
       }
     }
+  }
+
+  function handleDocumentClick(_e: MouseEvent) {
+    // No longer needed for dropdown - using modal now
   }
 
   async function loadWorktrees(path?: string) {
@@ -102,28 +115,23 @@
     }
   }
 
-  async function handleNewWorktree() {
-    showCreateForm = true;
-    createName = '';
-    createBranch = '';
-    createMode = 'new';
-    createError = null;
-
-    // Load branches for existing branch mode
+  async function loadBranches() {
     try {
       branches = await worktreeService.listBranches(projectPath);
-      // Select first available branch (not HEAD and not in use by worktree)
-      const used = usedBranches();
-      const availableBranch = branches.find((b) => !b.is_head && !used.has(b.name));
-      if (availableBranch) {
-        createBranch = availableBranch.name;
-      } else if (branches.length > 0) {
-        // Fallback to first branch if no available branch
-        createBranch = branches[0].name;
-      }
     } catch {
       branches = [];
     }
+  }
+
+  function handleSelectBranch(branchName: string) {
+    createName = branchName;
+    isExistingBranch = true;
+    showBranchDropdown = false;
+  }
+
+  function handleNameInput() {
+    // When user types, treat as new branch
+    isExistingBranch = false;
   }
 
   async function handleCreate() {
@@ -139,12 +147,13 @@
     const currentProjectPath = projectPath;
 
     try {
-      const branchName = createMode === 'new' ? createName.trim() : createBranch;
+      const branchName = createName.trim();
+      // Branch name = Worktree name (unified concept)
       const wt = await worktreeService.create(
         currentProjectPath,
-        createName.trim(),
+        branchName, // worktree name = branch name
         branchName,
-        createMode === 'new'
+        !isExistingBranch // create new branch if not selecting existing
       );
 
       // Close modal and ensure UI updates before opening new window
@@ -204,33 +213,26 @@
   <div class="modal-container">
     <div class="modal-header">
       <h2 class="modal-title">Worktrees</h2>
-      <div class="header-actions">
-        {#if !showCreateForm}
-          <button type="button" class="btn btn-primary" onclick={() => handleNewWorktree()}>
-            + New Worktree
-          </button>
-        {/if}
-        <button type="button" class="btn btn-ghost" onclick={() => onClose()} title="Close (Esc)">
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-      </div>
+      <button type="button" class="btn btn-ghost" onclick={() => onClose()} title="Close (Esc)">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
     </div>
 
     <div class="modal-body">
-      {#if showCreateForm}
-        <div class="create-form">
-          <div class="form-group">
-            <label class="form-label" for="wt-name">Worktree Name</label>
+      <div class="create-form">
+        <div class="form-group">
+          <label class="form-label" for="wt-name">Branch Name</label>
+          <div class="input-row">
             <!-- svelte-ignore a11y_autofocus -->
             <input
               id="wt-name"
@@ -243,84 +245,70 @@
               autocorrect="off"
               autocapitalize="off"
               autofocus
+              oninput={() => handleNameInput()}
               onkeydown={(e) => {
                 if (e.key === 'Enter' && createName.trim()) handleCreate();
               }}
             />
-          </div>
-
-          <fieldset class="form-group mode-fieldset">
-            <legend class="form-label">Branch Mode</legend>
-            <div class="mode-toggle">
-              <button
-                type="button"
-                class="mode-btn"
-                class:active={createMode === 'new'}
-                onclick={() => (createMode = 'new')}
-              >
-                New Branch
-              </button>
-              <button
-                type="button"
-                class="mode-btn"
-                class:active={createMode === 'existing'}
-                onclick={() => (createMode = 'existing')}
-              >
-                Existing Branch
-              </button>
-            </div>
-          </fieldset>
-
-          {#if createMode === 'existing'}
-            <div class="form-group">
-              <label class="form-label" for="wt-branch">Branch</label>
-              <select id="wt-branch" class="form-input" bind:value={createBranch}>
-                {#each branches as b (b.name)}
-                  {@const isDisabled = b.is_head || usedBranches().has(b.name)}
-                  <option value={b.name} disabled={isDisabled}>
-                    {b.name}{b.is_head ? ' (current)' : ''}{usedBranches().has(b.name)
-                      ? ' (in use)'
-                      : ''}
-                  </option>
-                {/each}
-              </select>
-            </div>
-          {/if}
-
-          {#if createName.trim()}
-            <div class="path-preview">
-              <span class="preview-label">Path:</span>
-              <span class="preview-path">{pathPreview()}</span>
-            </div>
-          {/if}
-
-          {#if branchValidationError()}
-            <div class="form-error form-warning">{branchValidationError()}</div>
-          {/if}
-
-          {#if createError}
-            <div class="form-error">{createError}</div>
-          {/if}
-
-          <div class="form-actions">
-            <button type="button" class="btn btn-ghost" onclick={() => (showCreateForm = false)}>
-              Cancel
-            </button>
             <button
               type="button"
-              class="btn btn-primary"
-              onclick={() => handleCreate()}
-              disabled={!createName.trim() || isCreating || !!branchValidationError()}
+              class="branch-select-btn"
+              title="Select existing branch"
+              onclick={() => (showBranchDropdown = true)}
+              disabled={availableBranches().length === 0}
             >
-              {#if isCreating}
-                <Spinner size={12} /> Creating...
-              {:else}
-                Create & Open
-              {/if}
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <line x1="6" y1="3" x2="6" y2="15"></line>
+                <circle cx="18" cy="6" r="3"></circle>
+                <circle cx="6" cy="18" r="3"></circle>
+                <path d="M18 9a9 9 0 0 1-9 9"></path>
+              </svg>
             </button>
           </div>
+          {#if isExistingBranch}
+            <span class="input-hint">Using existing branch</span>
+          {:else if createName.trim()}
+            <span class="input-hint">Will create new branch</span>
+          {/if}
         </div>
-      {/if}
+
+        {#if createName.trim()}
+          <div class="path-preview">
+            <span class="preview-label">Path:</span>
+            <span class="preview-path">{pathPreview()}</span>
+          </div>
+        {/if}
+
+        {#if branchValidationError()}
+          <div class="form-error form-warning">{branchValidationError()}</div>
+        {/if}
+
+        {#if createError}
+          <div class="form-error">{createError}</div>
+        {/if}
+
+        <div class="form-actions">
+          <button
+            type="button"
+            class="btn btn-primary"
+            onclick={() => handleCreate()}
+            disabled={!createName.trim() || isCreating || !!branchValidationError()}
+          >
+            {#if isCreating}
+              <Spinner size={12} /> Creating...
+            {:else}
+              Create & Open
+            {/if}
+          </button>
+        </div>
+      </div>
 
       {#if isLoading && !mounted}
         <div class="loading-state">
@@ -431,6 +419,56 @@
     </div>
   </div>
 </div>
+
+<!-- Branch Selection Modal -->
+{#if showBranchDropdown}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div class="branch-modal-backdrop" onclick={() => (showBranchDropdown = false)}>
+    <div class="branch-modal" onclick={(e) => e.stopPropagation()}>
+      <div class="branch-modal-header">
+        <h3 class="branch-modal-title">Select Branch</h3>
+        <button type="button" class="btn btn-ghost" onclick={() => (showBranchDropdown = false)}>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="branch-modal-body">
+        {#each availableBranches() as b (b.name)}
+          <button type="button" class="branch-item" onclick={() => handleSelectBranch(b.name)}>
+            <svg
+              class="branch-icon-small"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="6" y1="3" x2="6" y2="15"></line>
+              <circle cx="18" cy="6" r="3"></circle>
+              <circle cx="6" cy="18" r="3"></circle>
+              <path d="M18 9a9 9 0 0 1-9 9"></path>
+            </svg>
+            <span class="branch-item-name">{b.name}</span>
+          </button>
+        {/each}
+        {#if availableBranches().length === 0}
+          <div class="empty-state">No available branches</div>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   .modal-backdrop {
@@ -570,6 +608,7 @@
     background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
+    overflow: visible;
   }
 
   .form-group {
@@ -610,35 +649,229 @@
     border-color: var(--accent-color);
   }
 
-  .mode-toggle {
+  /* Input row with separate dropdown */
+  .input-row {
     display: flex;
-    gap: 2px;
-    background: var(--bg-primary);
-    border-radius: var(--radius-sm);
-    padding: 2px;
+    align-items: stretch;
+    gap: 8px;
   }
 
-  .mode-btn {
+  .input-row .form-input {
     flex: 1;
-    padding: var(--space-2) var(--space-3);
+  }
+
+  .branch-select-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    min-height: 34px;
+    align-self: stretch;
+    background: linear-gradient(
+      135deg,
+      rgba(125, 211, 252, 0.08) 0%,
+      rgba(125, 211, 252, 0.02) 100%
+    );
+    border: 1px solid rgba(125, 211, 252, 0.15);
+    border-radius: var(--radius-sm);
+    color: rgba(125, 211, 252, 0.6);
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .branch-select-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(125, 211, 252, 0.15) 0%, transparent 50%);
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+
+  .branch-select-btn:hover:not(:disabled) {
+    background: linear-gradient(
+      135deg,
+      rgba(125, 211, 252, 0.15) 0%,
+      rgba(125, 211, 252, 0.05) 100%
+    );
+    border-color: rgba(125, 211, 252, 0.4);
+    color: var(--accent-color);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(125, 211, 252, 0.15);
+  }
+
+  .branch-select-btn:hover:not(:disabled)::before {
+    opacity: 1;
+  }
+
+  .branch-select-btn:active:not(:disabled) {
+    transform: translateY(0);
+  }
+
+  .branch-select-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
+
+  /* Branch Selection Modal */
+  .branch-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1100;
+    animation: modalFadeIn 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  @keyframes modalFadeIn {
+    from {
+      opacity: 0;
+      backdrop-filter: blur(0);
+    }
+    to {
+      opacity: 1;
+      backdrop-filter: blur(8px);
+    }
+  }
+
+  .branch-modal {
+    width: min(380px, 85vw);
+    max-height: 50vh;
+    background: linear-gradient(180deg, rgba(30, 41, 59, 0.98) 0%, rgba(15, 23, 42, 0.98) 100%);
+    border: 1px solid rgba(125, 211, 252, 0.1);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow:
+      0 0 0 1px rgba(125, 211, 252, 0.05),
+      0 24px 64px rgba(0, 0, 0, 0.5),
+      0 0 80px rgba(125, 211, 252, 0.03);
+    animation: modalSlideIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  @keyframes modalSlideIn {
+    from {
+      opacity: 0;
+      transform: scale(0.95) translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  .branch-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(125, 211, 252, 0.08);
+    background: rgba(125, 211, 252, 0.02);
+  }
+
+  .branch-modal-header .btn-ghost {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    color: var(--text-muted);
+  }
+
+  .branch-modal-header .btn-ghost:hover {
+    background: rgba(248, 113, 113, 0.1);
+    color: var(--git-deleted);
+  }
+
+  .branch-modal-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .branch-modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+
+  .branch-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 10px 12px;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm);
-    font-size: 12px;
-    font-family: var(--font-sans);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-  }
-
-  .mode-btn.active {
-    background: var(--accent-subtle);
-    color: var(--accent-color);
-    font-weight: 500;
-  }
-
-  .mode-btn:hover:not(.active) {
+    border-radius: 8px;
+    font-size: 13px;
+    font-family: var(--font-mono);
     color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-align: left;
+    position: relative;
+  }
+
+  .branch-item::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 0;
+    background: var(--accent-color);
+    border-radius: 0 2px 2px 0;
+    transition: height 0.15s ease;
+  }
+
+  .branch-item:hover {
+    background: rgba(125, 211, 252, 0.06);
+    color: var(--text-primary);
+    padding-left: 16px;
+  }
+
+  .branch-item:hover::before {
+    height: 60%;
+  }
+
+  .branch-item:active {
+    background: rgba(125, 211, 252, 0.1);
+  }
+
+  .branch-item-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .branch-icon-small {
+    flex-shrink: 0;
+    color: rgba(125, 211, 252, 0.4);
+    transition: color 0.15s ease;
+  }
+
+  .branch-item:hover .branch-icon-small {
+    color: var(--accent-color);
+  }
+
+  .input-hint {
+    display: block;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: var(--space-1);
   }
 
   .path-preview {
