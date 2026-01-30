@@ -8,7 +8,7 @@
 
   let { isOpen, onClose }: Props = $props();
 
-  let dialogRef: HTMLDivElement;
+  let dialogRef = $state<HTMLDivElement | null>(null);
   let mounted = $state(false);
 
   interface ShortcutGroup {

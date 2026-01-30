@@ -290,27 +290,6 @@
     color: var(--accent-color);
   }
 
-  .modified-indicator {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--accent-color);
-    flex-shrink: 0;
-    animation: modifiedPulse 2s ease-in-out infinite;
-  }
-
-  @keyframes modifiedPulse {
-    0%,
-    100% {
-      opacity: 0.6;
-      transform: scale(1);
-    }
-    50% {
-      opacity: 1;
-      transform: scale(1.15);
-    }
-  }
-
   .close-btn {
     flex-shrink: 0;
     width: 22px;

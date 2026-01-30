@@ -22,9 +22,15 @@
   let { items, x, y, onSelect, onClose }: Props = $props();
 
   let menuRef: HTMLDivElement;
-  let adjustedX = $state(x);
-  let adjustedY = $state(y);
+  let adjustedX = $state(0);
+  let adjustedY = $state(0);
   let visible = $state(false);
+
+  // Initialize from props
+  $effect(() => {
+    adjustedX = x;
+    adjustedY = y;
+  });
 
   function handleClick(item: MenuItem) {
     if (item.disabled || item.separator) return;

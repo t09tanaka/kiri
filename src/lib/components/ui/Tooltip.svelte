@@ -9,8 +9,8 @@
   let { text, position = 'top', delay = 300, children }: Props = $props();
 
   let visible = $state(false);
-  let triggerRef: HTMLDivElement;
-  let tooltipRef: HTMLDivElement;
+  let triggerRef = $state<HTMLDivElement | null>(null);
+  let tooltipRef = $state<HTMLDivElement | null>(null);
   let timeoutId: ReturnType<typeof setTimeout>;
 
   function show() {
@@ -41,6 +41,7 @@
   }
 </script>
 
+<!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="tooltip-wrapper"
   bind:this={triggerRef}
