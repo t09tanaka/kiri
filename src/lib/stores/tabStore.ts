@@ -55,6 +55,8 @@ function updatePaneTerminalId(
 
 /**
  * Helper: Split a pane in the tree
+ * If splitting in the same direction as the parent split, add as sibling.
+ * If splitting in a different direction, create a nested split.
  */
 function splitPaneInTree(
   pane: TerminalPane,
@@ -74,7 +76,35 @@ function splitPaneInTree(
     }
     return pane;
   }
-  // Split pane - recurse into children
+
+  // Split pane - check if we should add sibling or nest
+  if (pane.direction === direction) {
+    // Same direction: check if target is a direct child
+    const targetIndex = pane.children.findIndex(
+      (child) => child.type === 'terminal' && child.id === targetPaneId
+    );
+
+    if (targetIndex !== -1) {
+      // Target is a direct child, add new pane as sibling after the target
+      const newChildren = [...pane.children];
+      newChildren.splice(targetIndex + 1, 0, {
+        type: 'terminal',
+        id: newPaneId,
+        terminalId: null,
+      });
+
+      // Recalculate sizes to be evenly distributed
+      const newSizes = newChildren.map(() => 100 / newChildren.length);
+
+      return {
+        ...pane,
+        children: newChildren,
+        sizes: newSizes,
+      };
+    }
+  }
+
+  // Recurse into children for nested splits or different direction
   return {
     ...pane,
     children: pane.children.map((child) =>

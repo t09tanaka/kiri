@@ -188,6 +188,119 @@ describe('tabStore', () => {
         expect(updatedTab.rootPane.direction).toBe('vertical');
       }
     });
+
+    it('should add sibling pane when splitting in same direction (vertical)', () => {
+      // Initial state: single pane
+      // After first split: [pane-1, pane-2] (50%, 50%)
+      // After second split on pane-1: [pane-1, pane-3, pane-2] (33.3%, 33.3%, 33.3%)
+      // NOT: [[pane-1, pane-3], pane-2] (nested with 25%, 25%, 50%)
+
+      tabStore.addTerminalTab();
+      let state = get(tabStore);
+      const tabId = state.tabs[0].id;
+      const firstPaneId = (state.tabs[0].rootPane as { id: string }).id;
+
+      // First vertical split
+      tabStore.splitPane(tabId, firstPaneId, 'vertical');
+
+      state = get(tabStore);
+      let rootPane = state.tabs[0].rootPane;
+      expect(rootPane.type).toBe('split');
+      if (rootPane.type !== 'split') return;
+      expect(rootPane.children).toHaveLength(2);
+
+      // Second vertical split on first pane (same direction)
+      tabStore.splitPane(tabId, firstPaneId, 'vertical');
+
+      state = get(tabStore);
+      rootPane = state.tabs[0].rootPane;
+      expect(rootPane.type).toBe('split');
+      if (rootPane.type !== 'split') return;
+
+      // Should have 3 children at same level, not nested
+      expect(rootPane.children).toHaveLength(3);
+      expect(rootPane.direction).toBe('vertical');
+
+      // All children should be terminal panes (no nested splits)
+      expect(rootPane.children[0].type).toBe('terminal');
+      expect(rootPane.children[1].type).toBe('terminal');
+      expect(rootPane.children[2].type).toBe('terminal');
+
+      // Sizes should be evenly distributed (33.3% each)
+      const expectedSize = 100 / 3;
+      expect(rootPane.sizes[0]).toBeCloseTo(expectedSize, 1);
+      expect(rootPane.sizes[1]).toBeCloseTo(expectedSize, 1);
+      expect(rootPane.sizes[2]).toBeCloseTo(expectedSize, 1);
+    });
+
+    it('should add sibling pane when splitting in same direction (horizontal)', () => {
+      tabStore.addTerminalTab();
+      let state = get(tabStore);
+      const tabId = state.tabs[0].id;
+      const firstPaneId = (state.tabs[0].rootPane as { id: string }).id;
+
+      // First horizontal split
+      tabStore.splitPane(tabId, firstPaneId, 'horizontal');
+
+      state = get(tabStore);
+      let rootPane = state.tabs[0].rootPane;
+      expect(rootPane.type).toBe('split');
+      if (rootPane.type !== 'split') return;
+      expect(rootPane.children).toHaveLength(2);
+
+      // Second horizontal split on first pane (same direction)
+      tabStore.splitPane(tabId, firstPaneId, 'horizontal');
+
+      state = get(tabStore);
+      rootPane = state.tabs[0].rootPane;
+      expect(rootPane.type).toBe('split');
+      if (rootPane.type !== 'split') return;
+
+      // Should have 3 children at same level
+      expect(rootPane.children).toHaveLength(3);
+      expect(rootPane.direction).toBe('horizontal');
+
+      // Sizes should be evenly distributed
+      const expectedSize = 100 / 3;
+      expect(rootPane.sizes[0]).toBeCloseTo(expectedSize, 1);
+      expect(rootPane.sizes[1]).toBeCloseTo(expectedSize, 1);
+      expect(rootPane.sizes[2]).toBeCloseTo(expectedSize, 1);
+    });
+
+    it('should create nested split when splitting in different direction', () => {
+      tabStore.addTerminalTab();
+      let state = get(tabStore);
+      const tabId = state.tabs[0].id;
+      const firstPaneId = (state.tabs[0].rootPane as { id: string }).id;
+
+      // First vertical split: [pane-1, pane-2]
+      tabStore.splitPane(tabId, firstPaneId, 'vertical');
+
+      state = get(tabStore);
+      let rootPane = state.tabs[0].rootPane;
+      expect(rootPane.type).toBe('split');
+      if (rootPane.type !== 'split') return;
+
+      // Second split on first pane with DIFFERENT direction (horizontal)
+      // Should create nested: [[pane-1, pane-3], pane-2]
+      tabStore.splitPane(tabId, firstPaneId, 'horizontal');
+
+      state = get(tabStore);
+      rootPane = state.tabs[0].rootPane;
+      expect(rootPane.type).toBe('split');
+      if (rootPane.type !== 'split') return;
+
+      // Root should still have 2 children (outer split unchanged)
+      expect(rootPane.children).toHaveLength(2);
+      expect(rootPane.direction).toBe('vertical');
+
+      // First child should now be a nested split with horizontal direction
+      const firstChild = rootPane.children[0];
+      expect(firstChild.type).toBe('split');
+      if (firstChild.type !== 'split') return;
+      expect(firstChild.direction).toBe('horizontal');
+      expect(firstChild.children).toHaveLength(2);
+    });
   });
 
   describe('closePane', () => {
