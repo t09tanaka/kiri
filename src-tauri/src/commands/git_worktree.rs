@@ -16,6 +16,7 @@ pub struct WorktreeInfo {
 pub struct WorktreeContext {
     pub is_worktree: bool,
     pub main_repo_path: Option<String>,
+    pub worktree_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -239,29 +240,40 @@ pub fn remove_worktree(repo_path: String, name: String) -> Result<(), String> {
 }
 
 /// Get worktree context for the current repository path.
-/// Determines if the path is a worktree and provides the main repo path.
+/// Determines if the path is a worktree and provides the main repo path and worktree name.
 pub fn get_worktree_context(repo_path: String) -> Result<WorktreeContext, String> {
     let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
 
     // Check if this repo is itself a worktree (not the main working tree)
     let is_worktree = repo.is_worktree();
 
-    let main_repo_path = if is_worktree {
-        // For a worktree, the path() returns the .git directory of the main repo
-        // We need to go up from the worktree's gitdir to find the main repo workdir
-        repo.path()
+    let (main_repo_path, worktree_name) = if is_worktree {
+        // For a worktree, repo.path() returns the gitdir: .git/worktrees/<name>/
+        // Extract the worktree name from the gitdir path
+        let gitdir = repo.path();
+        let wt_name = gitdir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string());
+
+        // Go up from the worktree's gitdir to find the main repo workdir
+        let main_path = gitdir
             .parent() // .git/worktrees/<name> -> .git/worktrees
             .and_then(|p| p.parent()) // .git/worktrees -> .git
             .and_then(|p| p.parent()) // .git -> repo root
-            .map(|p: &Path| p.to_string_lossy().to_string())
+            .map(|p: &Path| p.to_string_lossy().to_string());
+
+        (main_path, wt_name)
     } else {
-        repo.workdir()
-            .map(|p: &Path| p.to_string_lossy().to_string())
+        let main_path = repo
+            .workdir()
+            .map(|p: &Path| p.to_string_lossy().to_string());
+        (main_path, None)
     };
 
     Ok(WorktreeContext {
         is_worktree,
         main_repo_path,
+        worktree_name,
     })
 }
 
@@ -628,9 +640,11 @@ mod tests {
         let ctx = WorktreeContext {
             is_worktree: true,
             main_repo_path: Some("/tmp/repo".to_string()),
+            worktree_name: Some("feature-branch".to_string()),
         };
         assert!(ctx.is_worktree);
         assert_eq!(ctx.main_repo_path, Some("/tmp/repo".to_string()));
+        assert_eq!(ctx.worktree_name, Some("feature-branch".to_string()));
     }
 
     #[test]

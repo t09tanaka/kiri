@@ -12,6 +12,7 @@ export interface WorktreeInfo {
 export interface WorktreeContext {
   is_worktree: boolean;
   main_repo_path: string | null;
+  worktree_name: string | null;
 }
 
 export interface BranchInfo {

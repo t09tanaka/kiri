@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { get } from 'svelte/store';
   import { invoke } from '@tauri-apps/api/core';
   import { listen, emit } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -477,24 +476,27 @@
       event.preventDefault();
 
       // For worktree windows, automatically delete the worktree
-      const worktreeState = get(worktreeStore);
-      const worktreeContext = worktreeState.worktreeContext;
-      if (worktreeContext?.is_worktree && worktreeContext?.main_repo_path) {
-        const currentPath = projectStore.getCurrentPath();
-        if (currentPath) {
-          try {
-            // Get worktree name from path (last segment of the path)
-            const pathParts = currentPath.split('/');
-            const worktreeName = pathParts[pathParts.length - 1];
-
-            // Remove worktree using main repo path
-            await worktreeService.remove(worktreeContext.main_repo_path, worktreeName);
+      const currentPath = projectStore.getCurrentPath();
+      if (currentPath) {
+        try {
+          // Get fresh worktree context directly from Tauri (don't rely on store state)
+          const worktreeContext = await worktreeService.getContext(currentPath);
+          if (
+            worktreeContext?.is_worktree &&
+            worktreeContext?.main_repo_path &&
+            worktreeContext?.worktree_name
+          ) {
+            // Remove worktree using main repo path and internal worktree name
+            await worktreeService.remove(
+              worktreeContext.main_repo_path,
+              worktreeContext.worktree_name
+            );
 
             // Emit event to notify other windows
             await eventService.emit('worktree-removed', { path: currentPath });
-          } catch (error) {
-            console.error('Failed to remove worktree:', error);
           }
+        } catch (error) {
+          console.error('Failed to remove worktree:', error);
         }
       }
 
