@@ -8,6 +8,7 @@
   import { eventService } from '@/lib/services/eventService';
   import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
   import type { WorktreeInfo, BranchInfo } from '@/lib/services/worktreeService';
+  import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
 
   interface Props {
     projectPath: string;
@@ -66,13 +67,21 @@
     return branches.filter((b) => !b.is_head && b.name !== current && !used.has(b.name));
   });
 
+  // Compute worktree name (with '/' replaced by '-')
+  const worktreeName = $derived(() => {
+    const name = createName.trim();
+    if (!name) return '';
+    return branchToWorktreeName(name);
+  });
+
   // Compute worktree path preview
   const pathPreview = $derived(() => {
-    if (!createName || !projectPath) return '';
+    const wtName = worktreeName();
+    if (!wtName || !projectPath) return '';
     const parts = projectPath.split('/');
     const repoName = parts[parts.length - 1] || parts[parts.length - 2] || 'repo';
     const parentPath = parts.slice(0, -1).join('/');
-    return `${parentPath}/${repoName}-${createName}`;
+    return `${parentPath}/${repoName}-${wtName}`;
   });
 
   onMount(async () => {
@@ -148,11 +157,11 @@
 
     try {
       const branchName = createName.trim();
-      // Branch name = Worktree name (unified concept)
+      const wtName = branchToWorktreeName(branchName);
       const wt = await worktreeService.create(
         currentProjectPath,
-        branchName, // worktree name = branch name
-        branchName,
+        wtName, // worktree name (with '/' replaced by '-')
+        branchName, // branch name (original, may contain '/')
         !isExistingBranch // create new branch if not selecting existing
       );
 
