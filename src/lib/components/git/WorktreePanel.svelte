@@ -2,7 +2,6 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { Spinner } from '@/lib/components/ui';
   import { worktreeStore } from '@/lib/stores/worktreeStore';
-  import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
   import { worktreeService } from '@/lib/services/worktreeService';
   import { windowService } from '@/lib/services/windowService';
   import type { WorktreeInfo, BranchInfo, WorktreeContext } from '@/lib/services/worktreeService';
@@ -184,13 +183,15 @@
         !isExistingBranch // create new branch if not selecting existing
       );
 
-      // Close modal and ensure UI updates before opening new window
-      worktreeViewStore.close();
-      await tick();
-
-      // Background tasks after modal is closed
-      loadWorktrees(currentProjectPath).catch(console.error);
+      // Open new window and refresh worktree list (keep modal open)
       openWorktreeWindow(wt);
+      loadWorktrees(currentProjectPath).catch(console.error);
+
+      // Reset form and update UI
+      isCreating = false;
+      createName = '';
+      isExistingBranch = false;
+      await tick();
     } catch (e) {
       createError = e instanceof Error ? e.message : String(e);
       isCreating = false;
