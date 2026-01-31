@@ -5,9 +5,7 @@
   import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
   import { worktreeService } from '@/lib/services/worktreeService';
   import { windowService } from '@/lib/services/windowService';
-  import { eventService } from '@/lib/services/eventService';
-  import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
-  import type { WorktreeInfo, BranchInfo } from '@/lib/services/worktreeService';
+  import type { WorktreeInfo, BranchInfo, WorktreeContext } from '@/lib/services/worktreeService';
   import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
 
   interface Props {
@@ -28,7 +26,19 @@
   let showBranchDropdown = $state(false);
   let isExistingBranch = $state(false);
 
+  // Worktree context for current window
+  let currentContext = $state<WorktreeContext | null>(null);
+
   const worktrees = $derived($worktreeStore.worktrees);
+
+  // Check if current window is a worktree
+  const isCurrentWindowWorktree = $derived(() => currentContext?.is_worktree ?? false);
+
+  // Get the main worktree
+  const mainWorktree = $derived(() => worktrees.find((w) => w.is_main));
+
+  // Get linked worktrees
+  const linkedWorktrees = $derived(() => worktrees.filter((w) => !w.is_main && w.is_valid));
 
   // Get current branch name (HEAD)
   const currentBranch = $derived(() => {
@@ -90,7 +100,16 @@
     document.addEventListener('click', handleDocumentClick, true);
     await loadWorktrees();
     await loadBranches();
+    await loadContext();
   });
+
+  async function loadContext() {
+    try {
+      currentContext = await worktreeService.getContext(projectPath);
+    } catch {
+      currentContext = null;
+    }
+  }
 
   onDestroy(() => {
     document.removeEventListener('keydown', handleKeyDown, true);
@@ -188,27 +207,6 @@
     }
   }
 
-  async function handleRemove(wt: WorktreeInfo) {
-    const confirmed = await confirmDialogStore.confirm({
-      title: 'Remove Worktree',
-      message: `Remove worktree "${wt.name}" and its directory?\n\nPath: ${wt.path}`,
-      confirmLabel: 'Remove',
-      cancelLabel: 'Cancel',
-      kind: 'warning',
-    });
-
-    if (!confirmed) return;
-
-    try {
-      await worktreeService.remove(projectPath, wt.name);
-      // Notify other windows that this worktree was removed
-      await eventService.emit('worktree-removed', { path: wt.path });
-      await loadWorktrees();
-    } catch (e) {
-      console.error('Failed to remove worktree:', e);
-    }
-  }
-
   function handleBackdropClick(e: MouseEvent) {
     if (e.target === e.currentTarget) {
       onClose();
@@ -218,213 +216,183 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="modal-backdrop" onclick={handleBackdropClick}>
-  <div class="modal-container">
-    <div class="modal-header">
-      <h2 class="modal-title">Worktrees</h2>
-      <button type="button" class="btn btn-ghost" onclick={() => onClose()} title="Close (Esc)">
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-        >
-          <line x1="18" y1="6" x2="6" y2="18"></line>
-          <line x1="6" y1="6" x2="18" y2="18"></line>
-        </svg>
-      </button>
-    </div>
+<div class="worktree-backdrop" class:mounted onclick={handleBackdropClick}>
+  <div class="worktree-modal">
+    <div class="modal-glow"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="header-content">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <line x1="6" y1="3" x2="6" y2="15"></line>
+            <circle cx="18" cy="6" r="3"></circle>
+            <circle cx="6" cy="18" r="3"></circle>
+            <path d="M18 9a9 9 0 0 1-9 9"></path>
+          </svg>
+          <span class="title">Worktrees</span>
+        </div>
+        <button class="action-btn close-btn" onclick={() => onClose()} title="Close (Esc)">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
 
-    <div class="modal-body">
-      <div class="create-form">
-        <div class="form-group">
-          <label class="form-label" for="wt-name">Branch Name</label>
-          <div class="input-row">
-            <!-- svelte-ignore a11y_autofocus -->
-            <input
-              id="wt-name"
-              type="text"
-              class="form-input"
-              bind:value={createName}
-              placeholder="e.g. fix-sidebar"
-              spellcheck="false"
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="off"
-              autofocus
-              oninput={() => handleNameInput()}
-              onkeydown={(e) => {
-                if (e.key === 'Enter' && createName.trim()) handleCreate();
-              }}
-            />
+      <div class="modal-body">
+        <!-- Worktree Tree View -->
+        {#if isLoading && !mounted}
+          <div class="loading-state">
+            <Spinner size={24} />
+            <span>Loading worktrees...</span>
+          </div>
+        {:else}
+          <div class="worktree-tree">
+            <!-- Main repository (parent) -->
+            {#if mainWorktree()}
+              {@const main = mainWorktree()}
+              <div class="tree-item tree-parent" class:is-current={!isCurrentWindowWorktree()}>
+                <span class="tree-indicator"></span>
+                <span class="tree-branch">{main?.branch ?? 'detached'}</span>
+                {#if !isCurrentWindowWorktree()}
+                  <span class="tree-label label-current">CURRENT</span>
+                {/if}
+              </div>
+            {/if}
+
+            <!-- Linked worktrees (children) -->
+            {#each linkedWorktrees() as wt, i (wt.path)}
+              {@const isLast = i === linkedWorktrees().length - 1}
+              <button
+                type="button"
+                class="tree-item tree-child"
+                onclick={() => openWorktreeWindow(wt)}
+                title="Click to open"
+              >
+                <span class="tree-connector" class:is-last={isLast}></span>
+                <span class="tree-indicator"></span>
+                <span class="tree-branch">{wt.branch ?? 'detached'}</span>
+                {#if wt.is_locked}
+                  <span class="tree-locked" title="Locked">🔒</span>
+                {/if}
+                <span class="tree-label label-wt">WT</span>
+              </button>
+            {/each}
+          </div>
+        {/if}
+
+        <!-- Separator -->
+        <div class="section-divider"></div>
+
+        <!-- Create Form -->
+        <div class="create-section">
+          <div class="section-title">New worktree</div>
+
+          <div class="form-group">
+            <div class="input-row">
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                id="wt-name"
+                type="text"
+                class="form-input"
+                bind:value={createName}
+                placeholder="Branch name (e.g. fix-sidebar)"
+                spellcheck="false"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                autofocus
+                oninput={() => handleNameInput()}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter' && createName.trim()) handleCreate();
+                }}
+              />
+              <button
+                type="button"
+                class="branch-select-btn"
+                title="Select existing branch"
+                onclick={() => (showBranchDropdown = true)}
+                disabled={availableBranches().length === 0}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <line x1="6" y1="3" x2="6" y2="15"></line>
+                  <circle cx="18" cy="6" r="3"></circle>
+                  <circle cx="6" cy="18" r="3"></circle>
+                  <path d="M18 9a9 9 0 0 1-9 9"></path>
+                </svg>
+              </button>
+            </div>
+            {#if isExistingBranch}
+              <span class="input-hint">Using existing branch</span>
+            {:else if createName.trim()}
+              <span class="input-hint">Will create new branch</span>
+            {/if}
+          </div>
+
+          {#if createName.trim()}
+            <div class="path-preview">
+              <span class="preview-label">Path:</span>
+              <span class="preview-path">{pathPreview()}</span>
+            </div>
+          {/if}
+
+          {#if branchValidationError()}
+            <div class="form-error form-warning">{branchValidationError()}</div>
+          {/if}
+
+          {#if createError}
+            <div class="form-error">{createError}</div>
+          {/if}
+
+          <div class="form-actions">
             <button
               type="button"
-              class="branch-select-btn"
-              title="Select existing branch"
-              onclick={() => (showBranchDropdown = true)}
-              disabled={availableBranches().length === 0}
+              class="btn btn-primary"
+              onclick={() => handleCreate()}
+              disabled={!createName.trim() || isCreating || !!branchValidationError()}
             >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <line x1="6" y1="3" x2="6" y2="15"></line>
-                <circle cx="18" cy="6" r="3"></circle>
-                <circle cx="6" cy="18" r="3"></circle>
-                <path d="M18 9a9 9 0 0 1-9 9"></path>
-              </svg>
+              {#if isCreating}
+                <Spinner size={12} /> Creating...
+              {:else}
+                Open
+              {/if}
             </button>
           </div>
-          {#if isExistingBranch}
-            <span class="input-hint">Using existing branch</span>
-          {:else if createName.trim()}
-            <span class="input-hint">Will create new branch</span>
-          {/if}
-        </div>
-
-        {#if createName.trim()}
-          <div class="path-preview">
-            <span class="preview-label">Path:</span>
-            <span class="preview-path">{pathPreview()}</span>
-          </div>
-        {/if}
-
-        {#if branchValidationError()}
-          <div class="form-error form-warning">{branchValidationError()}</div>
-        {/if}
-
-        {#if createError}
-          <div class="form-error">{createError}</div>
-        {/if}
-
-        <div class="form-actions">
-          <button
-            type="button"
-            class="btn btn-primary"
-            onclick={() => handleCreate()}
-            disabled={!createName.trim() || isCreating || !!branchValidationError()}
-          >
-            {#if isCreating}
-              <Spinner size={12} /> Creating...
-            {:else}
-              Create & Open
-            {/if}
-          </button>
         </div>
       </div>
 
-      {#if isLoading && !mounted}
-        <div class="loading-state">
-          <Spinner size={24} />
-          <span>Loading worktrees...</span>
-        </div>
-      {:else}
-        <div class="worktree-list">
-          <!-- Main repository (current) -->
-          {#each worktrees.filter((w) => w.is_main) as wt (wt.path)}
-            <div
-              class="main-repo-wrapper"
-              class:has-worktrees={worktrees.filter((w) => !w.is_main).length > 0}
-            >
-              <div class="main-repo-row">
-                <div class="main-tree-connector">
-                  <div class="main-tree-horizontal"></div>
-                </div>
-                <div class="main-repo-card">
-                  <div class="main-repo-indicator"></div>
-                  <svg
-                    class="branch-icon"
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  >
-                    <line x1="6" y1="3" x2="6" y2="15"></line>
-                    <circle cx="18" cy="6" r="3"></circle>
-                    <circle cx="6" cy="18" r="3"></circle>
-                    <path d="M18 9a9 9 0 0 1-9 9"></path>
-                  </svg>
-                  <span class="branch-name">{wt.branch ?? 'detached'}</span>
-                  <span class="label label-current">Current</span>
-                </div>
-              </div>
-              <div class="tree-stem"></div>
-            </div>
-          {/each}
-
-          <!-- Worktrees (clickable) with tree connector -->
-          {#each worktrees.filter((w) => !w.is_main) as wt, index (wt.path)}
-            {@const isLast = index === worktrees.filter((w) => !w.is_main).length - 1}
-            <div class="worktree-row" class:is-last={isLast}>
-              <div class="tree-connector">
-                <div class="tree-vertical"></div>
-                <div class="tree-horizontal"></div>
-              </div>
-              <button
-                type="button"
-                class="worktree-card"
-                class:is-invalid={!wt.is_valid}
-                onclick={() => openWorktreeWindow(wt)}
-                title="Click to open worktree"
-              >
-                <div class="worktree-indicator"></div>
-                <span class="label label-worktree">WT</span>
-                <span class="branch-name">{wt.branch ?? 'detached'}</span>
-                {#if wt.is_locked}
-                  <span class="label label-locked" title="Locked">🔒</span>
-                {/if}
-                {#if !wt.is_valid}
-                  <span class="label label-invalid">invalid</span>
-                {/if}
-                <div class="wt-actions">
-                  <span class="open-hint">Open →</span>
-                  {#if !wt.is_locked}
-                    <!-- svelte-ignore a11y_click_events_have_key_events -->
-                    <span
-                      role="button"
-                      tabindex="0"
-                      class="remove-btn"
-                      title="Remove worktree"
-                      onclick={(e) => {
-                        e.stopPropagation();
-                        handleRemove(wt);
-                      }}
-                    >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <polyline points="3 6 5 6 21 6"></polyline>
-                        <path
-                          d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
-                        ></path>
-                      </svg>
-                    </span>
-                  {/if}
-                </div>
-              </button>
-            </div>
-          {/each}
-
-          {#if worktrees.length === 0 && !isLoading}
-            <div class="empty-state">No worktrees found</div>
-          {/if}
-        </div>
-      {/if}
+      <div class="modal-footer">
+        <span class="footer-item">
+          <kbd>↵</kbd>
+          <span>create</span>
+        </span>
+        <span class="footer-item">
+          <kbd>Esc</kbd>
+          <span>close</span>
+        </span>
+      </div>
     </div>
   </div>
 </div>
@@ -480,80 +448,177 @@
 {/if}
 
 <style>
-  .modal-backdrop {
+  .worktree-backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 1000;
-    animation: fadeIn 0.15s ease;
+    opacity: 0;
+    transition: opacity 0.2s ease;
   }
 
-  @keyframes fadeIn {
+  .worktree-backdrop.mounted {
+    opacity: 1;
+  }
+
+  .worktree-modal {
+    position: relative;
+    width: min(440px, 90vw);
+    max-height: 80vh;
+    animation: modalSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  @keyframes modalSlideIn {
     from {
       opacity: 0;
+      transform: translateY(-20px) scale(0.95);
     }
     to {
       opacity: 1;
+      transform: translateY(0) scale(1);
     }
   }
 
-  .modal-container {
-    width: min(560px, 90vw);
-    max-height: 80vh;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
+  .modal-glow {
+    position: absolute;
+    inset: -2px;
+    background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+    border-radius: calc(var(--radius-xl) + 2px);
+    opacity: 0.06;
+    filter: blur(5px);
+    z-index: -1;
+    transition: opacity 0.3s ease;
+  }
+
+  .worktree-modal:hover .modal-glow {
+    opacity: 0.1;
+  }
+
+  .modal-content {
     display: flex;
     flex-direction: column;
+    background: var(--bg-glass);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--border-glow);
+    border-radius: var(--radius-xl);
     overflow: hidden;
-    box-shadow:
-      0 24px 48px rgba(0, 0, 0, 0.4),
-      0 0 1px rgba(125, 211, 252, 0.1);
-    animation: slideUp 0.2s ease;
+    box-shadow: var(--shadow-lg);
   }
 
-  @keyframes slideUp {
-    from {
-      transform: translateY(12px);
-      opacity: 0;
-    }
-    to {
-      transform: translateY(0);
-      opacity: 1;
-    }
+  /* Top border shine effect */
+  .modal-content::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent-color), transparent);
+    opacity: 0.6;
+    z-index: 1;
   }
 
   .modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: var(--space-4) var(--space-5);
+    padding: var(--space-3) var(--space-4);
+    background: rgba(0, 0, 0, 0.2);
     border-bottom: 1px solid var(--border-color);
-    background: var(--bg-tertiary);
   }
 
-  .modal-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin: 0;
-    letter-spacing: 0.02em;
-  }
-
-  .header-actions {
+  .header-content {
     display: flex;
     align-items: center;
     gap: var(--space-2);
   }
 
+  .header-content svg {
+    color: var(--accent-color);
+    opacity: 0.8;
+  }
+
+  .title {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .action-btn:hover {
+    background: rgba(125, 211, 252, 0.1);
+    color: var(--text-secondary);
+  }
+
+  .close-btn:hover {
+    background: rgba(248, 113, 113, 0.15);
+    color: var(--git-deleted);
+  }
+
   .modal-body {
     flex: 1;
     overflow-y: auto;
-    padding: var(--space-4) var(--space-5);
+    padding: var(--space-4);
+  }
+
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-5);
+    padding: var(--space-3) var(--space-4);
+    background: rgba(0, 0, 0, 0.2);
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .footer-item {
+    font-size: 11px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .footer-item kbd {
+    padding: 2px 6px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-secondary);
+    box-shadow: 0 1px 0 var(--bg-primary);
+    transition: all var(--transition-fast);
+  }
+
+  .footer-item:hover kbd {
+    color: var(--accent-color);
+    border-color: var(--accent-subtle);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 0 var(--bg-primary);
+  }
+
+  .footer-item span {
+    margin-left: 2px;
   }
 
   /* Buttons */
@@ -576,17 +641,11 @@
   .btn:hover {
     background: var(--bg-glass-hover);
     color: var(--text-primary);
-    transform: translateY(-1px);
-  }
-
-  .btn:active {
-    transform: translateY(0) scale(0.98);
   }
 
   .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-    transform: none;
   }
 
   .btn-primary {
@@ -602,6 +661,7 @@
   .btn-ghost {
     background: transparent;
     border-color: transparent;
+    padding: var(--space-1);
     color: var(--text-muted);
   }
 
@@ -610,40 +670,178 @@
     color: var(--text-secondary);
   }
 
-  /* Create Form */
-  .create-form {
-    padding: var(--space-4);
-    margin-bottom: var(--space-4);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
+  /* Worktree Tree View */
+  .worktree-tree {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+
+  .tree-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-sm);
-    overflow: visible;
-  }
-
-  .form-group {
-    margin-bottom: var(--space-3);
-  }
-
-  .mode-fieldset {
+    font-size: 13px;
+    font-family: var(--font-mono);
+    position: relative;
     border: none;
-    padding: 0;
-    margin: 0;
+    background: transparent;
+    width: 100%;
+    text-align: left;
+    transition: background var(--transition-fast);
   }
 
-  .form-label {
-    display: block;
+  /* Parent (Main repository) */
+  .tree-parent {
+    padding-left: var(--space-3);
+  }
+
+  .tree-parent.is-current {
+    background: rgba(74, 222, 128, 0.05);
+  }
+
+  /* Children (Linked worktrees) */
+  .tree-child {
+    padding-left: calc(var(--space-3) + 24px);
+    cursor: pointer;
+  }
+
+  .tree-child:hover {
+    background: rgba(251, 191, 36, 0.08);
+  }
+
+  /* Connector line for parent-child relationship */
+  .tree-connector {
+    position: absolute;
+    left: calc(var(--space-3) + 2px);
+    width: 14px;
+    height: 100%;
+  }
+
+  .tree-connector::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: -50%;
+    width: 1px;
+    height: 100%;
+    background: var(--border-color);
+  }
+
+  .tree-connector::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    width: 10px;
+    height: 1px;
+    background: var(--border-color);
+  }
+
+  .tree-connector.is-last::before {
+    height: 50%;
+    top: 0;
+  }
+
+  .tree-indicator {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .tree-parent .tree-indicator {
+    background: var(--git-added);
+    box-shadow: 0 0 6px rgba(74, 222, 128, 0.4);
+  }
+
+  .tree-child .tree-indicator {
+    background: var(--git-modified);
+    opacity: 0.6;
+  }
+
+  .tree-child:hover .tree-indicator {
+    opacity: 1;
+    box-shadow: 0 0 6px rgba(251, 191, 36, 0.4);
+  }
+
+  .tree-branch {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+  }
+
+  .tree-parent.is-current .tree-branch {
+    color: var(--git-added);
+  }
+
+  .tree-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 6px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .tree-label.label-current {
+    background: rgba(74, 222, 128, 0.15);
+    color: var(--git-added);
+  }
+
+  .tree-label.label-wt {
+    background: rgba(251, 191, 36, 0.15);
+    color: var(--git-modified);
+  }
+
+  .tree-locked {
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  /* Section Divider */
+  .section-divider {
+    height: 1px;
+    background: linear-gradient(
+      to right,
+      transparent 0%,
+      var(--border-color) 20%,
+      var(--border-color) 80%,
+      transparent 100%
+    );
+    margin: var(--space-4) 0;
+  }
+
+  /* Create Section */
+  .create-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .section-title {
     font-size: 11px;
     font-weight: 500;
     color: var(--text-muted);
-    margin-bottom: var(--space-1);
     text-transform: uppercase;
     letter-spacing: 0.05em;
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
   }
 
   .form-input {
     width: 100%;
     padding: var(--space-2) var(--space-3);
-    background: var(--bg-primary);
+    background: var(--bg-secondary);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     font-size: 13px;
@@ -658,7 +856,10 @@
     border-color: var(--accent-color);
   }
 
-  /* Input row with separate dropdown */
+  .form-input::placeholder {
+    color: var(--text-muted);
+  }
+
   .input-row {
     display: flex;
     align-items: stretch;
@@ -674,49 +875,17 @@
     align-items: center;
     justify-content: center;
     width: 36px;
-    min-height: 34px;
-    align-self: stretch;
-    background: linear-gradient(
-      135deg,
-      rgba(125, 211, 252, 0.08) 0%,
-      rgba(125, 211, 252, 0.02) 100%
-    );
-    border: 1px solid rgba(125, 211, 252, 0.15);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
-    color: rgba(125, 211, 252, 0.6);
+    color: var(--text-muted);
     cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
-  }
-
-  .branch-select-btn::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(135deg, rgba(125, 211, 252, 0.15) 0%, transparent 50%);
-    opacity: 0;
-    transition: opacity 0.2s ease;
+    transition: all var(--transition-fast);
   }
 
   .branch-select-btn:hover:not(:disabled) {
-    background: linear-gradient(
-      135deg,
-      rgba(125, 211, 252, 0.15) 0%,
-      rgba(125, 211, 252, 0.05) 100%
-    );
-    border-color: rgba(125, 211, 252, 0.4);
+    border-color: var(--accent-color);
     color: var(--accent-color);
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(125, 211, 252, 0.15);
-  }
-
-  .branch-select-btn:hover:not(:disabled)::before {
-    opacity: 1;
-  }
-
-  .branch-select-btn:active:not(:disabled) {
-    transform: translateY(0);
   }
 
   .branch-select-btn:disabled {
@@ -724,189 +893,18 @@
     cursor: not-allowed;
   }
 
-  /* Branch Selection Modal */
-  .branch-modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.7);
-    backdrop-filter: blur(8px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1100;
-    animation: modalFadeIn 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  @keyframes modalFadeIn {
-    from {
-      opacity: 0;
-      backdrop-filter: blur(0);
-    }
-    to {
-      opacity: 1;
-      backdrop-filter: blur(8px);
-    }
-  }
-
-  .branch-modal {
-    width: min(380px, 85vw);
-    max-height: 50vh;
-    background: linear-gradient(180deg, rgba(30, 41, 59, 0.98) 0%, rgba(15, 23, 42, 0.98) 100%);
-    border: 1px solid rgba(125, 211, 252, 0.1);
-    border-radius: 12px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-    box-shadow:
-      0 0 0 1px rgba(125, 211, 252, 0.05),
-      0 24px 64px rgba(0, 0, 0, 0.5),
-      0 0 80px rgba(125, 211, 252, 0.03);
-    animation: modalSlideIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
-  }
-
-  @keyframes modalSlideIn {
-    from {
-      opacity: 0;
-      transform: scale(0.95) translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1) translateY(0);
-    }
-  }
-
-  .branch-modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 14px 16px;
-    border-bottom: 1px solid rgba(125, 211, 252, 0.08);
-    background: rgba(125, 211, 252, 0.02);
-  }
-
-  .branch-modal-header .btn-ghost {
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 6px;
-    color: var(--text-muted);
-  }
-
-  .branch-modal-header .btn-ghost:hover {
-    background: rgba(248, 113, 113, 0.1);
-    color: var(--git-deleted);
-  }
-
-  .branch-modal-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-secondary);
-    margin: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-
-  .branch-modal-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 8px;
-    max-height: 220px;
-  }
-
-  .branch-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: 100%;
-    padding: 10px 12px;
-    background: transparent;
-    border: none;
-    border-radius: 8px;
-    font-size: 13px;
-    font-family: var(--font-mono);
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: all 0.15s ease;
-    text-align: left;
-    position: relative;
-  }
-
-  .branch-item::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 3px;
-    height: 0;
-    background: var(--accent-color);
-    border-radius: 0 2px 2px 0;
-    transition: height 0.15s ease;
-  }
-
-  .branch-item:hover {
-    background: rgba(125, 211, 252, 0.06);
-    color: var(--text-primary);
-    padding-left: 16px;
-  }
-
-  .branch-item:hover::before {
-    height: 60%;
-  }
-
-  .branch-item:active {
-    background: rgba(125, 211, 252, 0.1);
-  }
-
-  .branch-item:not(:last-child)::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    height: 1px;
-    background: linear-gradient(
-      to right,
-      transparent 0%,
-      rgba(125, 211, 252, 0.015) 50%,
-      transparent 100%
-    );
-  }
-
-  .branch-item-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .branch-icon-small {
-    flex-shrink: 0;
-    color: rgba(125, 211, 252, 0.4);
-    transition: color 0.15s ease;
-  }
-
-  .branch-item:hover .branch-icon-small {
-    color: var(--accent-color);
-  }
-
   .input-hint {
-    display: block;
     font-size: 11px;
     color: var(--text-muted);
-    margin-top: var(--space-1);
   }
 
   .path-preview {
     display: flex;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
-    background: var(--bg-primary);
+    background: var(--bg-secondary);
     border-radius: var(--radius-sm);
     font-size: 11px;
-    margin-bottom: var(--space-3);
   }
 
   .preview-label {
@@ -929,7 +927,6 @@
     border-radius: var(--radius-sm);
     color: var(--git-deleted);
     font-size: 12px;
-    margin-bottom: var(--space-3);
   }
 
   .form-warning {
@@ -941,319 +938,183 @@
   .form-actions {
     display: flex;
     justify-content: flex-end;
-    gap: var(--space-2);
   }
 
-  /* Worktree List */
-  .worktree-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-
-  /* Main Repository Card */
-  .main-repo-wrapper {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .main-repo-row {
-    display: flex;
-    align-items: center;
-  }
-
-  .main-tree-connector {
-    display: none;
-  }
-
-  .main-tree-horizontal {
-    display: none;
-  }
-
-  .main-repo-card {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    flex: 1;
-    padding: var(--space-3) var(--space-4);
-    padding-left: calc(var(--space-4) + 8px);
-    background: var(--bg-secondary);
-    border: 1px solid rgba(74, 222, 128, 0.25);
-    border-radius: var(--radius-sm);
-    position: relative;
-    overflow: hidden;
-  }
-
-  /* Vertical line from main repo down to worktrees */
-  .tree-stem {
-    display: none;
-  }
-
-  .main-repo-wrapper.has-worktrees::after {
-    content: '';
-    position: absolute;
-    left: 30px;
-    top: 100%;
-    width: 1px;
-    height: var(--space-2);
-    background: var(--git-modified);
-    opacity: 0.4;
-  }
-
-  .main-repo-indicator {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 4px;
-    background: linear-gradient(180deg, var(--git-added) 0%, rgba(74, 222, 128, 0.4) 100%);
-  }
-
-  .main-repo-card .branch-icon {
-    color: var(--git-added);
-    flex-shrink: 0;
-  }
-
-  .main-repo-card .branch-name {
-    color: var(--git-added);
-  }
-
-  .main-repo-card:hover {
-    border-color: rgba(74, 222, 128, 0.5);
-    background: rgba(74, 222, 128, 0.05);
-  }
-
-  /* Tree connector for worktrees */
-  .worktree-row {
-    display: flex;
-    align-items: center;
-    position: relative;
-    padding-left: 24px;
-  }
-
-  /* Vertical line connecting worktrees (except last) */
-  .worktree-row::before {
-    content: '';
-    position: absolute;
-    left: 30px;
-    top: 0;
-    bottom: calc(-1 * var(--space-2));
-    width: 1px;
-    background: var(--git-modified);
-    opacity: 0.4;
-  }
-
-  /* Last item: vertical line only goes to center */
-  .worktree-row.is-last::before {
-    bottom: 50%;
-  }
-
-  .tree-connector {
-    display: flex;
-    align-items: center;
-    width: 24px;
-    flex-shrink: 0;
-    position: relative;
-  }
-
-  /* Horizontal line from vertical to card */
-  .tree-connector::before {
-    content: '';
-    position: absolute;
-    left: 6px;
-    width: 18px;
-    height: 1px;
-    background: var(--git-modified);
-    opacity: 0.4;
-  }
-
-  .tree-vertical,
-  .tree-horizontal {
-    display: none;
-  }
-
-  /* Worktree Card (Clickable) */
-  .worktree-card {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    flex: 1;
-    padding: var(--space-2) var(--space-4);
-    padding-left: calc(var(--space-4) + 4px);
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    position: relative;
-    overflow: hidden;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    text-align: left;
-    font-family: inherit;
-  }
-
-  .worktree-card:hover {
-    border-color: rgba(251, 191, 36, 0.5);
-    background: rgba(251, 191, 36, 0.08);
-    transform: translateX(4px);
-  }
-
-  .worktree-card:active {
-    transform: translateX(4px) scale(0.99);
-  }
-
-  .worktree-indicator {
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 3px;
-    background: var(--git-modified);
-    opacity: 0.6;
-    transition: opacity var(--transition-fast);
-  }
-
-  .worktree-card:hover .worktree-indicator {
-    opacity: 1;
-  }
-
-  .worktree-card.is-invalid {
-    opacity: 0.6;
-    border-color: rgba(248, 113, 113, 0.3);
-  }
-
-  .worktree-card.is-invalid .worktree-indicator {
-    background: var(--git-deleted);
-  }
-
-  .branch-name {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .worktree-card .branch-name {
-    color: var(--text-primary);
-  }
-
-  .wt-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    flex-shrink: 0;
-    margin-left: var(--space-3);
-  }
-
-  .open-hint {
-    font-size: 11px;
-    color: var(--text-muted);
-    opacity: 0;
-    transition: opacity var(--transition-fast);
-  }
-
-  .worktree-card:hover .open-hint {
-    opacity: 1;
-    color: var(--git-modified);
-  }
-
-  .remove-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    opacity: 0;
-    transition: all var(--transition-fast);
-    cursor: pointer;
-  }
-
-  .worktree-card:hover .remove-btn {
-    opacity: 1;
-  }
-
-  .remove-btn:hover {
-    background: rgba(248, 113, 113, 0.15);
-    color: var(--git-deleted);
-  }
-
-  /* Labels */
-  .label {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 10px;
-    font-weight: 600;
-    padding: 0 5px;
-    height: 16px;
-    line-height: 1;
-    border-radius: 3px;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    flex-shrink: 0;
-    position: relative;
-    top: 5px;
-  }
-
-  .label-current {
-    background: rgba(74, 222, 128, 0.2);
-    color: var(--git-added);
-  }
-
-  .label-worktree {
-    background: rgba(251, 191, 36, 0.3);
-    color: var(--git-modified);
-  }
-
-  .label-locked {
-    font-size: 12px;
-    padding: 0;
-    height: auto;
-    background: none;
-  }
-
-  .label-invalid {
-    background: rgba(248, 113, 113, 0.2);
-    color: var(--git-deleted);
-  }
-
-  /* States */
+  /* Loading State */
   .loading-state {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: var(--space-3);
-    padding: var(--space-8);
+    padding: var(--space-6);
     color: var(--text-muted);
     font-size: 13px;
   }
 
+  /* Branch Selection Modal */
+  .branch-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1100;
+    opacity: 0;
+    animation: fadeIn 0.2s ease forwards;
+  }
+
+  @keyframes fadeIn {
+    to {
+      opacity: 1;
+    }
+  }
+
+  .branch-modal {
+    position: relative;
+    width: min(380px, 85vw);
+    max-height: 50vh;
+    animation: modalSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .branch-modal::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+    border-radius: calc(var(--radius-lg) + 1px);
+    opacity: 0.08;
+    filter: blur(3px);
+    z-index: -1;
+  }
+
+  .branch-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-4);
+    background: rgba(0, 0, 0, 0.2);
+    border-bottom: 1px solid var(--border-color);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .branch-modal-header .btn-ghost {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .branch-modal-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .branch-modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-2);
+    max-height: 260px;
+    background: var(--bg-glass);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--border-glow);
+    border-top: none;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  }
+
+  .branch-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    padding: var(--space-3) var(--space-4);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 13px;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    text-align: left;
+  }
+
+  .branch-item:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
+
+  .branch-item::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 0;
+    background: var(--accent-color);
+    border-radius: 0 2px 2px 0;
+    transition: height var(--transition-fast);
+  }
+
+  .branch-item:hover::after {
+    height: 60%;
+  }
+
+  .branch-item-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .branch-icon-small {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    transition: all var(--transition-fast);
+  }
+
+  .branch-item:hover .branch-icon-small {
+    color: var(--accent-color);
+    transform: scale(1.1);
+  }
+
   .empty-state {
     text-align: center;
-    padding: var(--space-8);
+    padding: var(--space-6);
     color: var(--text-muted);
     font-size: 13px;
   }
 
   /* Scrollbar */
-  .modal-body::-webkit-scrollbar {
+  .modal-body::-webkit-scrollbar,
+  .branch-modal-body::-webkit-scrollbar {
     width: 6px;
   }
 
-  .modal-body::-webkit-scrollbar-track {
+  .modal-body::-webkit-scrollbar-track,
+  .branch-modal-body::-webkit-scrollbar-track {
     background: transparent;
   }
 
-  .modal-body::-webkit-scrollbar-thumb {
-    background: rgba(125, 211, 252, 0.1);
+  .modal-body::-webkit-scrollbar-thumb,
+  .branch-modal-body::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--border-color), var(--border-subtle));
     border-radius: 3px;
+    transition: all var(--transition-normal);
   }
 
-  .modal-body::-webkit-scrollbar-thumb:hover {
-    background: rgba(125, 211, 252, 0.2);
+  .modal-body:hover::-webkit-scrollbar-thumb,
+  .branch-modal-body:hover::-webkit-scrollbar-thumb {
+    background: rgba(125, 211, 252, 0.3);
   }
 </style>
