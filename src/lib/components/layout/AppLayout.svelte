@@ -27,8 +27,8 @@
     const isTyping =
       target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
 
-    // Ctrl/Cmd + ` to add new terminal
-    if ((e.ctrlKey || e.metaKey) && e.key === '`') {
+    // Ctrl/Cmd + T to add new terminal
+    if ((e.ctrlKey || e.metaKey) && e.key === 't') {
       e.preventDefault();
       tabStore.addTerminalTab();
     }

@@ -121,7 +121,7 @@
   <button
     class="add-btn"
     onclick={handleAddTerminal}
-    title="New Terminal (⌘`)"
+    title="New Terminal (⌘T)"
     aria-label="New Terminal"
   >
     <svg

@@ -35,7 +35,7 @@
       title: 'Tabs',
       icon: '📑',
       shortcuts: [
-        { keys: ['⌘', '`'], description: 'New Terminal' },
+        { keys: ['⌘', 'T'], description: 'New Terminal' },
         { keys: ['⌘', 'W'], description: 'Close Tab' },
         { keys: ['⌘', '1-9'], description: 'Switch to Tab' },
       ],
