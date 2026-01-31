@@ -363,7 +363,7 @@
           setTimeout(() => {
             requestAnimationFrame(() => {
               requestAnimationFrame(() => {
-                if (fitAddon && terminal) {
+                if (fitAddon && terminal && terminalContainer) {
                   // Use proposeDimensions to calculate, then resize with capped cols
                   const dimensions = fitAddon.proposeDimensions();
                   if (dimensions) {
@@ -372,8 +372,15 @@
                     terminal.resize(cols, rows);
                   }
 
-                  // If size seems wrong (too small), wait more and try again
-                  if (terminal.cols < 40 || terminal.rows < 10) {
+                  // Calculate expected minimum rows based on container height
+                  // Using fontSize (default 15px) * lineHeight (1.2) = ~18px per row
+                  const containerRect = terminalContainer.getBoundingClientRect();
+                  const estimatedRowHeight = 18; // approximate row height
+                  const expectedMinRows =
+                    Math.floor((containerRect.height - 24) / estimatedRowHeight) * 0.5;
+
+                  // If size seems wrong (too small or rows much less than expected), wait more and try again
+                  if (terminal.cols < 40 || terminal.rows < 10 || terminal.rows < expectedMinRows) {
                     setTimeout(() => {
                       const dims = fitAddon.proposeDimensions();
                       if (dims) {
