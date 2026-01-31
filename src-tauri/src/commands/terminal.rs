@@ -14,7 +14,8 @@ pub struct TerminalOutput {
 pub struct PtyInstance {
     pub master: Box<dyn MasterPty + Send>,
     pub writer: Box<dyn Write + Send>,
-    pub _child: Box<dyn portable_pty::Child + Send + Sync>,
+    pub child: Box<dyn portable_pty::Child + Send + Sync>,
+    pub shell_pid: Option<u32>,
 }
 
 pub struct TerminalManager {

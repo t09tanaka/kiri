@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { appStore } from '@/lib/stores/appStore';
-  import { tabStore } from '@/lib/stores/tabStore';
+  import { tabStore, getAllTerminalIds, type TerminalTab } from '@/lib/stores/tabStore';
   import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
   import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
+  import { terminalService } from '@/lib/services/terminalService';
   import Sidebar from '@/lib/components/layout/Sidebar.svelte';
   import MainContent from '@/lib/components/layout/MainContent.svelte';
   import StatusBar from '@/lib/components/layout/StatusBar.svelte';
@@ -37,18 +38,27 @@
       const activeId = $tabStore.activeTabId;
       if (activeId) {
         const activeTab = $tabStore.tabs.find((t) => t.id === activeId);
-        // Show confirmation dialog for terminal tabs
+        // Check if any terminal in the tab has a foreground process running
         if (activeTab?.type === 'terminal') {
-          const confirmed = await confirmDialogStore.confirm({
-            title: 'Close Terminal',
-            message:
-              'Are you sure you want to close this terminal? Any running processes will be terminated.',
-            confirmLabel: 'Close',
-            cancelLabel: 'Cancel',
-            kind: 'warning',
-          });
-          if (!confirmed) {
-            return;
+          const terminalIds = getAllTerminalIds((activeTab as TerminalTab).rootPane);
+          const aliveChecks = await Promise.all(
+            terminalIds.map((id) => terminalService.isTerminalAlive(id).catch(() => false))
+          );
+          const hasRunningTerminal = aliveChecks.some((alive) => alive);
+
+          // Only show confirmation if there's a running foreground process
+          if (hasRunningTerminal) {
+            const confirmed = await confirmDialogStore.confirm({
+              title: 'Close Terminal',
+              message:
+                'Are you sure you want to close this terminal? Any running processes will be terminated.',
+              confirmLabel: 'Close',
+              cancelLabel: 'Cancel',
+              kind: 'warning',
+            });
+            if (!confirmed) {
+              return;
+            }
           }
         }
         tabStore.closeTab(activeId);

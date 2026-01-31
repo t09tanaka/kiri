@@ -4,11 +4,11 @@ use commands::{
     clear_performance_timings, close_terminal, create_terminal, create_window, create_worktree,
     focus_or_create_window, get_all_git_diffs, get_git_diff, get_git_file_status, get_git_status,
     get_home_directory, get_memory_metrics, get_performance_report, get_window_geometry,
-    get_worktree_context, list_branches, list_worktrees, read_directory, read_file,
-    record_command_timing, register_window, resize_terminal, remove_worktree, reveal_in_finder,
-    search_content, search_files, set_window_geometry, setup_menu, start_watching, stop_all_watching,
-    stop_watching, unregister_window, write_file, write_terminal, TerminalState, WatcherState,
-    WindowRegistry, WindowRegistryState,
+    get_worktree_context, is_terminal_alive, list_branches, list_worktrees, read_directory,
+    read_file, record_command_timing, register_window, resize_terminal, remove_worktree,
+    reveal_in_finder, search_content, search_files, set_window_geometry, setup_menu, start_watching,
+    stop_all_watching, stop_watching, unregister_window, write_file, write_terminal, TerminalState,
+    WatcherState, WindowRegistry, WindowRegistryState,
 };
 use std::sync::{Arc, Mutex};
 
@@ -44,6 +44,7 @@ pub fn run() {
             write_terminal,
             resize_terminal,
             close_terminal,
+            is_terminal_alive,
             read_file,
             write_file,
             get_git_status,

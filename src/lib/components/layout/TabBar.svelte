@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { tabStore, type Tab } from '@/lib/stores/tabStore';
+  import { tabStore, getAllTerminalIds, type Tab, type TerminalTab } from '@/lib/stores/tabStore';
   import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
+  import { terminalService } from '@/lib/services/terminalService';
 
   interface Props {
     tabs: Tab[];
@@ -16,17 +17,30 @@
   async function handleCloseClick(e: MouseEvent, tab: Tab) {
     e.stopPropagation();
 
-    // Show confirmation dialog for terminal tabs
-    const confirmed = await confirmDialogStore.confirm({
-      title: 'Close Terminal',
-      message:
-        'Are you sure you want to close this terminal? Any running processes will be terminated.',
-      confirmLabel: 'Close',
-      cancelLabel: 'Cancel',
-      kind: 'warning',
-    });
-    if (!confirmed) {
-      return;
+    // Check if any terminal in the tab is still running
+    let hasRunningTerminal = false;
+    if (tab.type === 'terminal') {
+      const terminalIds = getAllTerminalIds((tab as TerminalTab).rootPane);
+      // Check each terminal in the tab
+      const aliveChecks = await Promise.all(
+        terminalIds.map((id) => terminalService.isTerminalAlive(id).catch(() => false))
+      );
+      hasRunningTerminal = aliveChecks.some((alive) => alive);
+    }
+
+    // Only show confirmation dialog if there are running terminals
+    if (hasRunningTerminal) {
+      const confirmed = await confirmDialogStore.confirm({
+        title: 'Close Terminal',
+        message:
+          'Are you sure you want to close this terminal? Any running processes will be terminated.',
+        confirmLabel: 'Close',
+        cancelLabel: 'Cancel',
+        kind: 'warning',
+      });
+      if (!confirmed) {
+        return;
+      }
     }
 
     tabStore.closeTab(tab.id);

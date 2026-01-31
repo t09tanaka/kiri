@@ -39,12 +39,16 @@ pub fn create_terminal(
     let id = manager.next_id;
     manager.next_id += 1;
 
+    // Get shell PID for foreground process checking
+    let shell_pid = pty_with_shell.child.process_id();
+
     manager.instances.insert(
         id,
         PtyInstance {
             master: pty_with_shell.pair.master,
             writer,
-            _child: pty_with_shell.child,
+            child: pty_with_shell.child,
+            shell_pid,
         },
     );
 
@@ -154,5 +158,45 @@ pub fn close_terminal(state: tauri::State<'_, TerminalState>, id: u32) -> Result
         Ok(())
     } else {
         Err(format!("Terminal {} not found", id))
+    }
+}
+
+/// Check if a terminal has a foreground process running (command in execution)
+/// Returns true if there's a child process of the shell (command running),
+/// false if the shell is idle (waiting at prompt)
+#[tauri::command]
+pub fn is_terminal_alive(state: tauri::State<'_, TerminalState>, id: u32) -> Result<bool, String> {
+    let mut manager = state.lock().map_err(|e| e.to_string())?;
+
+    if let Some(instance) = manager.instances.get_mut(&id) {
+        // First check if shell itself has exited
+        match instance.child.try_wait() {
+            Ok(Some(_)) => return Ok(false), // Shell has exited, no foreground process
+            Ok(None) => {}                   // Shell is running, continue to check children
+            Err(e) => return Err(format!("Failed to check terminal status: {}", e)),
+        }
+
+        // Check if shell has any child processes (foreground process)
+        if let Some(shell_pid) = instance.shell_pid {
+            use sysinfo::System;
+
+            let mut sys = System::new();
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+
+            // Look for any process whose parent is the shell
+            let has_child = sys.processes().values().any(|proc| {
+                proc.parent()
+                    .map(|parent_pid| parent_pid.as_u32() == shell_pid)
+                    .unwrap_or(false)
+            });
+
+            Ok(has_child)
+        } else {
+            // No PID available, assume no foreground process
+            Ok(false)
+        }
+    } else {
+        // Terminal not found
+        Ok(false)
     }
 }

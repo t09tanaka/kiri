@@ -31,4 +31,10 @@ export const terminalService = {
    * Close terminal
    */
   closeTerminal: (id: number): Promise<void> => invoke('close_terminal', { id }),
+
+  /**
+   * Check if terminal's shell process is still running
+   * Returns true if the process is alive, false if it has exited
+   */
+  isTerminalAlive: (id: number): Promise<boolean> => invoke('is_terminal_alive', { id }),
 };
