@@ -5,6 +5,7 @@
   import { diffViewStore } from '@/lib/stores/diffViewStore';
   import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
   import { isWorktree, worktreeCount } from '@/lib/stores/worktreeStore';
+  import { appStore } from '@/lib/stores/appStore';
 
   interface Props {
     onShowShortcuts?: () => void;
@@ -48,6 +49,43 @@
 
 <footer class="status-bar">
   <div class="status-left">
+    <button
+      class="status-item sidebar-toggle"
+      onclick={() => appStore.toggleSidebar()}
+      title={$appStore.showSidebar ? 'Hide Explorer (⌘B)' : 'Show Explorer (⌘B)'}
+    >
+      {#if $appStore.showSidebar}
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+          <line x1="9" y1="3" x2="9" y2="21"></line>
+          <polyline points="14 9 11 12 14 15"></polyline>
+        </svg>
+      {:else}
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+          <line x1="9" y1="3" x2="9" y2="21"></line>
+          <polyline points="13 9 16 12 13 15"></polyline>
+        </svg>
+      {/if}
+    </button>
     <span class="status-item mode">
       {#if info.mode === 'Terminal'}
         <svg
@@ -305,6 +343,26 @@
     align-items: center;
     gap: 6px;
     transition: all var(--transition-fast);
+  }
+
+  .sidebar-toggle {
+    background: transparent;
+    border: none;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: all var(--transition-fast);
+  }
+
+  .sidebar-toggle:hover {
+    background: rgba(125, 211, 252, 0.1);
+    color: var(--accent-color);
+  }
+
+  .sidebar-toggle:active {
+    transform: scale(0.95);
+    transition: transform 100ms ease;
   }
 
   .status-item svg {
