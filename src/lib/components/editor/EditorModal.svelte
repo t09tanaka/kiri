@@ -2,6 +2,7 @@
   import Editor from './Editor.svelte';
   import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { dialogService } from '@/lib/services/dialogService';
+  import { fileService } from '@/lib/services/fileService';
   import { onMount, onDestroy } from 'svelte';
 
   interface Props {
@@ -12,6 +13,7 @@
   let { filePath, onClose }: Props = $props();
 
   let mounted = $state(false);
+  let copied = $state(false);
 
   function getFileName(path: string): string {
     return path.split('/').pop() || path;
@@ -34,6 +36,19 @@
   function handleEditorSave() {
     // Called when editor successfully saves
     editorModalStore.setModified(false);
+  }
+
+  async function handleCopyAll() {
+    try {
+      const content = await fileService.readFile(filePath);
+      await navigator.clipboard.writeText(content);
+      copied = true;
+      setTimeout(() => {
+        copied = false;
+      }, 2000);
+    } catch (e) {
+      console.error('Failed to copy file content:', e);
+    }
   }
 
   async function handleClose() {
@@ -133,6 +148,36 @@
           <span class="file-path">{filePath}</span>
         </div>
         <div class="header-actions">
+          <button class="action-btn copy-btn" class:copied onclick={handleCopyAll} title="Copy All">
+            {#if copied}
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            {:else}
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            {/if}
+          </button>
           <button
             class="action-btn save-btn"
             onclick={handleSave}
@@ -355,6 +400,16 @@
 
   .action-btn.save-btn:not(:disabled):hover {
     background: rgba(74, 222, 128, 0.1);
+    color: #4ade80;
+  }
+
+  .action-btn.copy-btn:hover {
+    background: rgba(74, 222, 128, 0.1);
+    color: #4ade80;
+  }
+
+  .action-btn.copy-btn.copied {
+    background: rgba(74, 222, 128, 0.15);
     color: #4ade80;
   }
 

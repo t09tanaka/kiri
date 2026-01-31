@@ -26,6 +26,7 @@
   let error = $state<string | null>(null);
   let mounted = $state(false);
   let fileContent = $state<string | null>(null);
+  let copied = $state(false);
 
   // Compartment for dynamic theme updates (font size)
   const themeCompartment = new Compartment();
@@ -308,6 +309,19 @@
     onClose();
   }
 
+  async function handleCopyAll() {
+    if (fileContent === null) return;
+    try {
+      await navigator.clipboard.writeText(fileContent);
+      copied = true;
+      setTimeout(() => {
+        copied = false;
+      }, 2000);
+    } catch (e) {
+      console.error('Failed to copy file content:', e);
+    }
+  }
+
   function getFileName(path: string): string {
     return path.split('/').pop() || path;
   }
@@ -375,6 +389,43 @@
           <span class="file-path">{filePath}</span>
         </div>
         <div class="header-actions">
+          <button
+            class="action-btn copy-btn"
+            class:copied
+            onclick={handleCopyAll}
+            disabled={fileContent === null}
+            title="Copy All"
+            aria-label="Copy All"
+          >
+            {#if copied}
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            {:else}
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            {/if}
+          </button>
           <button
             class="action-btn open-btn"
             onclick={handleOpenInEditor}
@@ -595,9 +646,24 @@
     transition: all var(--transition-fast);
   }
 
-  .action-btn:hover {
+  .action-btn:hover:not(:disabled) {
     background: rgba(125, 211, 252, 0.1);
     color: var(--accent-color);
+  }
+
+  .action-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.3;
+  }
+
+  .action-btn.copy-btn:hover:not(:disabled) {
+    background: rgba(74, 222, 128, 0.1);
+    color: #4ade80;
+  }
+
+  .action-btn.copy-btn.copied {
+    background: rgba(74, 222, 128, 0.15);
+    color: #4ade80;
   }
 
   .action-btn.close-btn:hover {
