@@ -306,23 +306,33 @@
 
           <div class="form-group">
             <div class="input-row">
-              <!-- svelte-ignore a11y_autofocus -->
-              <input
-                id="wt-name"
-                type="text"
-                class="form-input"
-                bind:value={createName}
-                placeholder="Branch name (e.g. fix-sidebar)"
-                spellcheck="false"
-                autocomplete="off"
-                autocorrect="off"
-                autocapitalize="off"
-                autofocus
-                oninput={() => handleNameInput()}
-                onkeydown={(e) => {
-                  if (e.key === 'Enter' && createName.trim()) handleCreate();
-                }}
-              />
+              <div class="input-wrapper">
+                <!-- svelte-ignore a11y_autofocus -->
+                <input
+                  id="wt-name"
+                  type="text"
+                  class="form-input"
+                  bind:value={createName}
+                  placeholder="Branch name (e.g. fix-sidebar)"
+                  spellcheck="false"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="off"
+                  autofocus
+                  oninput={() => handleNameInput()}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter' && createName.trim()) handleCreate();
+                  }}
+                />
+                {#if createName.trim()}
+                  <span
+                    class="input-indicator"
+                    title={isExistingBranch ? 'Existing branch' : 'New branch'}
+                  >
+                    {isExistingBranch ? 'E' : 'N'}
+                  </span>
+                {/if}
+              </div>
               <button
                 type="button"
                 class="branch-select-btn"
@@ -345,19 +355,13 @@
                 </svg>
               </button>
             </div>
-            {#if isExistingBranch}
-              <span class="input-hint">Using existing branch</span>
-            {:else if createName.trim()}
-              <span class="input-hint">Will create new branch</span>
+            {#if createName.trim()}
+              <div class="path-preview">
+                <span class="preview-label">Path:</span>
+                <span class="preview-path">{pathPreview()}</span>
+              </div>
             {/if}
           </div>
-
-          {#if createName.trim()}
-            <div class="path-preview">
-              <span class="preview-label">Path:</span>
-              <span class="preview-path">{pathPreview()}</span>
-            </div>
-          {/if}
 
           {#if branchValidationError()}
             <div class="form-error form-warning">{branchValidationError()}</div>
@@ -867,8 +871,27 @@
     gap: 8px;
   }
 
-  .input-row .form-input {
+  .input-wrapper {
+    position: relative;
     flex: 1;
+  }
+
+  .input-wrapper .form-input {
+    width: 100%;
+    padding-right: var(--space-6);
+  }
+
+  .input-indicator {
+    position: absolute;
+    right: var(--space-3);
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    opacity: 0.5;
+    pointer-events: none;
+    font-family: var(--font-mono);
   }
 
   .branch-select-btn {
@@ -894,17 +917,9 @@
     cursor: not-allowed;
   }
 
-  .input-hint {
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-
   .path-preview {
     display: flex;
     gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    background: var(--bg-secondary);
-    border-radius: var(--radius-sm);
     font-size: 11px;
   }
 
