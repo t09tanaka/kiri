@@ -407,7 +407,17 @@
     const projectParam = params.get('project');
     if (projectParam) {
       const decodedPath = decodeURIComponent(projectParam);
-      await projectStore.openProject(decodedPath);
+
+      // Check if this is a worktree - worktrees should not be added to project history
+      const worktreeContext = await worktreeService.getContext(decodedPath);
+      if (worktreeContext?.is_worktree) {
+        // Worktree: just set current path without updating history
+        projectStore.setCurrentPath(decodedPath);
+      } else {
+        // Normal project: add to history
+        await projectStore.openProject(decodedPath);
+      }
+
       const { tabs } = tabStore.getStateForPersistence();
       if (tabs.length === 0) {
         tabStore.addTerminalTab();
