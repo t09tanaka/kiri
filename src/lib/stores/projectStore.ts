@@ -1,6 +1,7 @@
 import { writable, derived } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { Store } from '@tauri-apps/plugin-store';
+import { windowService } from '@/lib/services/windowService';
 
 const MAX_RECENT_PROJECTS = 10;
 const STORE_PATH = 'kiri-settings.json';
@@ -119,13 +120,27 @@ function createProjectStore() {
           recentProjects: updatedProjects,
         };
       });
+
+      // Resize window to main editor size when opening a project
+      try {
+        await windowService.setGeometry({ width: 1200, height: 800 });
+      } catch (error) {
+        console.error('Failed to resize window:', error);
+      }
     },
 
-    closeProject() {
+    async closeProject() {
       update((state) => ({
         ...state,
         currentPath: null,
       }));
+
+      // Resize window to start screen size and center when closing a project
+      try {
+        await windowService.setSizeAndCenter(800, 600);
+      } catch (error) {
+        console.error('Failed to resize window:', error);
+      }
     },
 
     /**

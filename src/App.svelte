@@ -19,6 +19,7 @@
   import { worktreeStore, isWorktree } from '@/lib/stores/worktreeStore';
   import { worktreeService } from '@/lib/services/worktreeService';
   import { eventService } from '@/lib/services/eventService';
+  import { windowService } from '@/lib/services/windowService';
   import { PeekEditor } from '@/lib/components/peek';
   import { appStore } from '@/lib/stores/appStore';
   import { gitStore } from '@/lib/stores/gitStore';
@@ -432,10 +433,17 @@
       }
     });
 
-    // Load worktree info when project is open
+    // Load worktree info when project is open, or resize to start screen size
     const currentPath = projectStore.getCurrentPath();
     if (currentPath) {
       worktreeStore.refresh(currentPath);
+    } else if (isMainWindow) {
+      // No project open, resize to start screen size and center
+      try {
+        await windowService.setSizeAndCenter(800, 600);
+      } catch (error) {
+        console.error('Failed to resize to start screen size:', error);
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown);

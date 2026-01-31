@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
 
 /**
  * Window management service
@@ -22,4 +23,46 @@ export const windowService = {
       height: options?.height ?? null,
       projectPath: options?.projectPath ?? null,
     }),
+
+  /**
+   * Set the geometry (position and size) of the current window
+   */
+  setGeometry: async (options: {
+    x?: number;
+    y?: number;
+    width: number;
+    height: number;
+  }): Promise<void> => {
+    const window = getCurrentWindow();
+    const label = window.label;
+
+    // Get current position if not provided
+    let x = options.x;
+    let y = options.y;
+    if (x === undefined || y === undefined) {
+      const [currentX, currentY] = await invoke<[number, number, number, number]>(
+        'get_window_geometry',
+        { label }
+      );
+      x = x ?? currentX;
+      y = y ?? currentY;
+    }
+
+    await invoke('set_window_geometry', {
+      label,
+      x,
+      y,
+      width: options.width,
+      height: options.height,
+    });
+  },
+
+  /**
+   * Set the size and center the window on screen
+   */
+  setSizeAndCenter: async (width: number, height: number): Promise<void> => {
+    const window = getCurrentWindow();
+    await window.setSize(new LogicalSize(width, height));
+    await window.center();
+  },
 };

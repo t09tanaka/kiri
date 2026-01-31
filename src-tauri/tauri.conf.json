@@ -14,12 +14,13 @@
     "windows": [
       {
         "title": "kiri",
-        "width": 1200,
-        "height": 800,
-        "minWidth": 600,
+        "width": 800,
+        "height": 600,
+        "minWidth": 480,
         "minHeight": 400,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "center": true
       }
     ],
     "security": {
