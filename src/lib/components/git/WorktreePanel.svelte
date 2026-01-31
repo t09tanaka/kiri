@@ -4,6 +4,7 @@
   import { worktreeStore } from '@/lib/stores/worktreeStore';
   import { worktreeService } from '@/lib/services/worktreeService';
   import { windowService } from '@/lib/services/windowService';
+  import { eventService } from '@/lib/services/eventService';
   import type { WorktreeInfo, BranchInfo, WorktreeContext } from '@/lib/services/worktreeService';
   import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
 
@@ -27,6 +28,9 @@
 
   // Worktree context for current window
   let currentContext = $state<WorktreeContext | null>(null);
+
+  // Event listener cleanup
+  let unlistenWorktreeRemoved: (() => void) | null = null;
 
   const worktrees = $derived($worktreeStore.worktrees);
 
@@ -97,6 +101,16 @@
     mounted = true;
     document.addEventListener('keydown', handleKeyDown, true);
     document.addEventListener('click', handleDocumentClick, true);
+
+    // Listen for worktree-removed event to refresh the list
+    unlistenWorktreeRemoved = await eventService.listen<{ path: string }>(
+      'worktree-removed',
+      () => {
+        loadWorktrees().catch(console.error);
+        loadBranches().catch(console.error);
+      }
+    );
+
     await loadWorktrees();
     await loadBranches();
     await loadContext();
@@ -113,6 +127,9 @@
   onDestroy(() => {
     document.removeEventListener('keydown', handleKeyDown, true);
     document.removeEventListener('click', handleDocumentClick, true);
+    if (unlistenWorktreeRemoved) {
+      unlistenWorktreeRemoved();
+    }
   });
 
   function handleKeyDown(e: KeyboardEvent) {
