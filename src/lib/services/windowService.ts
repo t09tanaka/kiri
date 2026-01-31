@@ -25,6 +25,24 @@ export const windowService = {
     }),
 
   /**
+   * Focus an existing window for the project path, or create a new one if not found.
+   * Returns true if an existing window was focused, false if a new window was created.
+   */
+  focusOrCreateWindow: (projectPath: string): Promise<boolean> =>
+    invoke('focus_or_create_window', { projectPath }),
+
+  /**
+   * Register a window with a project path (for windows not created via createWindow)
+   */
+  registerWindow: (label: string, projectPath: string): Promise<void> =>
+    invoke('register_window', { label, projectPath }),
+
+  /**
+   * Unregister the current window from the registry (call on window close)
+   */
+  unregisterWindow: (label: string): Promise<void> => invoke('unregister_window', { label }),
+
+  /**
    * Set the geometry (position and size) of the current window
    */
   setGeometry: async (options: {

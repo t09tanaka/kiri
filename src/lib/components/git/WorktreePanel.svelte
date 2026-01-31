@@ -219,7 +219,8 @@
 
   async function openWorktreeWindow(wt: WorktreeInfo) {
     try {
-      await windowService.createWindow({ projectPath: wt.path });
+      // Focus existing window or create a new one
+      await windowService.focusOrCreateWindow(wt.path);
     } catch (e) {
       console.error('Failed to open worktree window:', e);
     }

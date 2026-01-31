@@ -419,6 +419,15 @@
         await projectStore.openProject(decodedPath);
       }
 
+      // Register this window with the project path (for focus_or_create_window)
+      // Note: Windows created via create_window are already registered in the backend,
+      // but we register again here to ensure the mapping exists
+      try {
+        await windowService.registerWindow(windowLabel, decodedPath);
+      } catch (e) {
+        console.error('Failed to register window:', e);
+      }
+
       const { tabs } = tabStore.getStateForPersistence();
       if (tabs.length === 0) {
         tabStore.addTerminalTab();
@@ -529,6 +538,14 @@
       } catch (error) {
         console.error('Failed to handle window close:', error);
       }
+
+      // Unregister window from the registry
+      try {
+        await windowService.unregisterWindow(windowLabel);
+      } catch (error) {
+        console.error('Failed to unregister window:', error);
+      }
+
       await currentWindow.destroy();
     });
 

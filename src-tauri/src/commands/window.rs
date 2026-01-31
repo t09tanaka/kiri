@@ -1,11 +1,49 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
 
 static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
 
-#[tauri::command]
-pub fn create_window(
-    app: AppHandle,
+/// Registry to track which windows are associated with which project paths
+#[derive(Default)]
+pub struct WindowRegistry {
+    /// Maps project paths to window labels
+    path_to_label: HashMap<String, String>,
+    /// Maps window labels to project paths
+    label_to_path: HashMap<String, String>,
+}
+
+impl WindowRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a window with a project path
+    pub fn register(&mut self, label: &str, path: &str) {
+        self.path_to_label.insert(path.to_string(), label.to_string());
+        self.label_to_path.insert(label.to_string(), path.to_string());
+    }
+
+    /// Unregister a window by its label
+    pub fn unregister_by_label(&mut self, label: &str) {
+        if let Some(path) = self.label_to_path.remove(label) {
+            self.path_to_label.remove(&path);
+        }
+    }
+
+    /// Get the window label for a project path
+    pub fn get_label_for_path(&self, path: &str) -> Option<&String> {
+        self.path_to_label.get(path)
+    }
+}
+
+pub type WindowRegistryState = Arc<Mutex<WindowRegistry>>;
+
+/// Internal implementation of window creation (used by both command and menu)
+pub fn create_window_impl(
+    app: &AppHandle,
+    registry: Option<&WindowRegistryState>,
     x: Option<i32>,
     y: Option<i32>,
     width: Option<f64>,
@@ -36,7 +74,7 @@ pub fn create_window(
         None => WebviewUrl::default(),
     };
 
-    let mut builder = WebviewWindowBuilder::new(&app, &label, url)
+    let mut builder = WebviewWindowBuilder::new(app, &label, url)
         .title("kiri")
         .inner_size(win_width, win_height)
         .min_inner_size(600.0, 400.0)
@@ -50,6 +88,83 @@ pub fn create_window(
 
     builder.build().map_err(|e| e.to_string())?;
 
+    // Register the window with its project path
+    if let (Some(path), Some(registry)) = (project_path, registry) {
+        if let Ok(mut reg) = registry.lock() {
+            reg.register(&label, &path);
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn create_window(
+    app: AppHandle,
+    registry: tauri::State<WindowRegistryState>,
+    x: Option<i32>,
+    y: Option<i32>,
+    width: Option<f64>,
+    height: Option<f64>,
+    project_path: Option<String>,
+) -> Result<(), String> {
+    create_window_impl(&app, Some(&registry), x, y, width, height, project_path)
+}
+
+/// Focus an existing window for the given project path, or create a new one if not found
+#[tauri::command]
+pub fn focus_or_create_window(
+    app: AppHandle,
+    registry: tauri::State<WindowRegistryState>,
+    project_path: String,
+) -> Result<bool, String> {
+    // Check if a window already exists for this path
+    let existing_label = {
+        let reg = registry.lock().map_err(|e| format!("Lock error: {}", e))?;
+        reg.get_label_for_path(&project_path).cloned()
+    };
+
+    if let Some(label) = existing_label {
+        // Check if the window still exists
+        if let Some(window) = app.get_webview_window(&label) {
+            // Window exists, focus it
+            window.set_focus().map_err(|e| format!("Failed to focus window: {}", e))?;
+            return Ok(true); // Indicates existing window was focused
+        } else {
+            // Window no longer exists, clean up registry
+            if let Ok(mut reg) = registry.lock() {
+                reg.unregister_by_label(&label);
+            }
+        }
+    }
+
+    // No existing window, create a new one
+    create_window(app, registry, None, None, None, None, Some(project_path))?;
+    Ok(false) // Indicates new window was created
+}
+
+/// Register a window with a project path (for windows not created via create_window)
+#[tauri::command]
+pub fn register_window(
+    registry: tauri::State<WindowRegistryState>,
+    label: String,
+    project_path: String,
+) -> Result<(), String> {
+    if let Ok(mut reg) = registry.lock() {
+        reg.register(&label, &project_path);
+    }
+    Ok(())
+}
+
+/// Unregister a window from the registry (called when window is closed)
+#[tauri::command]
+pub fn unregister_window(
+    registry: tauri::State<WindowRegistryState>,
+    label: String,
+) -> Result<(), String> {
+    if let Ok(mut reg) = registry.lock() {
+        reg.unregister_by_label(&label);
+    }
     Ok(())
 }
 

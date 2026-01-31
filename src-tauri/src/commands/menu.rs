@@ -127,7 +127,7 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     app.on_menu_event(move |app_handle, event| {
         match event.id().as_ref() {
             "new_window" => {
-                if let Err(e) = super::create_window(app_handle.clone(), None, None, None, None, None) {
+                if let Err(e) = super::create_window_impl(&app_handle, None, None, None, None, None, None) {
                     eprintln!("Failed to create window: {}", e);
                 }
             }
