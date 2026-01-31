@@ -2,17 +2,91 @@
 
 > Light as mist, with only the features you need.
 
-A lightweight file manager + terminal application.
+**A terminal-first development environment built for AI Coding Agents.**
 
-## Features
+Designed for developers who work with Claude Code, Aider, and other AI coding assistants. Seamlessly manage multiple projects with Git Worktree integration and multi-window support.
 
-- **Lightweight**: Tauri-based, fast startup, low memory usage
-- **Simple**: Focused on 3 core features - file tree, terminal, editor
-- **Modern**: Built with Svelte 5 + TypeScript + Rust
+## Why kiri?
+
+Modern AI coding agents like Claude Code run in the terminal, generating rapid output with spinners and progress bars. Traditional terminal emulators struggle with this, causing flickering and rendering glitches. kiri solves these problems while providing essential features for agent-assisted development:
+
+- **Flicker-free terminal** — Optimized for Ink-based CLI tools
+- **Multi-window workflow** — Work on multiple branches simultaneously
+- **Git Worktree integration** — One-click branch isolation
+- **Clickable file paths** — Jump to files mentioned in agent output
+- **Peek preview** — Quick file inspection without leaving terminal
 
 ## Screenshots
 
 <!-- TODO: Add screenshots -->
+
+## Features
+
+### 🤖 AI Coding Agent Optimization
+
+Built from the ground up for AI coding assistants:
+
+| Feature | Description |
+|---------|-------------|
+| **Synchronized Output Mode** | Buffers rapid updates (DEC Private Mode 2026) to eliminate flickering |
+| **Smart Width Limiting** | Caps terminal at 120 columns to prevent spinner glitches |
+| **Resize Stability** | Drops partial frames during resize, waits for agent redraw |
+| **PTY Row Adjustment** | Prevents Ink full-height scrolling issues ([#450](https://github.com/vadimdemedes/ink/issues/450)) |
+| **File Path Links** | `Cmd+Click` on `file.ts:42` in output → opens editor at line 42 |
+| **Peek Editor** | Quick preview popup without disrupting your terminal flow |
+
+### 🪟 Multi-Window & Git Worktree
+
+Parallel development made simple:
+
+| Feature | Description |
+|---------|-------------|
+| **Multiple Windows** | `Cmd+Shift+N` opens a new window |
+| **Git Worktree Panel** | `Cmd+Shift+W` to create/manage worktrees |
+| **Auto Window Creation** | New worktree → new window automatically |
+| **Branch Isolation** | Work on features without stashing or switching |
+| **Recent Projects** | Quick access to your project history |
+
+### 💻 Terminal
+
+| Feature | Description |
+|---------|-------------|
+| **Multiple Tabs** | `` Cmd+` `` for new terminal, `Cmd+1-9` to switch |
+| **Pane Splitting** | Split horizontally or vertically |
+| **Zoom Control** | `Cmd+`/`-` to adjust font size |
+| **Independent Sessions** | Each pane runs its own PTY |
+
+### 📝 Editor
+
+| Feature | Description |
+|---------|-------------|
+| **Syntax Highlighting** | 20+ languages (TypeScript, Rust, Svelte, etc.) |
+| **Git Diff Gutter** | See changes inline as you edit |
+| **Diff View Modal** | Full diff comparison view |
+| **Copy Button** | One-click code copying |
+| **Quick Open** | `Cmd+P` for fuzzy file search |
+
+### 📁 File Management
+
+| Feature | Description |
+|---------|-------------|
+| **File Tree** | Collapsible directory navigation |
+| **Context Menu** | Right-click for file operations |
+| **Git Status** | Visual indicators for modified/staged files |
+| **Lazy Loading** | Fast navigation in large repositories |
+
+### ⌨️ Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `Cmd+P` | Quick Open |
+| `Cmd+B` | Toggle Sidebar |
+| `Cmd+Shift+N` | New Window |
+| `Cmd+Shift+W` | Git Worktrees |
+| `` Cmd+` `` | New Terminal |
+| `Cmd+W` | Close Tab |
+| `Cmd+S` | Save File |
+| `?` | Show All Shortcuts |
 
 ## Installation
 
@@ -20,9 +94,13 @@ A lightweight file manager + terminal application.
 
 - Node.js 20.x or higher
 - Rust (latest stable)
-- macOS (as of v0.0.1)
+- macOS (Windows/Linux support planned)
 
-### Build
+### Download
+
+Download the latest release from [Releases](https://github.com/your-username/kiri/releases).
+
+### Build from Source
 
 ```bash
 # Clone the repository
@@ -39,88 +117,38 @@ npm run tauri dev
 npm run tauri build
 ```
 
-## Development
-
-### Commands
-
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | Start Vite dev server |
-| `npm run tauri dev` | Start as Tauri app (development) |
-| `npm run tauri build` | Production build |
-| `npm run format` | Format code (Prettier) |
-| `npm run lint` | Run linter (ESLint) |
-| `npm run lint:fix` | Auto-fix lint issues |
-| `npm run check` | TypeScript type check |
-
-### Project Structure
-
-```
-kiri/
-├── src/                    # Frontend (Svelte 5)
-│   ├── lib/
-│   │   ├── components/     # UI components
-│   │   ├── stores/         # State management
-│   │   └── utils/          # Utilities
-│   ├── App.svelte
-│   └── main.ts
-├── src-tauri/              # Backend (Rust)
-│   ├── src/
-│   │   ├── main.rs
-│   │   └── commands/       # Tauri commands
-│   └── Cargo.toml
-└── docs/                   # Documentation
-```
-
 ## Tech Stack
 
-| Layer | Technology |
-|-------|------------|
-| Framework | [Tauri 2.x](https://tauri.app/) |
-| Frontend | [Svelte 5](https://svelte.dev/) + TypeScript |
-| Backend | Rust |
-| Bundler | [Vite](https://vitejs.dev/) |
-| Editor | [CodeMirror 6](https://codemirror.net/) |
-| Terminal | [xterm.js](https://xtermjs.org/) |
+| Layer | Technology | Why |
+|-------|------------|-----|
+| Framework | [Tauri 2.x](https://tauri.app/) | 10x smaller than Electron |
+| Frontend | [Svelte 5](https://svelte.dev/) + TypeScript | Near-zero runtime overhead |
+| Backend | Rust | Native speed for file/git operations |
+| Terminal | [xterm.js](https://xtermjs.org/) | Lightweight terminal emulator |
+| Editor | [CodeMirror 6](https://codemirror.net/) | Modular, lazy-loadable |
+| Git | [git2](https://github.com/rust-lang/git2-rs) | Native Rust bindings |
 
-## Terminal: Ink-based CLI Compatibility
+## Performance
 
-The terminal is optimized for [Ink](https://github.com/vadimdemedes/ink)-based CLI tools like Claude Code, Aider, and other AI coding agents.
-
-### Implemented Countermeasures
-
-| Issue | Solution |
-|-------|----------|
-| Partial frame rendering causes flickering | Synchronized Output Mode (DEC Private Mode 2026) buffering |
-| Spinner/progress bar breaks at 140+ columns | Terminal width capped at 120 columns |
-| Full-height rendering causes unwanted scrolling | PTY rows reduced by 1 (Ink issue [#450](https://github.com/vadimdemedes/ink/issues/450)) |
-| Resize during output causes artifacts | Resize buffering with delayed flush |
-| Incorrect initial size breaks layout | Layout completion waiting before PTY creation |
-
-### Why These Are Needed
-
-xterm.js doesn't natively support Synchronized Output Mode (DEC 2026), which Ink uses to batch screen updates. Without manual buffering, rapid output from AI agents appears as chaotic flickering instead of smooth animations.
-
-## Roadmap
-
-### v0.0.1 (Current)
-- [x] Basic window structure
-- [x] Sidebar + file tree
-- [x] Terminal (multiple tabs, pane splitting)
-- [x] Editor (multiple tabs, syntax highlighting)
-- [x] Mode switching (Terminal ↔ Editor)
-- [x] Multiple tabs (terminal/editor)
-- [x] Git diff display (gutter + DiffView window)
-- [x] Search functionality (Quick Open + content search)
-- [x] Multiple windows
-- [ ] File operations (new/delete/rename)
-- [ ] Multiple cursors (Sublime Text style)
-- [ ] Cross-file search and replace
-- [ ] Minimap
+| Metric | Target |
+|--------|--------|
+| App Size | < 10 MB |
+| Startup Time | < 1 second |
+| Memory (idle) | < 50 MB |
 
 ## Contributing
 
-Issues and Pull Requests are welcome.
+Issues and Pull Requests are welcome!
+
+### Development Commands
+
+| Command | Description |
+|---------|-------------|
+| `npm run tauri dev` | Start development |
+| `npm run tauri build` | Production build |
+| `npm run test` | Run tests |
+| `npm run lint` | Lint code |
+| `npm run format` | Format code |
 
 ### Before Contributing
 
@@ -130,17 +158,13 @@ Issues and Pull Requests are welcome.
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Create a Pull Request
 
-### Coding Standards
-
-- Formatting: Prettier (`npm run format`)
-- Linting: ESLint (`npm run lint`)
-- Run `npm run check` before committing
-
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details
 
 ## Acknowledgments
 
-- [Tauri](https://tauri.app/) - Lightweight desktop app framework
-- [Svelte](https://svelte.dev/) - Compiler-based UI framework
+- [Tauri](https://tauri.app/) — Lightweight desktop app framework
+- [Svelte](https://svelte.dev/) — Compiler-based UI framework
+- [xterm.js](https://xtermjs.org/) — Terminal emulator for the web
+- [CodeMirror](https://codemirror.net/) — Extensible code editor
