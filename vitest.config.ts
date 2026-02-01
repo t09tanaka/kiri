@@ -41,6 +41,7 @@ export default defineConfig({
               'src/lib/stores/searchStore.ts',
               'src/lib/services/persistenceService.ts',
               'src/lib/services/suggestService.ts',
+              'src/lib/services/notificationService.ts',
             ],
           },
         },

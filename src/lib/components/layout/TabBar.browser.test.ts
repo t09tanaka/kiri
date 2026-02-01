@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/svelte';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/svelte';
 import TabBar from './TabBar.svelte';
-import type { Tab } from '@/lib/stores/tabStore';
+import type { Tab, TerminalPane } from '@/lib/stores/tabStore';
 import { tabStore } from '@/lib/stores/tabStore';
-import { dialogService } from '@/lib/services/dialogService';
+import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
+import { terminalService } from '@/lib/services/terminalService';
 
 // Mock tabStore
 vi.mock('@/lib/stores/tabStore', () => ({
@@ -12,12 +13,20 @@ vi.mock('@/lib/stores/tabStore', () => ({
     closeTab: vi.fn(),
     addTerminalTab: vi.fn(),
   },
+  getAllTerminalIds: vi.fn().mockReturnValue([1]),
 }));
 
-// Mock dialogService
-vi.mock('@/lib/services/dialogService', () => ({
-  dialogService: {
+// Mock confirmDialogStore
+vi.mock('@/lib/stores/confirmDialogStore', () => ({
+  confirmDialogStore: {
     confirm: vi.fn(),
+  },
+}));
+
+// Mock terminalService
+vi.mock('@/lib/services/terminalService', () => ({
+  terminalService: {
+    isTerminalAlive: vi.fn(),
   },
 }));
 
@@ -27,6 +36,16 @@ vi.mock('@/lib/utils/fileIcons', () => ({
 }));
 
 describe('TabBar Component (Browser)', () => {
+  // Create a valid rootPane structure for terminal tabs
+  const mockRootPane: TerminalPane = {
+    id: 'pane-1',
+    type: 'terminal',
+    terminalId: 1,
+    children: [],
+    sizes: [],
+    direction: 'horizontal',
+  };
+
   const mockTabs: Tab[] = [
     {
       id: 'tab-1',
@@ -48,6 +67,7 @@ describe('TabBar Component (Browser)', () => {
       filePath: '',
       title: 'Terminal 1',
       modified: false,
+      rootPane: mockRootPane,
     },
   ];
 
@@ -93,15 +113,6 @@ describe('TabBar Component (Browser)', () => {
     expect(tabs[2]).not.toHaveClass('active');
   });
 
-  it('shows modified indicator for modified files', () => {
-    const { container } = render(TabBar, {
-      props: { tabs: mockTabs, activeTabId: 'tab-1' },
-    });
-
-    const modifiedIndicators = container.querySelectorAll('.modified-indicator');
-    expect(modifiedIndicators).toHaveLength(1);
-  });
-
   it('has close button for each tab', () => {
     render(TabBar, { props: { tabs: mockTabs, activeTabId: 'tab-1' } });
 
@@ -112,17 +123,17 @@ describe('TabBar Component (Browser)', () => {
   it('has add terminal button', () => {
     render(TabBar, { props: { tabs: mockTabs, activeTabId: 'tab-1' } });
 
-    expect(screen.getByTitle('New Terminal (⌘`)')).toBeInTheDocument();
+    expect(screen.getByTitle('New Terminal (⌘T)')).toBeInTheDocument();
   });
 
-  it('shows file path in title attribute for editor tabs', () => {
+  it('shows tab title in title attribute for editor tabs', () => {
     render(TabBar, { props: { tabs: mockTabs, activeTabId: 'tab-1' } });
 
     const editorTab = screen.getByRole('tab', { name: /index\.ts/i });
-    expect(editorTab).toHaveAttribute('title', '/project/src/index.ts');
+    expect(editorTab).toHaveAttribute('title', 'index.ts');
   });
 
-  it('shows terminal title in title attribute for terminal tabs', () => {
+  it('shows tab title in title attribute for terminal tabs', () => {
     render(TabBar, { props: { tabs: mockTabs, activeTabId: 'tab-1' } });
 
     const terminalTab = screen.getByRole('tab', { name: /terminal 1/i });
@@ -168,8 +179,10 @@ describe('TabBar Component (Browser)', () => {
   });
 
   describe('Terminal close confirmation', () => {
-    it('shows confirmation dialog when closing terminal tab', async () => {
-      vi.mocked(dialogService.confirm).mockResolvedValue(true);
+    it('shows confirmation dialog when closing terminal tab with running process', async () => {
+      // Terminal is alive (has running process)
+      vi.mocked(terminalService.isTerminalAlive).mockResolvedValue(true);
+      vi.mocked(confirmDialogStore.confirm).mockResolvedValue(true);
 
       const { container } = render(TabBar, {
         props: { tabs: mockTabs, activeTabId: 'tab-3' },
@@ -181,14 +194,21 @@ describe('TabBar Component (Browser)', () => {
 
       await fireEvent.click(terminalCloseBtn);
 
-      expect(dialogService.confirm).toHaveBeenCalledWith(
-        'Are you sure you want to close this terminal? Any running processes will be terminated.',
-        { title: 'Close Terminal' }
-      );
+      await waitFor(() => {
+        expect(confirmDialogStore.confirm).toHaveBeenCalledWith({
+          title: 'Close Terminal',
+          message:
+            'Are you sure you want to close this terminal? Any running processes will be terminated.',
+          confirmLabel: 'Close',
+          cancelLabel: 'Cancel',
+          kind: 'warning',
+        });
+      });
     });
 
     it('closes terminal tab when user confirms', async () => {
-      vi.mocked(dialogService.confirm).mockResolvedValue(true);
+      vi.mocked(terminalService.isTerminalAlive).mockResolvedValue(true);
+      vi.mocked(confirmDialogStore.confirm).mockResolvedValue(true);
 
       const { container } = render(TabBar, {
         props: { tabs: mockTabs, activeTabId: 'tab-3' },
@@ -199,11 +219,14 @@ describe('TabBar Component (Browser)', () => {
 
       await fireEvent.click(terminalCloseBtn);
 
-      expect(tabStore.closeTab).toHaveBeenCalledWith('tab-3');
+      await waitFor(() => {
+        expect(tabStore.closeTab).toHaveBeenCalledWith('tab-3');
+      });
     });
 
     it('does not close terminal tab when user cancels', async () => {
-      vi.mocked(dialogService.confirm).mockResolvedValue(false);
+      vi.mocked(terminalService.isTerminalAlive).mockResolvedValue(true);
+      vi.mocked(confirmDialogStore.confirm).mockResolvedValue(false);
 
       const { container } = render(TabBar, {
         props: { tabs: mockTabs, activeTabId: 'tab-3' },
@@ -214,7 +237,34 @@ describe('TabBar Component (Browser)', () => {
 
       await fireEvent.click(terminalCloseBtn);
 
+      // Wait for the async operation to complete
+      await waitFor(() => {
+        expect(confirmDialogStore.confirm).toHaveBeenCalled();
+      });
+
       expect(tabStore.closeTab).not.toHaveBeenCalled();
+    });
+
+    it('closes terminal without confirmation when no process is running', async () => {
+      // Terminal is not alive (no running process)
+      vi.mocked(terminalService.isTerminalAlive).mockResolvedValue(false);
+
+      const { container } = render(TabBar, {
+        props: { tabs: mockTabs, activeTabId: 'tab-3' },
+      });
+
+      const closeButtons = container.querySelectorAll('.close-btn');
+      const terminalCloseBtn = closeButtons[2];
+
+      await fireEvent.click(terminalCloseBtn);
+
+      await waitFor(() => {
+        // Should close the tab
+        expect(tabStore.closeTab).toHaveBeenCalledWith('tab-3');
+      });
+
+      // Should not show confirmation
+      expect(confirmDialogStore.confirm).not.toHaveBeenCalled();
     });
 
     it('does not show confirmation dialog when closing editor tab', async () => {
@@ -228,8 +278,11 @@ describe('TabBar Component (Browser)', () => {
 
       await fireEvent.click(editorCloseBtn);
 
-      expect(dialogService.confirm).not.toHaveBeenCalled();
-      expect(tabStore.closeTab).toHaveBeenCalledWith('tab-1');
+      await waitFor(() => {
+        expect(tabStore.closeTab).toHaveBeenCalledWith('tab-1');
+      });
+
+      expect(confirmDialogStore.confirm).not.toHaveBeenCalled();
     });
   });
 });

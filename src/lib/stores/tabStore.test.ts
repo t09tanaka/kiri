@@ -811,3 +811,98 @@ describe('closePaneInTree', () => {
     expect(result).toBeNull();
   });
 });
+
+describe('tabStore terminal methods with non-matching tab ID', () => {
+  beforeEach(() => {
+    tabStore.reset();
+  });
+
+  it('setTerminalId should not affect other tabs', () => {
+    // Add two terminal tabs
+    tabStore.addTerminalTab();
+    tabStore.addTerminalTab();
+
+    const state = get(tabStore);
+    const tab1Id = state.tabs[0].id;
+    const tab2Pane = (state.tabs[1].rootPane as { id: string }).id;
+
+    // Set terminal ID on first tab, but reference second tab's pane ID
+    // This tests the branch where t.id !== tabId
+    tabStore.setTerminalId(tab1Id, tab2Pane, 123);
+
+    // Second tab should be unchanged (its pane ID won't match in first tab's tree)
+    const updatedState = get(tabStore);
+    expect((updatedState.tabs[1].rootPane as { terminalId: number | null }).terminalId).toBeNull();
+  });
+
+  it('setTerminalId should not affect tabs with different IDs', () => {
+    tabStore.addTerminalTab();
+    tabStore.addTerminalTab();
+
+    const state = get(tabStore);
+    const firstTabPane = (state.tabs[0].rootPane as { id: string }).id;
+
+    // Set terminal ID targeting second tab ID but it doesn't exist
+    tabStore.setTerminalId('non-existent-tab', firstTabPane, 456);
+
+    // Both tabs should be unchanged
+    const updatedState = get(tabStore);
+    expect((updatedState.tabs[0].rootPane as { terminalId: number | null }).terminalId).toBeNull();
+    expect((updatedState.tabs[1].rootPane as { terminalId: number | null }).terminalId).toBeNull();
+  });
+
+  it('splitPane should not affect other tabs', () => {
+    tabStore.addTerminalTab();
+    tabStore.addTerminalTab();
+
+    const state = get(tabStore);
+    const tab2Pane = (state.tabs[1].rootPane as { id: string }).id;
+
+    // Split targeting non-existent tab
+    tabStore.splitPane('non-existent-tab', tab2Pane, 'horizontal');
+
+    // Both tabs should remain unchanged (no split)
+    const updatedState = get(tabStore);
+    expect(updatedState.tabs[0].rootPane.type).toBe('terminal');
+    expect(updatedState.tabs[1].rootPane.type).toBe('terminal');
+  });
+
+  it('closePane should not affect other tabs', () => {
+    tabStore.addTerminalTab();
+    tabStore.addTerminalTab();
+
+    const state = get(tabStore);
+    const tab2Pane = (state.tabs[1].rootPane as { id: string }).id;
+
+    // Close targeting non-existent tab
+    tabStore.closePane('non-existent-tab', tab2Pane);
+
+    // Both tabs should remain unchanged
+    const updatedState = get(tabStore);
+    expect(updatedState.tabs).toHaveLength(2);
+  });
+
+  it('updatePaneSizes should not affect other tabs', () => {
+    // Create a tab with a split
+    tabStore.addTerminalTab();
+    tabStore.addTerminalTab();
+
+    let state = get(tabStore);
+    const tab1Id = state.tabs[0].id;
+    const pane1Id = (state.tabs[0].rootPane as { id: string }).id;
+
+    // Split first tab
+    tabStore.splitPane(tab1Id, pane1Id, 'horizontal');
+
+    state = get(tabStore);
+    const splitPane = state.tabs[0].rootPane as { children: TerminalPane[]; sizes: number[] };
+    const firstChildId = (splitPane.children[0] as { id: string }).id;
+
+    // Update sizes targeting non-existent tab
+    tabStore.updatePaneSizes('non-existent-tab', firstChildId, [30, 70]);
+
+    // First tab's sizes should be unchanged
+    const updatedState = get(tabStore);
+    expect((updatedState.tabs[0].rootPane as { sizes: number[] }).sizes).toEqual([50, 50]);
+  });
+});

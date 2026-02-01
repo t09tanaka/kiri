@@ -1214,5 +1214,7 @@ mod tests {
 
         // Should count staged changes
         assert!(additions > 0);
+        // Original "test content" was replaced, so we should have deletions too
+        assert!(deletions > 0);
     }
 }

@@ -165,7 +165,7 @@ describe('DiffView Component (Browser)', () => {
     });
   });
 
-  it('displays change count badge when there are changes', async () => {
+  it('displays file list when there are changes', async () => {
     setMockState({
       repoInfo: {
         repoRoot: '/test',
@@ -184,9 +184,9 @@ describe('DiffView Component (Browser)', () => {
     const { container } = render(DiffView);
 
     await waitFor(() => {
-      const badge = container.querySelector('.badge');
-      expect(badge).toBeInTheDocument();
-      expect(badge?.textContent).toBe('2');
+      // Check file list sidebar shows all changed files
+      const fileItems = container.querySelectorAll('.file-item');
+      expect(fileItems.length).toBe(2);
     });
   });
 
