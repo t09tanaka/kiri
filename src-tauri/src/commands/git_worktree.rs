@@ -1,5 +1,7 @@
 use git2::Repository;
+use glob::glob;
 use serde::Serialize;
+use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Clone, Serialize)]
@@ -25,6 +27,13 @@ pub struct BranchInfo {
     pub is_head: bool,
     /// Unix timestamp (seconds) of the last commit on this branch
     pub last_commit_time: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CopyResult {
+    pub copied_files: Vec<String>,
+    pub skipped_files: Vec<String>,
+    pub errors: Vec<String>,
 }
 
 /// Get the default branch name for a repository.
@@ -371,6 +380,167 @@ pub fn list_branches(repo_path: String) -> Result<Vec<BranchInfo>, String> {
     });
 
     Ok(result)
+}
+
+/// Copy files matching the given patterns from source to target directory.
+/// Preserves directory structure (e.g., config/local.json -> target/config/local.json).
+/// Does not overwrite existing files.
+/// If a pattern matches a directory, all files within it are copied recursively.
+pub fn copy_files_to_worktree(
+    source_path: String,
+    target_path: String,
+    patterns: Vec<String>,
+) -> Result<CopyResult, String> {
+    let source = Path::new(&source_path);
+    let target = Path::new(&target_path);
+
+    if !source.exists() {
+        return Err(format!("Source path does not exist: {}", source_path));
+    }
+
+    if !target.exists() {
+        return Err(format!("Target path does not exist: {}", target_path));
+    }
+
+    let mut copied_files = Vec::new();
+    let mut skipped_files = Vec::new();
+    let mut errors = Vec::new();
+
+    // Helper function to copy a single file
+    fn copy_file(
+        path: &Path,
+        source: &Path,
+        target: &Path,
+        copied_files: &mut Vec<String>,
+        skipped_files: &mut Vec<String>,
+        errors: &mut Vec<String>,
+    ) {
+        // Calculate relative path from source
+        let relative = match path.strip_prefix(source) {
+            Ok(rel) => rel,
+            Err(_) => {
+                errors.push(format!(
+                    "Failed to calculate relative path: {}",
+                    path.display()
+                ));
+                return;
+            }
+        };
+
+        let target_file = target.join(relative);
+
+        // Skip if target already exists
+        if target_file.exists() {
+            skipped_files.push(relative.to_string_lossy().to_string());
+            return;
+        }
+
+        // Create parent directories if needed
+        if let Some(parent) = target_file.parent() {
+            if !parent.exists() {
+                if let Err(e) = fs::create_dir_all(parent) {
+                    errors.push(format!(
+                        "Failed to create directory {}: {}",
+                        parent.display(),
+                        e
+                    ));
+                    return;
+                }
+            }
+        }
+
+        // Copy the file
+        match fs::copy(path, &target_file) {
+            Ok(_) => {
+                copied_files.push(relative.to_string_lossy().to_string());
+            }
+            Err(e) => {
+                errors.push(format!(
+                    "Failed to copy {} to {}: {}",
+                    path.display(),
+                    target_file.display(),
+                    e
+                ));
+            }
+        }
+    }
+
+    // Helper function to recursively copy all files in a directory
+    fn copy_directory_recursive(
+        dir: &Path,
+        source: &Path,
+        target: &Path,
+        copied_files: &mut Vec<String>,
+        skipped_files: &mut Vec<String>,
+        errors: &mut Vec<String>,
+    ) {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    copy_directory_recursive(
+                        &path,
+                        source,
+                        target,
+                        copied_files,
+                        skipped_files,
+                        errors,
+                    );
+                } else if path.is_file() {
+                    copy_file(&path, source, target, copied_files, skipped_files, errors);
+                }
+            }
+        }
+    }
+
+    for pattern in patterns {
+        // Create full pattern path
+        let full_pattern = source.join(&pattern);
+        let pattern_str = full_pattern.to_string_lossy().to_string();
+
+        match glob(&pattern_str) {
+            Ok(entries) => {
+                for entry in entries {
+                    match entry {
+                        Ok(path) => {
+                            if path.is_dir() {
+                                // If pattern matches a directory, copy all files recursively
+                                copy_directory_recursive(
+                                    &path,
+                                    source,
+                                    target,
+                                    &mut copied_files,
+                                    &mut skipped_files,
+                                    &mut errors,
+                                );
+                            } else if path.is_file() {
+                                copy_file(
+                                    &path,
+                                    source,
+                                    target,
+                                    &mut copied_files,
+                                    &mut skipped_files,
+                                    &mut errors,
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            errors.push(format!("Glob error for pattern '{}': {}", pattern, e));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                errors.push(format!("Invalid glob pattern '{}': {}", pattern, e));
+            }
+        }
+    }
+
+    Ok(CopyResult {
+        copied_files,
+        skipped_files,
+        errors,
+    })
 }
 
 #[cfg(test)]
@@ -804,5 +974,209 @@ mod tests {
             "Expected 'already checked out in worktree' error, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_copy_files_to_worktree_basic() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create test files in source
+        fs::write(source_dir.path().join(".env"), "SECRET=123").unwrap();
+        fs::write(source_dir.path().join(".env.local"), "LOCAL=456").unwrap();
+        fs::write(source_dir.path().join("test.txt"), "test content").unwrap();
+
+        let result = copy_files_to_worktree(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string()],
+        );
+
+        assert!(result.is_ok());
+        let copy_result = result.unwrap();
+        assert_eq!(copy_result.copied_files.len(), 2);
+        assert!(copy_result.copied_files.contains(&".env".to_string()));
+        assert!(copy_result.copied_files.contains(&".env.local".to_string()));
+        assert!(copy_result.errors.is_empty());
+
+        // Verify files were copied
+        assert!(target_dir.path().join(".env").exists());
+        assert!(target_dir.path().join(".env.local").exists());
+        // test.txt should NOT be copied
+        assert!(!target_dir.path().join("test.txt").exists());
+    }
+
+    #[test]
+    fn test_copy_files_to_worktree_with_directory_structure() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create nested directory structure
+        let config_dir = source_dir.path().join("config");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(config_dir.join("local.json"), "{}").unwrap();
+        fs::write(config_dir.join("prod.json"), "{}").unwrap();
+
+        let result = copy_files_to_worktree(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["config/*.json".to_string()],
+        );
+
+        assert!(result.is_ok());
+        let copy_result = result.unwrap();
+        assert_eq!(copy_result.copied_files.len(), 2);
+
+        // Verify directory structure was preserved
+        assert!(target_dir.path().join("config/local.json").exists());
+        assert!(target_dir.path().join("config/prod.json").exists());
+    }
+
+    #[test]
+    fn test_copy_files_to_worktree_skip_existing() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create file in source
+        fs::write(source_dir.path().join(".env"), "SOURCE").unwrap();
+
+        // Pre-create file in target
+        fs::write(target_dir.path().join(".env"), "EXISTING").unwrap();
+
+        let result = copy_files_to_worktree(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env".to_string()],
+        );
+
+        assert!(result.is_ok());
+        let copy_result = result.unwrap();
+        assert!(copy_result.copied_files.is_empty());
+        assert_eq!(copy_result.skipped_files.len(), 1);
+        assert!(copy_result.skipped_files.contains(&".env".to_string()));
+
+        // Verify original content was preserved
+        let content = fs::read_to_string(target_dir.path().join(".env")).unwrap();
+        assert_eq!(content, "EXISTING");
+    }
+
+    #[test]
+    fn test_copy_files_to_worktree_multiple_patterns() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        fs::write(source_dir.path().join(".env"), "env").unwrap();
+        fs::write(source_dir.path().join("secret.txt"), "secret").unwrap();
+        fs::write(source_dir.path().join("other.txt"), "other").unwrap();
+
+        let result = copy_files_to_worktree(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string(), "secret.txt".to_string()],
+        );
+
+        assert!(result.is_ok());
+        let copy_result = result.unwrap();
+        assert_eq!(copy_result.copied_files.len(), 2);
+        assert!(target_dir.path().join(".env").exists());
+        assert!(target_dir.path().join("secret.txt").exists());
+        assert!(!target_dir.path().join("other.txt").exists());
+    }
+
+    #[test]
+    fn test_copy_files_to_worktree_invalid_source() {
+        let target_dir = tempdir().unwrap();
+
+        let result = copy_files_to_worktree(
+            "/nonexistent/path".to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env".to_string()],
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Source path does not exist"));
+    }
+
+    #[test]
+    fn test_copy_files_to_worktree_invalid_target() {
+        let source_dir = tempdir().unwrap();
+
+        let result = copy_files_to_worktree(
+            source_dir.path().to_string_lossy().to_string(),
+            "/nonexistent/path".to_string(),
+            vec![".env".to_string()],
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Target path does not exist"));
+    }
+
+    #[test]
+    fn test_copy_files_to_worktree_no_matches() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create some files that won't match the pattern
+        fs::write(source_dir.path().join("test.txt"), "test").unwrap();
+
+        let result = copy_files_to_worktree(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string()],
+        );
+
+        assert!(result.is_ok());
+        let copy_result = result.unwrap();
+        assert!(copy_result.copied_files.is_empty());
+        assert!(copy_result.skipped_files.is_empty());
+        assert!(copy_result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_copy_result_serialization() {
+        let result = CopyResult {
+            copied_files: vec!["file1.txt".to_string(), "file2.txt".to_string()],
+            skipped_files: vec!["existing.txt".to_string()],
+            errors: vec![],
+        };
+        assert_eq!(result.copied_files.len(), 2);
+        assert_eq!(result.skipped_files.len(), 1);
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_copy_files_to_worktree_directory_pattern() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create a directory with nested files
+        let config_dir = source_dir.path().join(".claude");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(config_dir.join("settings.json"), "{}").unwrap();
+
+        // Create nested subdirectory
+        let nested_dir = config_dir.join("rules");
+        fs::create_dir_all(&nested_dir).unwrap();
+        fs::write(nested_dir.join("rule1.md"), "# Rule 1").unwrap();
+        fs::write(nested_dir.join("rule2.md"), "# Rule 2").unwrap();
+
+        // Use directory name as pattern (without glob wildcards)
+        let result = copy_files_to_worktree(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".claude".to_string()],
+        );
+
+        assert!(result.is_ok());
+        let copy_result = result.unwrap();
+
+        // Should copy all files in the directory recursively
+        assert_eq!(copy_result.copied_files.len(), 3);
+        assert!(copy_result.errors.is_empty());
+
+        // Verify files were copied with directory structure preserved
+        assert!(target_dir.path().join(".claude/settings.json").exists());
+        assert!(target_dir.path().join(".claude/rules/rule1.md").exists());
+        assert!(target_dir.path().join(".claude/rules/rule2.md").exists());
     }
 }

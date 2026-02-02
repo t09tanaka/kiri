@@ -22,6 +22,12 @@ export interface BranchInfo {
   last_commit_time: number | null;
 }
 
+export interface CopyResult {
+  copied_files: string[];
+  skipped_files: string[];
+  errors: string[];
+}
+
 /**
  * Git worktree operations service
  * Wraps Tauri worktree commands for testability
@@ -58,4 +64,10 @@ export const worktreeService = {
    * List local branches for a repository
    */
   listBranches: (repoPath: string): Promise<BranchInfo[]> => invoke('list_branches', { repoPath }),
+
+  /**
+   * Copy files matching patterns from source to target directory
+   */
+  copyFiles: (sourcePath: string, targetPath: string, patterns: string[]): Promise<CopyResult> =>
+    invoke('copy_files_to_worktree', { sourcePath, targetPath, patterns }),
 };

@@ -431,6 +431,7 @@ export function getDefaultSettings(): PersistedSettings {
  */
 export interface ProjectSettings {
   searchExcludePatterns: string[];
+  worktreeCopyPatterns: string[];
 }
 
 /**
@@ -449,8 +450,14 @@ export const DEFAULT_EXCLUDE_PATTERNS: string[] = [
   '*.log',
 ];
 
+/**
+ * Default copy patterns for worktree creation (cannot be removed)
+ */
+export const DEFAULT_WORKTREE_COPY_PATTERNS: string[] = ['.env*'];
+
 const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   searchExcludePatterns: [...DEFAULT_EXCLUDE_PATTERNS],
+  worktreeCopyPatterns: [],
 };
 
 /**
@@ -479,6 +486,8 @@ export async function loadProjectSettings(projectPath: string): Promise<ProjectS
     return {
       searchExcludePatterns:
         settings.searchExcludePatterns ?? DEFAULT_PROJECT_SETTINGS.searchExcludePatterns,
+      worktreeCopyPatterns:
+        settings.worktreeCopyPatterns ?? DEFAULT_PROJECT_SETTINGS.worktreeCopyPatterns,
     };
   } catch (error) {
     console.error('Failed to load project settings:', error);

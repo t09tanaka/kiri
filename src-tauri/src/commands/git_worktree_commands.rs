@@ -1,4 +1,4 @@
-use super::git_worktree::{BranchInfo, WorktreeContext, WorktreeInfo};
+use super::git_worktree::{BranchInfo, CopyResult, WorktreeContext, WorktreeInfo};
 
 #[tauri::command]
 pub fn list_worktrees(repo_path: String) -> Result<Vec<WorktreeInfo>, String> {
@@ -28,4 +28,13 @@ pub fn get_worktree_context(repo_path: String) -> Result<WorktreeContext, String
 #[tauri::command]
 pub fn list_branches(repo_path: String) -> Result<Vec<BranchInfo>, String> {
     super::git_worktree::list_branches(repo_path)
+}
+
+#[tauri::command]
+pub fn copy_files_to_worktree(
+    source_path: String,
+    target_path: String,
+    patterns: Vec<String>,
+) -> Result<CopyResult, String> {
+    super::git_worktree::copy_files_to_worktree(source_path, target_path, patterns)
 }

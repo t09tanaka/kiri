@@ -5,6 +5,12 @@
   import { worktreeService } from '@/lib/services/worktreeService';
   import { windowService } from '@/lib/services/windowService';
   import { eventService } from '@/lib/services/eventService';
+  import {
+    loadProjectSettings,
+    saveProjectSettings,
+    DEFAULT_WORKTREE_COPY_PATTERNS,
+  } from '@/lib/services/persistenceService';
+  import { toastStore } from '@/lib/stores/toastStore';
   import type { WorktreeInfo, BranchInfo, WorktreeContext } from '@/lib/services/worktreeService';
   import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
   import { formatRelativeTime } from '@/lib/utils/dateFormat';
@@ -29,6 +35,11 @@
 
   // Worktree context for current window
   let currentContext = $state<WorktreeContext | null>(null);
+
+  // Copy settings state
+  let showCopySettingsModal = $state(false);
+  let userCopyPatterns = $state<string[]>([]);
+  let newCopyPattern = $state('');
 
   // Event listener cleanup
   let unlistenWorktreeRemoved: (() => void) | null = null;
@@ -115,6 +126,7 @@
     await loadWorktrees();
     await loadBranches();
     await loadContext();
+    await loadCopySettings();
   });
 
   async function loadContext() {
@@ -123,6 +135,46 @@
     } catch {
       currentContext = null;
     }
+  }
+
+  async function loadCopySettings() {
+    try {
+      const settings = await loadProjectSettings(projectPath);
+      userCopyPatterns = settings.worktreeCopyPatterns;
+    } catch {
+      userCopyPatterns = [];
+    }
+  }
+
+  async function saveCopySettings() {
+    try {
+      const settings = await loadProjectSettings(projectPath);
+      settings.worktreeCopyPatterns = userCopyPatterns;
+      await saveProjectSettings(projectPath, settings);
+    } catch (e) {
+      console.error('Failed to save copy settings:', e);
+    }
+  }
+
+  function addCopyPattern() {
+    const pattern = newCopyPattern.trim();
+    if (!pattern) return;
+    if (userCopyPatterns.includes(pattern)) {
+      newCopyPattern = '';
+      return;
+    }
+    if (DEFAULT_WORKTREE_COPY_PATTERNS.includes(pattern)) {
+      newCopyPattern = '';
+      return;
+    }
+    userCopyPatterns = [...userCopyPatterns, pattern];
+    newCopyPattern = '';
+    saveCopySettings();
+  }
+
+  function removeCopyPattern(pattern: string) {
+    userCopyPatterns = userCopyPatterns.filter((p) => p !== pattern);
+    saveCopySettings();
   }
 
   onDestroy(() => {
@@ -201,6 +253,26 @@
         !isExistingBranch // create new branch if not selecting existing
       );
 
+      // Copy files to the new worktree
+      const allPatterns = [...DEFAULT_WORKTREE_COPY_PATTERNS, ...userCopyPatterns];
+      if (allPatterns.length > 0) {
+        try {
+          const copyResult = await worktreeService.copyFiles(
+            currentProjectPath,
+            wt.path,
+            allPatterns
+          );
+          if (copyResult.copied_files.length > 0) {
+            toastStore.success(`${copyResult.copied_files.length} files copied to worktree`);
+          }
+          if (copyResult.errors.length > 0) {
+            console.error('Copy errors:', copyResult.errors);
+          }
+        } catch (copyError) {
+          console.error('Failed to copy files:', copyError);
+        }
+      }
+
       // Open new window and refresh worktree list (keep modal open)
       openWorktreeWindow(wt);
       loadWorktrees(currentProjectPath).catch(console.error);
@@ -259,19 +331,40 @@
           </svg>
           <span class="title">Worktrees</span>
         </div>
-        <button class="action-btn close-btn" onclick={() => onClose()} title="Close (Esc)">
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
+        <div class="header-actions">
+          <button
+            class="action-btn settings-btn"
+            onclick={() => (showCopySettingsModal = true)}
+            title="Settings"
           >
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <circle cx="12" cy="12" r="3"></circle>
+              <path
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+              ></path>
+            </svg>
+          </button>
+          <button class="action-btn close-btn" onclick={() => onClose()} title="Close (Esc)">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
       </div>
 
       <div class="modal-body">
@@ -429,7 +522,12 @@
     <div class="branch-modal" onclick={(e) => e.stopPropagation()}>
       <div class="branch-modal-header">
         <h3 class="branch-modal-title">Select Branch</h3>
-        <button type="button" class="btn btn-ghost" onclick={() => (showBranchDropdown = false)}>
+        <button
+          type="button"
+          class="btn btn-ghost"
+          onclick={() => (showBranchDropdown = false)}
+          title="Close"
+        >
           <svg
             width="14"
             height="14"
@@ -469,6 +567,108 @@
         {#if availableBranches().length === 0}
           <div class="empty-state">No available branches</div>
         {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Settings Modal -->
+{#if showCopySettingsModal}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div class="settings-modal-backdrop" onclick={() => (showCopySettingsModal = false)}>
+    <div class="settings-modal" onclick={(e) => e.stopPropagation()}>
+      <div class="settings-modal-header">
+        <h3 class="settings-modal-title">Settings</h3>
+        <button
+          type="button"
+          class="btn btn-ghost"
+          onclick={() => (showCopySettingsModal = false)}
+          title="Close"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="settings-modal-body">
+        <!-- Copy Files Section -->
+        <div class="settings-section">
+          <div class="settings-section-title">Copy files</div>
+          <p class="settings-section-description">
+            Files matching these patterns will be copied from the main repository when creating a
+            new worktree.
+          </p>
+
+          <!-- Default patterns (cannot be removed) -->
+          {#each DEFAULT_WORKTREE_COPY_PATTERNS as pattern (pattern)}
+            <div class="pattern-item pattern-default">
+              <span class="pattern-text">{pattern}</span>
+              <span class="pattern-badge">default</span>
+            </div>
+          {/each}
+
+          <!-- User patterns (can be removed) -->
+          {#each userCopyPatterns as pattern (pattern)}
+            <div class="pattern-item pattern-user">
+              <span class="pattern-text">{pattern}</span>
+              <button
+                type="button"
+                class="pattern-remove"
+                onclick={() => removeCopyPattern(pattern)}
+                title="Remove pattern"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+          {/each}
+
+          <!-- Add new pattern -->
+          <div class="pattern-add">
+            <input
+              type="text"
+              class="pattern-input"
+              bind:value={newCopyPattern}
+              placeholder="Add pattern (e.g. config/*.local)"
+              spellcheck="false"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              onkeydown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addCopyPattern();
+                }
+              }}
+            />
+            <button
+              type="button"
+              class="pattern-add-btn"
+              onclick={() => addCopyPattern()}
+              disabled={!newCopyPattern.trim()}
+            >
+              Add
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -600,6 +800,31 @@
   .close-btn:hover {
     background: rgba(248, 113, 113, 0.15);
     color: var(--git-deleted);
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+  }
+
+  .settings-btn {
+    opacity: 0.5;
+    transition: all var(--transition-fast);
+  }
+
+  .settings-btn:hover {
+    opacity: 1;
+    background: rgba(125, 211, 252, 0.1);
+    color: var(--accent-color);
+  }
+
+  .settings-btn:hover svg {
+    transform: rotate(45deg);
+  }
+
+  .settings-btn svg {
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
 
   .modal-body {
@@ -976,6 +1201,7 @@
   .form-actions {
     display: flex;
     justify-content: flex-end;
+    gap: var(--space-2);
   }
 
   /* Loading State */
@@ -987,6 +1213,246 @@
     padding: var(--space-6);
     color: var(--text-muted);
     font-size: 13px;
+  }
+
+  /* Settings Modal */
+  .settings-modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1100;
+    opacity: 0;
+    animation: fadeIn 0.2s ease forwards;
+  }
+
+  .settings-modal {
+    position: relative;
+    width: min(380px, 85vw);
+    max-height: 70vh;
+    animation: modalSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .settings-modal::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+    border-radius: calc(var(--radius-lg) + 1px);
+    opacity: 0.08;
+    filter: blur(3px);
+    z-index: -1;
+  }
+
+  .settings-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-4);
+    background: rgba(0, 0, 0, 0.2);
+    border-bottom: 1px solid var(--border-color);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .settings-modal-header .btn-ghost {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .settings-modal-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .settings-modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    max-height: 500px;
+    overflow-y: auto;
+    background: var(--bg-glass);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid var(--border-glow);
+    border-top: none;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  }
+
+  .settings-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .settings-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .settings-section-description {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  .pattern-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-family: var(--font-mono);
+  }
+
+  .pattern-default {
+    opacity: 0.7;
+  }
+
+  .pattern-text {
+    flex: 1;
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pattern-badge {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 2px 6px;
+    background: rgba(125, 211, 252, 0.1);
+    border-radius: 3px;
+    color: var(--text-muted);
+  }
+
+  .pattern-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .pattern-remove:hover {
+    background: rgba(248, 113, 113, 0.15);
+    color: var(--git-deleted);
+  }
+
+  .pattern-add {
+    display: flex;
+    align-items: stretch;
+    gap: var(--space-2);
+    margin-top: var(--space-1);
+  }
+
+  .pattern-input {
+    flex: 1;
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color var(--transition-fast);
+  }
+
+  .pattern-input:focus {
+    border-color: var(--accent-color);
+  }
+
+  .pattern-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .pattern-add-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-2) var(--space-4);
+    background: linear-gradient(
+      135deg,
+      rgba(125, 211, 252, 0.08) 0%,
+      rgba(196, 181, 253, 0.05) 100%
+    );
+    border: 1px solid rgba(125, 211, 252, 0.25);
+    border-radius: var(--radius-sm);
+    color: var(--accent-color);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .pattern-add-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      135deg,
+      rgba(125, 211, 252, 0.15) 0%,
+      rgba(196, 181, 253, 0.1) 100%
+    );
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+  }
+
+  .pattern-add-btn:hover:not(:disabled) {
+    border-color: rgba(125, 211, 252, 0.5);
+    color: var(--accent-color);
+    box-shadow: 0 0 12px rgba(125, 211, 252, 0.15);
+    transform: translateY(-1px);
+  }
+
+  .pattern-add-btn:hover:not(:disabled)::before {
+    opacity: 1;
+  }
+
+  .pattern-add-btn:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 0 6px rgba(125, 211, 252, 0.1);
+  }
+
+  .pattern-add-btn:disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
+    background: var(--bg-tertiary);
+    border-color: var(--border-subtle);
+    color: var(--text-muted);
   }
 
   /* Branch Selection Modal */
