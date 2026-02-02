@@ -37,7 +37,8 @@ fn get_worktree_branch(wt_path: &Path) -> Option<String> {
 
 /// List all worktrees for a repository, including the main working tree
 pub fn list_worktrees(repo_path: String) -> Result<Vec<WorktreeInfo>, String> {
-    let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
+    // Use discover to find repo from subdirectory
+    let repo = Repository::discover(&repo_path).map_err(|e| e.to_string())?;
     let repo_root = repo
         .workdir()
         .ok_or("Not a standard repository (bare repo?)")?;
@@ -238,8 +239,10 @@ pub fn remove_worktree(repo_path: String, name: String) -> Result<(), String> {
 
 /// Get worktree context for the current repository path.
 /// Determines if the path is a worktree and provides the main repo path and worktree name.
+/// Uses `discover` to find the repository from a subdirectory.
 pub fn get_worktree_context(repo_path: String) -> Result<WorktreeContext, String> {
-    let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
+    // Use discover to find repo from subdirectory (searches upward for .git)
+    let repo = Repository::discover(&repo_path).map_err(|e| e.to_string())?;
 
     // Check if this repo is itself a worktree (not the main working tree)
     let is_worktree = repo.is_worktree();

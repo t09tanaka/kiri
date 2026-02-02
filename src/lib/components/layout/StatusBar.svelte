@@ -4,7 +4,8 @@
   import { currentProjectPath } from '@/lib/stores/projectStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
   import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
-  import { isWorktree, worktreeCount } from '@/lib/stores/worktreeStore';
+  import { isWorktree, worktreeCount, isSubdirectoryOfRepo } from '@/lib/stores/worktreeStore';
+  import { toastStore } from '@/lib/stores/toastStore';
   import { appStore } from '@/lib/stores/appStore';
 
   interface Props {
@@ -41,6 +42,10 @@
   function handleWorktreesClick() {
     if (!$currentProjectPath) {
       console.error('No project path available');
+      return;
+    }
+    if ($isSubdirectoryOfRepo) {
+      toastStore.warning('Worktrees can only be managed from the repository root.', 4000);
       return;
     }
     worktreeViewStore.open($currentProjectPath);
@@ -181,8 +186,11 @@
     {#if !$isWorktree}
       <button
         class="status-item worktrees-btn"
+        class:disabled={$isSubdirectoryOfRepo}
         onclick={handleWorktreesClick}
-        title="Worktrees ({$worktreeCount}) - ⌘G"
+        title={$isSubdirectoryOfRepo
+          ? 'Worktrees unavailable (open from repo root)'
+          : `Worktrees (${$worktreeCount}) - ⌘G`}
       >
         <svg
           width="12"
@@ -424,6 +432,18 @@
 
   .worktrees-btn:active {
     transform: translateY(0) scale(0.97);
+  }
+
+  .worktrees-btn.disabled {
+    background: rgba(128, 128, 128, 0.1);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  .worktrees-btn.disabled:hover {
+    background: rgba(128, 128, 128, 0.15);
+    transform: none;
   }
 
   .worktrees-count {

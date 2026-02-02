@@ -8,6 +8,7 @@
   import QuickOpen from '@/lib/components/search/QuickOpen.svelte';
   import ContentSearchModal from '@/lib/components/search/ContentSearchModal.svelte';
   import KeyboardShortcuts from '@/lib/components/ui/KeyboardShortcuts.svelte';
+  import ToastContainer from '@/lib/components/ui/ToastContainer.svelte';
   import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
   import WorktreePanel from '@/lib/components/git/WorktreePanel.svelte';
   import EditorModal from '@/lib/components/editor/EditorModal.svelte';
@@ -18,7 +19,8 @@
   import { peekStore } from '@/lib/stores/peekStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
   import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
-  import { worktreeStore, isWorktree } from '@/lib/stores/worktreeStore';
+  import { worktreeStore, isWorktree, isSubdirectoryOfRepo } from '@/lib/stores/worktreeStore';
+  import { toastStore } from '@/lib/stores/toastStore';
   import { worktreeService } from '@/lib/services/worktreeService';
   import { eventService } from '@/lib/services/eventService';
   import { windowService } from '@/lib/services/windowService';
@@ -285,6 +287,14 @@
       e.preventDefault();
       const path = projectStore.getCurrentPath();
       if (path) {
+        // Check if opened from a subdirectory of the repo
+        if ($isSubdirectoryOfRepo) {
+          toastStore.warning(
+            'Worktrees can only be managed from the repository root. Please open the project from the root directory.',
+            5000
+          );
+          return;
+        }
         if ($worktreeViewStore.isOpen) {
           worktreeViewStore.close();
         } else {
@@ -661,6 +671,9 @@
   <StartScreen />
   <KeyboardShortcuts isOpen={showShortcuts} onClose={() => (showShortcuts = false)} />
 {/if}
+
+<!-- Global Toast notifications -->
+<ToastContainer />
 
 <style>
   .app-container {
