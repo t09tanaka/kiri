@@ -49,6 +49,12 @@
     return entry.path.slice(repoRoot.length + 1);
   });
 
+  // Path with leading slash for display/copy (indicates project root)
+  const displayPath = $derived(() => {
+    const rel = relativePath();
+    return rel ? '/' + rel : '';
+  });
+
   const gitStatus = $derived(() => {
     const path = relativePath();
     if (!path) return null;
@@ -143,7 +149,7 @@
         onOpenInTerminal?.(entry.path);
         break;
       case 'copy-path':
-        await navigator.clipboard.writeText(entry.path);
+        await navigator.clipboard.writeText(displayPath() || entry.path);
         break;
       case 'reveal':
         await fileService.revealInFinder(entry.path);
