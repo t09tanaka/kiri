@@ -42,10 +42,14 @@ Parallel development made simple:
 | Feature | Description |
 |---------|-------------|
 | **Multiple Windows** | `Cmd+Shift+N` opens a new window |
-| **Git Worktree Panel** | `Cmd+Shift+W` to create/manage worktrees |
+| **Git Worktree Panel** | `Cmd+G` to create/manage worktrees |
 | **Auto Window Creation** | New worktree → new window automatically |
 | **Branch Isolation** | Work on features without stashing or switching |
+| **File Copy** | Copies `.env*` and configured files to new worktrees |
+| **Auto Initialization** | Runs `npm install` (or detected package manager) on creation |
 | **Recent Projects** | Quick access to your project history |
+
+<!-- TODO: Support more package managers and build tools (cargo, make, etc.) -->
 
 ### 💻 Terminal
 
@@ -82,7 +86,7 @@ Parallel development made simple:
 | `Cmd+P` | Quick Open |
 | `Cmd+B` | Toggle Sidebar |
 | `Cmd+Shift+N` | New Window |
-| `Cmd+Shift+W` | Git Worktrees |
+| `Cmd+G` | Git Worktrees |
 | `` Cmd+` `` | New Terminal |
 | `Cmd+W` | Close Tab |
 | `Cmd+S` | Save File |
