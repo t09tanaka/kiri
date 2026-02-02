@@ -23,6 +23,8 @@ pub struct WorktreeContext {
 pub struct BranchInfo {
     pub name: String,
     pub is_head: bool,
+    /// Unix timestamp (seconds) of the last commit on this branch
+    pub last_commit_time: Option<i64>,
 }
 
 /// Get the branch name for a worktree by opening the repo at that path
@@ -295,19 +297,36 @@ pub fn list_branches(repo_path: String) -> Result<Vec<BranchInfo>, String> {
             .to_string();
         let is_head = branch.is_head();
 
+        // Get the last commit time for this branch
+        let last_commit_time = branch
+            .get()
+            .peel_to_commit()
+            .ok()
+            .map(|commit| commit.time().seconds());
+
         if !name.is_empty() {
-            result.push(BranchInfo { name, is_head });
+            result.push(BranchInfo {
+                name,
+                is_head,
+                last_commit_time,
+            });
         }
     }
 
-    // Sort: HEAD branch first, then alphabetical
+    // Sort: HEAD branch first, then by last commit time (most recent first)
     result.sort_by(|a, b| {
         if a.is_head && !b.is_head {
             std::cmp::Ordering::Less
         } else if !a.is_head && b.is_head {
             std::cmp::Ordering::Greater
         } else {
-            a.name.cmp(&b.name)
+            // Sort by last commit time descending (most recent first)
+            match (b.last_commit_time, a.last_commit_time) {
+                (Some(b_time), Some(a_time)) => b_time.cmp(&a_time),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.name.cmp(&b.name),
+            }
         }
     });
 
@@ -656,9 +675,11 @@ mod tests {
         let info = BranchInfo {
             name: "main".to_string(),
             is_head: true,
+            last_commit_time: Some(1704067200),
         };
         assert_eq!(info.name, "main");
         assert!(info.is_head);
+        assert_eq!(info.last_commit_time, Some(1704067200));
     }
 
     #[test]

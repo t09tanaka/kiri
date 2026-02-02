@@ -7,6 +7,7 @@
   import { eventService } from '@/lib/services/eventService';
   import type { WorktreeInfo, BranchInfo, WorktreeContext } from '@/lib/services/worktreeService';
   import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
+  import { formatRelativeTime } from '@/lib/utils/dateFormat';
 
   interface Props {
     projectPath: string;
@@ -460,6 +461,9 @@
               <path d="M18 9a9 9 0 0 1-9 9"></path>
             </svg>
             <span class="branch-item-name">{b.name}</span>
+            {#if b.last_commit_time}
+              <span class="branch-item-time">{formatRelativeTime(b.last_commit_time)}</span>
+            {/if}
           </button>
         {/each}
         {#if availableBranches().length === 0}
@@ -1106,9 +1110,23 @@
   }
 
   .branch-item-name {
+    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .branch-item-time {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-sans);
+    opacity: 0.7;
+    transition: opacity var(--transition-fast);
+  }
+
+  .branch-item:hover .branch-item-time {
+    opacity: 1;
   }
 
   .branch-icon-small {

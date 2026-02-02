@@ -18,6 +18,8 @@ export interface WorktreeContext {
 export interface BranchInfo {
   name: string;
   is_head: boolean;
+  /** Unix timestamp (seconds) of the last commit on this branch */
+  last_commit_time: number | null;
 }
 
 /**
