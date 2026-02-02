@@ -37,22 +37,6 @@ describe('RecentProjectItem Component (Browser)', () => {
     expect(screen.getByText('~/Documents/my-project')).toBeInTheDocument();
   });
 
-  it('renders git branch when available', () => {
-    render(RecentProjectItem, {
-      props: { project: mockProject, onSelect: vi.fn(), onRemove: vi.fn() },
-    });
-
-    expect(screen.getByText('main')).toBeInTheDocument();
-  });
-
-  it('does not render branch badge when no git branch', () => {
-    const { container } = render(RecentProjectItem, {
-      props: { project: mockProjectNoGit, onSelect: vi.fn(), onRemove: vi.fn() },
-    });
-
-    expect(container.querySelector('.branch-name')).not.toBeInTheDocument();
-  });
-
   it('renders time ago for recently opened projects', () => {
     render(RecentProjectItem, {
       props: { project: mockProject, onSelect: vi.fn(), onRemove: vi.fn() },

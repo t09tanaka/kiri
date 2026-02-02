@@ -86,24 +86,6 @@
       <div class="project-path">{shortenPath(project.path)}</div>
     </div>
     <div class="project-meta">
-      {#if project.gitBranch}
-        <span class="branch-name">
-          <svg
-            width="10"
-            height="10"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-          >
-            <line x1="6" y1="3" x2="6" y2="15"></line>
-            <circle cx="18" cy="6" r="3"></circle>
-            <circle cx="6" cy="18" r="3"></circle>
-            <path d="M18 9a9 9 0 0 1-9 9"></path>
-          </svg>
-          {project.gitBranch}
-        </span>
-      {/if}
       <span class="time-ago">{formatTimeAgo(project.lastOpened)}</span>
     </div>
     <button class="remove-button" onclick={handleRemoveClick} title="Remove from recent">
@@ -269,24 +251,6 @@
     align-items: flex-end;
     gap: 4px;
     flex-shrink: 0;
-  }
-
-  .branch-name {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 10px;
-    color: var(--git-added);
-    padding: 3px 8px;
-    background: rgba(48, 209, 88, 0.12);
-    border-radius: var(--radius-sm);
-    font-weight: 500;
-    transition: all var(--transition-fast);
-  }
-
-  .project-item:hover .branch-name {
-    background: rgba(48, 209, 88, 0.18);
-    transform: translateY(-1px);
   }
 
   .time-ago {
