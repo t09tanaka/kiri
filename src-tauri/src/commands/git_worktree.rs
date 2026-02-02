@@ -101,7 +101,7 @@ pub fn create_worktree(
     repo_path: String,
     name: String,
     branch: Option<String>,
-    new_branch: bool,
+    _new_branch: bool, // Kept for API compatibility, but now always creates branch if needed
 ) -> Result<WorktreeInfo, String> {
     let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
     let repo_root = repo
@@ -160,29 +160,26 @@ pub fn create_worktree(
         }
     }
 
-    if new_branch {
-        // Check if branch already exists
-        let branch_exists = repo
-            .find_branch(&branch_name, git2::BranchType::Local)
-            .is_ok();
+    // Check if branch already exists
+    let branch_exists = repo
+        .find_branch(&branch_name, git2::BranchType::Local)
+        .is_ok();
 
-        if !branch_exists {
-            // Create new branch from HEAD
-            let head = repo.head().map_err(|e| e.to_string())?;
-            let head_commit = head.peel_to_commit().map_err(|e| e.to_string())?;
+    if !branch_exists {
+        // Create new branch from HEAD (regardless of new_branch flag)
+        let head = repo.head().map_err(|e| e.to_string())?;
+        let head_commit = head.peel_to_commit().map_err(|e| e.to_string())?;
 
-            // Create the branch
-            repo.branch(&branch_name, &head_commit, false)
-                .map_err(|e| e.to_string())?;
-        }
-        // If branch exists, just use it for the worktree
+        // Create the branch
+        repo.branch(&branch_name, &head_commit, false)
+            .map_err(|e| e.to_string())?;
     }
 
     // Create the worktree
     // git2's worktree API requires a reference
     let reference = repo
         .find_branch(&branch_name, git2::BranchType::Local)
-        .map_err(|e| format!("Branch '{}' not found: {}", branch_name, e))?;
+        .expect("Branch should exist after creation");
 
     let ref_name = reference
         .get()
@@ -461,18 +458,22 @@ mod tests {
     }
 
     #[test]
-    fn test_create_worktree_nonexistent_branch() {
+    fn test_create_worktree_nonexistent_branch_creates_new() {
         let dir = tempdir().unwrap();
         create_repo_with_commit(dir.path());
 
+        // When new_branch=false but branch doesn't exist, should create the branch
         let result = create_worktree(
             dir.path().to_string_lossy().to_string(),
             "wt-none".to_string(),
             Some("nonexistent-branch".to_string()),
             false,
         );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not found"));
+        assert!(result.is_ok(), "Should create branch if it doesn't exist");
+
+        let wt = result.unwrap();
+        assert_eq!(wt.name, "wt-none");
+        assert_eq!(wt.branch, Some("nonexistent-branch".to_string()));
     }
 
     #[test]
