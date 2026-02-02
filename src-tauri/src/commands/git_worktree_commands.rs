@@ -1,4 +1,4 @@
-use super::git_worktree::{BranchInfo, CopyResult, WorktreeContext, WorktreeInfo};
+use super::git_worktree::{BranchInfo, CommandOutput, CopyResult, PackageManager, WorktreeContext, WorktreeInfo};
 
 #[tauri::command]
 pub fn list_worktrees(repo_path: String) -> Result<Vec<WorktreeInfo>, String> {
@@ -37,4 +37,14 @@ pub fn copy_files_to_worktree(
     patterns: Vec<String>,
 ) -> Result<CopyResult, String> {
     super::git_worktree::copy_files_to_worktree(source_path, target_path, patterns)
+}
+
+#[tauri::command]
+pub fn detect_package_manager(project_path: String) -> Result<Option<PackageManager>, String> {
+    super::git_worktree::detect_package_manager(project_path)
+}
+
+#[tauri::command]
+pub fn run_init_command(cwd: String, command: String) -> Result<CommandOutput, String> {
+    super::git_worktree::run_init_command(cwd, command)
 }

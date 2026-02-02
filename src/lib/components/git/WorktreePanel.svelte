@@ -9,9 +9,14 @@
     loadProjectSettings,
     saveProjectSettings,
     DEFAULT_WORKTREE_COPY_PATTERNS,
+    type WorktreeInitCommand,
   } from '@/lib/services/persistenceService';
-  import { toastStore } from '@/lib/stores/toastStore';
-  import type { WorktreeInfo, BranchInfo, WorktreeContext } from '@/lib/services/worktreeService';
+  import type {
+    WorktreeInfo,
+    BranchInfo,
+    WorktreeContext,
+    PackageManager,
+  } from '@/lib/services/worktreeService';
   import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
   import { formatRelativeTime } from '@/lib/utils/dateFormat';
 
@@ -40,6 +45,30 @@
   let showCopySettingsModal = $state(false);
   let userCopyPatterns = $state<string[]>([]);
   let newCopyPattern = $state('');
+
+  // Init commands state
+  let initCommands = $state<WorktreeInitCommand[]>([]);
+  let detectedPackageManager = $state<PackageManager | null>(null);
+  let newInitCommandName = $state('');
+  let newInitCommandValue = $state('');
+
+  // Creation progress state
+  type CreationStep = 'worktree' | 'copy' | 'init' | 'done';
+  let creationStep = $state<CreationStep | null>(null);
+  let creationOutput = $state<string[]>([]);
+  let creationCancelled = $state(false);
+
+  // Open worktree progress state
+  type OpenStep = 'init' | 'done';
+  let openStep = $state<OpenStep | null>(null);
+  let openOutput = $state<string[]>([]);
+  let openCancelled = $state(false);
+
+  // Helper to force UI update - uses setTimeout to ensure render cycle completes
+  async function forceUIUpdate(delayMs = 50): Promise<void> {
+    await tick();
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
 
   // Event listener cleanup
   let unlistenWorktreeRemoved: (() => void) | null = null;
@@ -127,6 +156,8 @@
     await loadBranches();
     await loadContext();
     await loadCopySettings();
+    await loadInitCommands();
+    await detectPackageManager();
   });
 
   async function loadContext() {
@@ -175,6 +206,100 @@
   function removeCopyPattern(pattern: string) {
     userCopyPatterns = userCopyPatterns.filter((p) => p !== pattern);
     saveCopySettings();
+  }
+
+  async function loadInitCommands() {
+    try {
+      const settings = await loadProjectSettings(projectPath);
+      initCommands = settings.worktreeInitCommands;
+    } catch {
+      initCommands = [];
+    }
+  }
+
+  async function saveInitCommands() {
+    try {
+      const settings = await loadProjectSettings(projectPath);
+      settings.worktreeInitCommands = initCommands;
+      await saveProjectSettings(projectPath, settings);
+    } catch (e) {
+      console.error('Failed to save init commands:', e);
+    }
+  }
+
+  async function detectPackageManager() {
+    try {
+      detectedPackageManager = await worktreeService.detectPackageManager(projectPath);
+    } catch {
+      detectedPackageManager = null;
+    }
+  }
+
+  function addInitCommand() {
+    const name = newInitCommandName.trim();
+    const command = newInitCommandValue.trim();
+    if (!name || !command) return;
+
+    // Check for duplicates
+    if (initCommands.some((c) => c.command === command)) {
+      newInitCommandName = '';
+      newInitCommandValue = '';
+      return;
+    }
+
+    initCommands = [
+      ...initCommands,
+      {
+        name,
+        command,
+        enabled: true,
+        auto: false,
+      },
+    ];
+    newInitCommandName = '';
+    newInitCommandValue = '';
+    saveInitCommands();
+  }
+
+  function removeInitCommand(command: string) {
+    initCommands = initCommands.filter((c) => c.command !== command);
+    saveInitCommands();
+  }
+
+  function toggleInitCommand(command: string) {
+    initCommands = initCommands.map((c) =>
+      c.command === command ? { ...c, enabled: !c.enabled } : c
+    );
+    saveInitCommands();
+  }
+
+  function getEffectiveInitCommands(): WorktreeInitCommand[] {
+    // Combine auto-detected and user-configured commands
+    const commands: WorktreeInitCommand[] = [];
+
+    // Add detected package manager if not already configured
+    if (detectedPackageManager) {
+      const hasPackageManagerCommand = initCommands.some(
+        (c) => c.command === detectedPackageManager!.command
+      );
+      if (!hasPackageManagerCommand) {
+        commands.push({
+          name: 'Install dependencies',
+          command: detectedPackageManager.command,
+          enabled: true,
+          auto: true,
+        });
+      }
+    }
+
+    // Add user-configured commands
+    commands.push(...initCommands);
+
+    return commands;
+  }
+
+  function addCreationOutput(line: string) {
+    creationOutput = [...creationOutput, line];
   }
 
   onDestroy(() => {
@@ -239,6 +364,10 @@
     }
     isCreating = true;
     createError = null;
+    creationStep = 'worktree';
+    creationOutput = [];
+    creationCancelled = false;
+    await forceUIUpdate(); // Force UI update to show loading
 
     // Capture projectPath in a local variable to avoid closure issues
     const currentProjectPath = projectPath;
@@ -246,6 +375,10 @@
     try {
       const branchName = createName.trim();
       const wtName = branchToWorktreeName(branchName);
+
+      // Step 1: Create worktree
+      addCreationOutput(`Creating worktree '${wtName}'...`);
+      await forceUIUpdate();
       const wt = await worktreeService.create(
         currentProjectPath,
         wtName, // worktree name (with '/' replaced by '-')
@@ -253,9 +386,23 @@
         !isExistingBranch // create new branch if not selecting existing
       );
 
-      // Copy files to the new worktree
+      if (creationCancelled) {
+        // Clean up: remove the worktree
+        await worktreeService.remove(currentProjectPath, wtName);
+        resetCreation();
+        return;
+      }
+
+      addCreationOutput('Worktree created');
+      await forceUIUpdate();
+
+      // Step 2: Copy files
+      creationStep = 'copy';
+      await forceUIUpdate();
       const allPatterns = [...DEFAULT_WORKTREE_COPY_PATTERNS, ...userCopyPatterns];
       if (allPatterns.length > 0) {
+        addCreationOutput('Copying files...');
+        await forceUIUpdate();
         try {
           const copyResult = await worktreeService.copyFiles(
             currentProjectPath,
@@ -263,39 +410,187 @@
             allPatterns
           );
           if (copyResult.copied_files.length > 0) {
-            toastStore.success(`${copyResult.copied_files.length} files copied to worktree`);
+            addCreationOutput(`${copyResult.copied_files.length} files copied`);
+          } else {
+            addCreationOutput('No files to copy');
           }
           if (copyResult.errors.length > 0) {
             console.error('Copy errors:', copyResult.errors);
           }
+          await forceUIUpdate();
         } catch (copyError) {
           console.error('Failed to copy files:', copyError);
+          addCreationOutput('Copy failed');
+          await forceUIUpdate();
+        }
+      } else {
+        addCreationOutput('No copy patterns configured');
+        await forceUIUpdate();
+      }
+
+      if (creationCancelled) {
+        await worktreeService.remove(currentProjectPath, wtName);
+        resetCreation();
+        return;
+      }
+
+      // Step 3: Run initialization commands
+      creationStep = 'init';
+      await forceUIUpdate();
+      const effectiveCommands = getEffectiveInitCommands().filter((c) => c.enabled);
+
+      if (effectiveCommands.length === 0) {
+        addCreationOutput('No initialization commands to run');
+        await forceUIUpdate();
+      }
+
+      for (const cmd of effectiveCommands) {
+        if (creationCancelled) {
+          await worktreeService.remove(currentProjectPath, wtName);
+          resetCreation();
+          return;
+        }
+
+        addCreationOutput(`Running: ${cmd.command}`);
+        await forceUIUpdate();
+        try {
+          const result = await worktreeService.runInitCommand(wt.path, cmd.command);
+          if (result.success) {
+            addCreationOutput(`✓ ${cmd.name} completed`);
+          } else {
+            addCreationOutput(`⚠ ${cmd.name} failed (exit code: ${result.exit_code})`);
+            if (result.stderr) {
+              // Show last few lines of stderr
+              const lines = result.stderr.trim().split('\n').slice(-3);
+              lines.forEach((line) => addCreationOutput(`  ${line}`));
+            }
+          }
+          await forceUIUpdate();
+        } catch (cmdError) {
+          addCreationOutput(`⚠ ${cmd.name} error: ${cmdError}`);
+          await forceUIUpdate();
         }
       }
 
+      if (creationCancelled) {
+        await worktreeService.remove(currentProjectPath, wtName);
+        resetCreation();
+        return;
+      }
+
+      // Step 4: Done - open window
+      creationStep = 'done';
+      addCreationOutput('Opening worktree window...');
+      await forceUIUpdate();
+
       // Open new window and refresh worktree list (keep modal open)
-      openWorktreeWindow(wt);
+      openWorktreeWindow(wt, true); // skipInit=true since we just ran init commands
       loadWorktrees(currentProjectPath).catch(console.error);
 
-      // Reset form and update UI
-      isCreating = false;
+      // Brief delay to show completion, then reset
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      resetCreation();
       createName = '';
       isExistingBranch = false;
-      await tick();
+      await forceUIUpdate();
     } catch (e) {
       createError = e instanceof Error ? e.message : String(e);
-      isCreating = false;
+      resetCreation();
       // Force UI update after state change in async context
-      await tick();
+      await forceUIUpdate();
     }
   }
 
-  async function openWorktreeWindow(wt: WorktreeInfo) {
+  function resetCreation() {
+    isCreating = false;
+    creationStep = null;
+    creationOutput = [];
+    creationCancelled = false;
+  }
+
+  function addOpenOutput(line: string) {
+    openOutput = [...openOutput, line];
+  }
+
+  function resetOpen() {
+    openStep = null;
+    openOutput = [];
+    openCancelled = false;
+  }
+
+  async function openWorktreeWindow(wt: WorktreeInfo, skipInit = false) {
+    // If called from handleCreate (skipInit=true), just open the window
+    if (skipInit) {
+      try {
+        await windowService.focusOrCreateWindow(wt.path);
+      } catch (e) {
+        console.error('Failed to open worktree window:', e);
+      }
+      return;
+    }
+
+    // For clicking on existing worktrees, run init commands first
+    openStep = 'init';
+    openOutput = [];
+    openCancelled = false;
+    await forceUIUpdate();
+
     try {
-      // Focus existing window or create a new one
-      await windowService.focusOrCreateWindow(wt.path);
+      const effectiveCommands = getEffectiveInitCommands().filter((c) => c.enabled);
+
+      if (effectiveCommands.length === 0) {
+        addOpenOutput('No initialization commands to run');
+        await forceUIUpdate();
+      } else {
+        for (const cmd of effectiveCommands) {
+          if (openCancelled) {
+            resetOpen();
+            return;
+          }
+
+          addOpenOutput(`Running: ${cmd.command}`);
+          await forceUIUpdate();
+          try {
+            const result = await worktreeService.runInitCommand(wt.path, cmd.command);
+            if (result.success) {
+              addOpenOutput(`✓ ${cmd.name} completed`);
+            } else {
+              addOpenOutput(`⚠ ${cmd.name} failed (exit code: ${result.exit_code})`);
+              if (result.stderr) {
+                const lines = result.stderr.trim().split('\n').slice(-3);
+                lines.forEach((line) => addOpenOutput(`  ${line}`));
+              }
+            }
+            await forceUIUpdate();
+          } catch (cmdError) {
+            addOpenOutput(`⚠ ${cmd.name} error: ${cmdError}`);
+            await forceUIUpdate();
+          }
+        }
+      }
+
+      if (openCancelled) {
+        resetOpen();
+        return;
+      }
+
+      // Done - open window
+      openStep = 'done';
+      addOpenOutput('Opening worktree window...');
+      await forceUIUpdate();
+
+      try {
+        await windowService.focusOrCreateWindow(wt.path);
+      } catch (e) {
+        console.error('Failed to open worktree window:', e);
+      }
+
+      // Brief delay to show completion, then reset
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      resetOpen();
     } catch (e) {
-      console.error('Failed to open worktree window:', e);
+      console.error('Failed to open worktree:', e);
+      resetOpen();
     }
   }
 
@@ -371,7 +666,7 @@
         <!-- Worktree Tree View -->
         {#if isLoading && !mounted}
           <div class="loading-state">
-            <Spinner size={24} />
+            <Spinner size="md" />
             <span>Loading worktrees...</span>
           </div>
         {:else}
@@ -412,91 +707,110 @@
         <!-- Separator -->
         <div class="section-divider"></div>
 
-        <!-- Create Form -->
+        <!-- Create Form / Progress View -->
         <div class="create-section">
-          <div class="section-title">New worktree</div>
+          {#if creationStep}
+            <!-- Creation Progress View (Simple) -->
+            <div class="progress-simple">
+              <Spinner size="md" />
+              <span class="progress-text"
+                >{creationOutput[creationOutput.length - 1] ?? 'Initializing...'}</span
+              >
+            </div>
+          {:else if openStep}
+            <!-- Open Worktree Progress View (Simple) -->
+            <div class="progress-simple">
+              <Spinner size="md" />
+              <span class="progress-text"
+                >{openOutput[openOutput.length - 1] ?? 'Initializing...'}</span
+              >
+            </div>
+          {:else}
+            <!-- Create Form -->
+            <div class="section-title">New worktree</div>
 
-          <div class="form-group">
-            <div class="input-row">
-              <div class="input-wrapper">
-                <!-- svelte-ignore a11y_autofocus -->
-                <input
-                  id="wt-name"
-                  type="text"
-                  class="form-input"
-                  bind:value={createName}
-                  placeholder="Branch name (e.g. fix-sidebar)"
-                  spellcheck="false"
-                  autocomplete="off"
-                  autocorrect="off"
-                  autocapitalize="off"
-                  autofocus
-                  oninput={() => handleNameInput()}
-                  onkeydown={(e) => {
-                    if (e.key === 'Enter' && createName.trim()) handleCreate();
-                  }}
-                />
-                {#if createName.trim()}
-                  <span
-                    class="input-indicator"
-                    title={isExistingBranch ? 'Existing branch' : 'New branch'}
+            <div class="form-group">
+              <div class="input-row">
+                <div class="input-wrapper">
+                  <!-- svelte-ignore a11y_autofocus -->
+                  <input
+                    id="wt-name"
+                    type="text"
+                    class="form-input"
+                    bind:value={createName}
+                    placeholder="Branch name (e.g. fix-sidebar)"
+                    spellcheck="false"
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="off"
+                    autofocus
+                    oninput={() => handleNameInput()}
+                    onkeydown={(e) => {
+                      if (e.key === 'Enter' && createName.trim()) handleCreate();
+                    }}
+                  />
+                  {#if createName.trim()}
+                    <span
+                      class="input-indicator"
+                      title={isExistingBranch ? 'Existing branch' : 'New branch'}
+                    >
+                      {isExistingBranch ? 'E' : 'N'}
+                    </span>
+                  {/if}
+                </div>
+                <button
+                  type="button"
+                  class="branch-select-btn"
+                  title="Select existing branch"
+                  onclick={() => (showBranchDropdown = true)}
+                  disabled={availableBranches().length === 0}
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
                   >
-                    {isExistingBranch ? 'E' : 'N'}
-                  </span>
-                {/if}
+                    <line x1="6" y1="3" x2="6" y2="15"></line>
+                    <circle cx="18" cy="6" r="3"></circle>
+                    <circle cx="6" cy="18" r="3"></circle>
+                    <path d="M18 9a9 9 0 0 1-9 9"></path>
+                  </svg>
+                </button>
               </div>
+              {#if createName.trim()}
+                <div class="path-preview">
+                  <span class="preview-label">Path:</span>
+                  <span class="preview-path">{pathPreview()}</span>
+                </div>
+              {/if}
+            </div>
+
+            {#if branchValidationError()}
+              <div class="form-error form-warning">{branchValidationError()}</div>
+            {/if}
+
+            {#if createError}
+              <div class="form-error">{createError}</div>
+            {/if}
+
+            <div class="form-actions">
               <button
                 type="button"
-                class="branch-select-btn"
-                title="Select existing branch"
-                onclick={() => (showBranchDropdown = true)}
-                disabled={availableBranches().length === 0}
+                class="btn btn-primary"
+                onclick={() => handleCreate()}
+                disabled={!createName.trim() || isCreating || !!branchValidationError()}
               >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <line x1="6" y1="3" x2="6" y2="15"></line>
-                  <circle cx="18" cy="6" r="3"></circle>
-                  <circle cx="6" cy="18" r="3"></circle>
-                  <path d="M18 9a9 9 0 0 1-9 9"></path>
-                </svg>
+                {#if isCreating}
+                  <Spinner size="sm" /> Creating...
+                {:else}
+                  Open
+                {/if}
               </button>
             </div>
-            {#if createName.trim()}
-              <div class="path-preview">
-                <span class="preview-label">Path:</span>
-                <span class="preview-path">{pathPreview()}</span>
-              </div>
-            {/if}
-          </div>
-
-          {#if branchValidationError()}
-            <div class="form-error form-warning">{branchValidationError()}</div>
           {/if}
-
-          {#if createError}
-            <div class="form-error">{createError}</div>
-          {/if}
-
-          <div class="form-actions">
-            <button
-              type="button"
-              class="btn btn-primary"
-              onclick={() => handleCreate()}
-              disabled={!createName.trim() || isCreating || !!branchValidationError()}
-            >
-              {#if isCreating}
-                <Spinner size={12} /> Creating...
-              {:else}
-                Open
-              {/if}
-            </button>
-          </div>
         </div>
       </div>
 
@@ -664,6 +978,103 @@
               class="pattern-add-btn"
               onclick={() => addCopyPattern()}
               disabled={!newCopyPattern.trim()}
+            >
+              Add
+            </button>
+          </div>
+        </div>
+
+        <!-- Initialization Commands Section -->
+        <div class="settings-section">
+          <div class="settings-section-title">Initialization commands</div>
+          <p class="settings-section-description">
+            These commands will run in the new worktree after creation.
+          </p>
+
+          <!-- Auto-detected package manager -->
+          {#if detectedPackageManager}
+            {@const hasUserOverride = initCommands.some(
+              (c) => c.command === detectedPackageManager!.command
+            )}
+            {#if !hasUserOverride}
+              <div class="command-item command-auto">
+                <input type="checkbox" class="command-checkbox" checked disabled />
+                <div class="command-info">
+                  <span class="command-name">Install dependencies</span>
+                  <span class="command-value">{detectedPackageManager.command}</span>
+                </div>
+                <span class="pattern-badge">auto</span>
+              </div>
+            {/if}
+          {/if}
+
+          <!-- User-configured commands -->
+          {#each initCommands as cmd (cmd.command)}
+            <div class="command-item command-user">
+              <input
+                type="checkbox"
+                class="command-checkbox"
+                checked={cmd.enabled}
+                onchange={() => toggleInitCommand(cmd.command)}
+              />
+              <div class="command-info">
+                <span class="command-name">{cmd.name}</span>
+                <span class="command-value">{cmd.command}</span>
+              </div>
+              <button
+                type="button"
+                class="pattern-remove"
+                onclick={() => removeInitCommand(cmd.command)}
+                title="Remove command"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+          {/each}
+
+          <!-- Add new command -->
+          <div class="command-add">
+            <input
+              type="text"
+              class="command-input command-name-input"
+              bind:value={newInitCommandName}
+              placeholder="Name (e.g. Build project)"
+              spellcheck="false"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+            />
+            <input
+              type="text"
+              class="command-input command-value-input"
+              bind:value={newInitCommandValue}
+              placeholder="Command (e.g. cargo build)"
+              spellcheck="false"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              onkeydown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addInitCommand();
+                }
+              }}
+            />
+            <button
+              type="button"
+              class="pattern-add-btn"
+              onclick={() => addInitCommand()}
+              disabled={!newInitCommandName.trim() || !newInitCommandValue.trim()}
             >
               Add
             </button>
@@ -1074,6 +1485,7 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+    min-height: 150px;
   }
 
   .section-title {
@@ -1634,5 +2046,131 @@
   .modal-body:hover::-webkit-scrollbar-thumb,
   .branch-modal-body:hover::-webkit-scrollbar-thumb {
     background: rgba(125, 211, 252, 0.3);
+  }
+
+  /* Simple Progress View */
+  .progress-simple {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    flex: 1;
+  }
+
+  .progress-text {
+    font-size: 13px;
+    color: var(--text-secondary);
+    text-align: center;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .creation-output {
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    max-height: 120px;
+    overflow-y: auto;
+  }
+
+  .output-line {
+    color: var(--text-secondary);
+    padding: 2px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .output-line:last-child {
+    color: var(--text-primary);
+  }
+
+  /* Init Commands Settings */
+  .command-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+  }
+
+  .command-auto {
+    opacity: 0.7;
+  }
+
+  .command-checkbox {
+    width: 14px;
+    height: 14px;
+    accent-color: var(--accent-color);
+    cursor: pointer;
+  }
+
+  .command-checkbox:disabled {
+    cursor: default;
+  }
+
+  .command-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .command-name {
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+
+  .command-value {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .command-add {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-1);
+  }
+
+  .command-input {
+    flex: 1;
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color var(--transition-fast);
+  }
+
+  .command-input:focus {
+    border-color: var(--accent-color);
+  }
+
+  .command-input::placeholder {
+    color: var(--text-muted);
+  }
+
+  .command-value-input {
+    font-family: var(--font-mono);
+  }
+
+  .command-add > .pattern-add-btn {
+    align-self: flex-end;
   }
 </style>

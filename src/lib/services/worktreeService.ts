@@ -28,6 +28,19 @@ export interface CopyResult {
   errors: string[];
 }
 
+export interface PackageManager {
+  name: string;
+  lock_file: string;
+  command: string;
+}
+
+export interface CommandOutput {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exit_code: number;
+}
+
 /**
  * Git worktree operations service
  * Wraps Tauri worktree commands for testability
@@ -70,4 +83,16 @@ export const worktreeService = {
    */
   copyFiles: (sourcePath: string, targetPath: string, patterns: string[]): Promise<CopyResult> =>
     invoke('copy_files_to_worktree', { sourcePath, targetPath, patterns }),
+
+  /**
+   * Detect package manager from lock files in the project directory
+   */
+  detectPackageManager: (projectPath: string): Promise<PackageManager | null> =>
+    invoke('detect_package_manager', { projectPath }),
+
+  /**
+   * Run an initialization command in the specified directory
+   */
+  runInitCommand: (cwd: string, command: string): Promise<CommandOutput> =>
+    invoke('run_init_command', { cwd, command }),
 };

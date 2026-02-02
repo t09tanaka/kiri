@@ -3,6 +3,7 @@ use glob::glob;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct WorktreeInfo {
@@ -34,6 +35,21 @@ pub struct CopyResult {
     pub copied_files: Vec<String>,
     pub skipped_files: Vec<String>,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PackageManager {
+    pub name: String,
+    pub lock_file: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CommandOutput {
+    pub success: bool,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
 }
 
 /// Get the default branch name for a repository.
@@ -540,6 +556,82 @@ pub fn copy_files_to_worktree(
         copied_files,
         skipped_files,
         errors,
+    })
+}
+
+/// Detect package manager by checking for lock files in the project directory.
+/// Priority order: pnpm > yarn > bun > npm (to prefer faster package managers)
+pub fn detect_package_manager(project_path: String) -> Result<Option<PackageManager>, String> {
+    let path = Path::new(&project_path);
+
+    if !path.exists() {
+        return Err(format!("Path does not exist: {}", project_path));
+    }
+
+    // Check for lock files in priority order
+    let lock_files = [
+        ("pnpm-lock.yaml", "pnpm", "pnpm install"),
+        ("yarn.lock", "yarn", "yarn install"),
+        ("bun.lockb", "bun", "bun install"),
+        ("package-lock.json", "npm", "npm install"),
+    ];
+
+    for (lock_file, name, command) in lock_files {
+        if path.join(lock_file).exists() {
+            return Ok(Some(PackageManager {
+                name: name.to_string(),
+                lock_file: lock_file.to_string(),
+                command: command.to_string(),
+            }));
+        }
+    }
+
+    // No lock file found, but check if package.json exists (default to npm)
+    if path.join("package.json").exists() {
+        return Ok(Some(PackageManager {
+            name: "npm".to_string(),
+            lock_file: "".to_string(),
+            command: "npm install".to_string(),
+        }));
+    }
+
+    Ok(None)
+}
+
+/// Run an initialization command in the specified directory.
+/// Returns the command output including stdout, stderr, and exit code.
+pub fn run_init_command(cwd: String, command: String) -> Result<CommandOutput, String> {
+    let path = Path::new(&cwd);
+
+    if !path.exists() {
+        return Err(format!("Working directory does not exist: {}", cwd));
+    }
+
+    // Split command into program and arguments
+    // Use shell to handle complex commands
+    #[cfg(target_os = "windows")]
+    let output = Command::new("cmd")
+        .args(["/C", &command])
+        .current_dir(path)
+        .output()
+        .map_err(|e| format!("Failed to execute command: {}", e))?;
+
+    #[cfg(not(target_os = "windows"))]
+    let output = Command::new("sh")
+        .args(["-c", &command])
+        .current_dir(path)
+        .output()
+        .map_err(|e| format!("Failed to execute command: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let exit_code = output.status.code().unwrap_or(-1);
+
+    Ok(CommandOutput {
+        success: output.status.success(),
+        stdout,
+        stderr,
+        exit_code,
     })
 }
 
@@ -1178,5 +1270,171 @@ mod tests {
         assert!(target_dir.path().join(".claude/settings.json").exists());
         assert!(target_dir.path().join(".claude/rules/rule1.md").exists());
         assert!(target_dir.path().join(".claude/rules/rule2.md").exists());
+    }
+
+    #[test]
+    fn test_detect_package_manager_npm() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), "{}").unwrap();
+        fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
+
+        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pm = result.unwrap().unwrap();
+        assert_eq!(pm.name, "npm");
+        assert_eq!(pm.lock_file, "package-lock.json");
+        assert_eq!(pm.command, "npm install");
+    }
+
+    #[test]
+    fn test_detect_package_manager_pnpm() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), "{}").unwrap();
+        fs::write(dir.path().join("pnpm-lock.yaml"), "{}").unwrap();
+
+        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pm = result.unwrap().unwrap();
+        assert_eq!(pm.name, "pnpm");
+        assert_eq!(pm.lock_file, "pnpm-lock.yaml");
+        assert_eq!(pm.command, "pnpm install");
+    }
+
+    #[test]
+    fn test_detect_package_manager_yarn() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), "{}").unwrap();
+        fs::write(dir.path().join("yarn.lock"), "").unwrap();
+
+        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pm = result.unwrap().unwrap();
+        assert_eq!(pm.name, "yarn");
+        assert_eq!(pm.lock_file, "yarn.lock");
+        assert_eq!(pm.command, "yarn install");
+    }
+
+    #[test]
+    fn test_detect_package_manager_bun() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), "{}").unwrap();
+        fs::write(dir.path().join("bun.lockb"), "").unwrap();
+
+        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pm = result.unwrap().unwrap();
+        assert_eq!(pm.name, "bun");
+        assert_eq!(pm.lock_file, "bun.lockb");
+        assert_eq!(pm.command, "bun install");
+    }
+
+    #[test]
+    fn test_detect_package_manager_priority() {
+        // When multiple lock files exist, pnpm should take priority
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), "{}").unwrap();
+        fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
+        fs::write(dir.path().join("pnpm-lock.yaml"), "{}").unwrap();
+
+        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pm = result.unwrap().unwrap();
+        assert_eq!(pm.name, "pnpm");
+    }
+
+    #[test]
+    fn test_detect_package_manager_package_json_only() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), "{}").unwrap();
+
+        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pm = result.unwrap().unwrap();
+        assert_eq!(pm.name, "npm");
+        assert!(pm.lock_file.is_empty());
+    }
+
+    #[test]
+    fn test_detect_package_manager_none() {
+        let dir = tempdir().unwrap();
+        // No package.json or lock files
+
+        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn test_detect_package_manager_invalid_path() {
+        let result = detect_package_manager("/nonexistent/path".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_run_init_command_success() {
+        let dir = tempdir().unwrap();
+
+        let result = run_init_command(dir.path().to_string_lossy().to_string(), "echo hello".to_string());
+        assert!(result.is_ok());
+
+        let output = result.unwrap();
+        assert!(output.success);
+        assert!(output.stdout.contains("hello"));
+        assert_eq!(output.exit_code, 0);
+    }
+
+    #[test]
+    fn test_run_init_command_failure() {
+        let dir = tempdir().unwrap();
+
+        // Run a command that will fail
+        let result = run_init_command(
+            dir.path().to_string_lossy().to_string(),
+            "exit 1".to_string(),
+        );
+        assert!(result.is_ok());
+
+        let output = result.unwrap();
+        assert!(!output.success);
+        assert_eq!(output.exit_code, 1);
+    }
+
+    #[test]
+    fn test_run_init_command_invalid_cwd() {
+        let result = run_init_command("/nonexistent/path".to_string(), "echo hello".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_package_manager_serialization() {
+        let pm = PackageManager {
+            name: "npm".to_string(),
+            lock_file: "package-lock.json".to_string(),
+            command: "npm install".to_string(),
+        };
+        assert_eq!(pm.name, "npm");
+        assert_eq!(pm.lock_file, "package-lock.json");
+        assert_eq!(pm.command, "npm install");
+    }
+
+    #[test]
+    fn test_command_output_serialization() {
+        let output = CommandOutput {
+            success: true,
+            stdout: "output".to_string(),
+            stderr: "".to_string(),
+            exit_code: 0,
+        };
+        assert!(output.success);
+        assert_eq!(output.stdout, "output");
+        assert_eq!(output.exit_code, 0);
     }
 }

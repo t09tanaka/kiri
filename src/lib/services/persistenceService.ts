@@ -427,11 +427,22 @@ export function getDefaultSettings(): PersistedSettings {
 // ============================================================================
 
 /**
+ * Worktree initialization command configuration
+ */
+export interface WorktreeInitCommand {
+  name: string; // Display name (e.g., "Install dependencies")
+  command: string; // Shell command (e.g., "npm install")
+  enabled: boolean; // Whether to run this command
+  auto: boolean; // True if auto-detected, false if user-added
+}
+
+/**
  * Project-specific settings (stored per project path)
  */
 export interface ProjectSettings {
   searchExcludePatterns: string[];
   worktreeCopyPatterns: string[];
+  worktreeInitCommands: WorktreeInitCommand[];
 }
 
 /**
@@ -458,6 +469,7 @@ export const DEFAULT_WORKTREE_COPY_PATTERNS: string[] = ['.env*'];
 const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   searchExcludePatterns: [...DEFAULT_EXCLUDE_PATTERNS],
   worktreeCopyPatterns: [],
+  worktreeInitCommands: [],
 };
 
 /**
@@ -488,6 +500,8 @@ export async function loadProjectSettings(projectPath: string): Promise<ProjectS
         settings.searchExcludePatterns ?? DEFAULT_PROJECT_SETTINGS.searchExcludePatterns,
       worktreeCopyPatterns:
         settings.worktreeCopyPatterns ?? DEFAULT_PROJECT_SETTINGS.worktreeCopyPatterns,
+      worktreeInitCommands:
+        settings.worktreeInitCommands ?? DEFAULT_PROJECT_SETTINGS.worktreeInitCommands,
     };
   } catch (error) {
     console.error('Failed to load project settings:', error);
