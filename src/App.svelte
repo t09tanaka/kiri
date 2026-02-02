@@ -245,7 +245,7 @@
     }
 
     // Cmd+Shift+W: Close project (return to start screen)
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'w') {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'w') {
       e.preventDefault();
       projectStore.closeProject();
       return;
@@ -295,7 +295,7 @@
     }
 
     // Cmd+Shift+F: Toggle Content Search (only when project is open)
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'f' && $isProjectOpen) {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f' && $isProjectOpen) {
       e.preventDefault();
       const path = projectStore.getCurrentPath();
       if (path) {
@@ -305,7 +305,7 @@
     }
 
     // Cmd+Shift+N: New window
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'n') {
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'n') {
       e.preventDefault();
       try {
         await invoke('create_window');
