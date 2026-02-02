@@ -6,11 +6,13 @@
   import { open } from '@tauri-apps/plugin-dialog';
   import { AppLayout, StartScreen } from '@/lib/components';
   import QuickOpen from '@/lib/components/search/QuickOpen.svelte';
+  import ContentSearchModal from '@/lib/components/search/ContentSearchModal.svelte';
   import KeyboardShortcuts from '@/lib/components/ui/KeyboardShortcuts.svelte';
   import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
   import WorktreePanel from '@/lib/components/git/WorktreePanel.svelte';
   import EditorModal from '@/lib/components/editor/EditorModal.svelte';
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
+  import { contentSearchStore, isContentSearchOpen } from '@/lib/stores/contentSearchStore';
   import { tabStore } from '@/lib/stores/tabStore';
   import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { peekStore } from '@/lib/stores/peekStore';
@@ -288,6 +290,16 @@
         } else {
           worktreeViewStore.open(path);
         }
+      }
+      return;
+    }
+
+    // Cmd+Shift+F: Toggle Content Search (only when project is open)
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'f' && $isProjectOpen) {
+      e.preventDefault();
+      const path = projectStore.getCurrentPath();
+      if (path) {
+        await contentSearchStore.toggle(path);
       }
       return;
     }
@@ -640,6 +652,10 @@
       projectPath={$worktreeViewStore.projectPath}
       onClose={() => worktreeViewStore.close()}
     />
+  {/if}
+
+  {#if $isContentSearchOpen && projectStore.getCurrentPath()}
+    <ContentSearchModal onOpenFile={handleFileSelect} onClose={() => contentSearchStore.close()} />
   {/if}
 {:else}
   <StartScreen />

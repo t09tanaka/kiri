@@ -1,3 +1,4 @@
+use glob::Pattern;
 use serde::Serialize;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -140,6 +141,55 @@ pub fn search_files(
     Ok(results)
 }
 
+/// Check if a path should be excluded based on the exclude patterns.
+/// Supports both simple names (e.g., "node_modules") and glob patterns (e.g., "**/*.min.js")
+fn should_exclude(path: &Path, exclude_patterns: &[Pattern]) -> bool {
+    let path_str = path.to_string_lossy();
+
+    for pattern in exclude_patterns {
+        // Check the full path
+        if pattern.matches(&path_str) {
+            return true;
+        }
+
+        // Check against just the file/directory name
+        if let Some(name) = path.file_name() {
+            let name_str = name.to_string_lossy();
+            if pattern.matches(&name_str) {
+                return true;
+            }
+        }
+
+        // Check each component of the path
+        for component in path.components() {
+            if let Some(name) = component.as_os_str().to_str() {
+                if pattern.matches(name) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
+/// Parse exclude pattern strings into glob Patterns.
+/// Simple names like "node_modules" are converted to patterns that match them anywhere.
+fn parse_exclude_patterns(patterns: &[String]) -> Vec<Pattern> {
+    patterns
+        .iter()
+        .filter_map(|p| {
+            // If it's a simple name (no glob characters), match it anywhere
+            if !p.contains('*') && !p.contains('?') && !p.contains('[') {
+                // Try to match as-is first
+                Pattern::new(p).ok()
+            } else {
+                Pattern::new(p).ok()
+            }
+        })
+        .collect()
+}
+
 fn search_file_content(
     file_path: &Path,
     query: &str,
@@ -191,6 +241,7 @@ fn collect_content_matches(
     max_results: usize,
     max_matches_per_file: usize,
     ignore_hidden: bool,
+    exclude_patterns: &[Pattern],
 ) {
     if results.len() >= max_results {
         return;
@@ -213,6 +264,11 @@ fn collect_content_matches(
             continue;
         }
 
+        // Check custom exclude patterns
+        if should_exclude(&path, exclude_patterns) {
+            continue;
+        }
+
         if path.is_file() {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
@@ -228,22 +284,15 @@ fn collect_content_matches(
                 }
             }
         } else if path.is_dir() {
-            let dir_name = name.to_lowercase();
-            if dir_name != "node_modules"
-                && dir_name != "target"
-                && dir_name != ".git"
-                && dir_name != "dist"
-                && dir_name != "build"
-            {
-                collect_content_matches(
-                    &path,
-                    query,
-                    results,
-                    max_results,
-                    max_matches_per_file,
-                    ignore_hidden,
-                );
-            }
+            collect_content_matches(
+                &path,
+                query,
+                results,
+                max_results,
+                max_matches_per_file,
+                ignore_hidden,
+                exclude_patterns,
+            );
         }
     }
 }
@@ -253,6 +302,7 @@ pub fn search_content(
     root_path: String,
     query: String,
     max_results: usize,
+    exclude_patterns: Vec<String>,
 ) -> Result<Vec<ContentSearchResult>, String> {
     if query.len() < 2 {
         return Ok(Vec::new());
@@ -264,8 +314,28 @@ pub fn search_content(
         return Err("Path does not exist".to_string());
     }
 
+    // Default excluded directories (always excluded)
+    let mut all_patterns = vec![
+        "node_modules".to_string(),
+        "target".to_string(),
+        ".git".to_string(),
+        "dist".to_string(),
+        "build".to_string(),
+    ];
+    all_patterns.extend(exclude_patterns);
+
+    let parsed_patterns = parse_exclude_patterns(&all_patterns);
+
     let mut results = Vec::new();
-    collect_content_matches(root, &query, &mut results, max_results, 10, true);
+    collect_content_matches(
+        root,
+        &query,
+        &mut results,
+        max_results,
+        10,
+        true,
+        &parsed_patterns,
+    );
 
     Ok(results)
 }
@@ -471,7 +541,8 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "a".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_ok());
         // Short queries (< 2 chars) should return empty results
@@ -483,7 +554,8 @@ mod tests {
         let result = search_content(
             "/nonexistent/path".to_string(),
             "test".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_err());
     }
@@ -497,7 +569,8 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "println".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_ok());
 
@@ -516,7 +589,8 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "test".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_ok());
 
@@ -534,7 +608,8 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "hello".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_ok());
 
@@ -554,7 +629,8 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "test".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_ok());
 
@@ -572,7 +648,8 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "world".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_ok());
 
@@ -625,7 +702,8 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "hello".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_ok());
 
@@ -645,7 +723,8 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "matching".to_string(),
-            5
+            5,
+            vec![],
         );
         assert!(result.is_ok());
         assert!(result.unwrap().len() <= 5);
@@ -680,7 +759,8 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "matching".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_ok());
 
@@ -701,7 +781,8 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "match".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_ok());
 
@@ -765,7 +846,8 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "matching".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_ok());
 
@@ -789,7 +871,8 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "matching".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_ok());
 
@@ -832,8 +915,101 @@ mod tests {
         let result = search_content(
             dir.path().to_string_lossy().to_string(),
             "searchable".to_string(),
-            10
+            10,
+            vec![],
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_search_content_custom_exclude_patterns() {
+        let dir = tempdir().unwrap();
+
+        // Create directories to test exclusion
+        fs::create_dir(dir.path().join("vendor")).unwrap();
+        fs::write(
+            dir.path().join("vendor").join("lib.rs"),
+            "matching content",
+        )
+        .unwrap();
+
+        fs::create_dir(dir.path().join("src")).unwrap();
+        fs::write(dir.path().join("src").join("main.rs"), "matching content").unwrap();
+
+        // Exclude "vendor" directory
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "matching".to_string(),
+            10,
+            vec!["vendor".to_string()],
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        // Should only find in src, not vendor
+        assert_eq!(results.len(), 1);
+        assert!(results[0].path.contains("src"));
+    }
+
+    #[test]
+    fn test_search_content_glob_exclude_patterns() {
+        let dir = tempdir().unwrap();
+
+        // Create files with different extensions
+        fs::write(dir.path().join("app.rs"), "matching content").unwrap();
+        fs::write(dir.path().join("app.min.js"), "matching content").unwrap();
+        fs::write(dir.path().join("styles.min.css"), "matching content").unwrap();
+
+        // Exclude minified files
+        let result = search_content(
+            dir.path().to_string_lossy().to_string(),
+            "matching".to_string(),
+            10,
+            vec!["*.min.js".to_string(), "*.min.css".to_string()],
+        );
+        assert!(result.is_ok());
+
+        let results = result.unwrap();
+        // Should only find app.rs
+        assert_eq!(results.len(), 1);
+        assert!(results[0].name.ends_with(".rs"));
+    }
+
+    #[test]
+    fn test_should_exclude_simple_name() {
+        let patterns = parse_exclude_patterns(&["vendor".to_string()]);
+        let path = Path::new("/project/vendor/lib.rs");
+        assert!(should_exclude(path, &patterns));
+    }
+
+    #[test]
+    fn test_should_exclude_glob_pattern() {
+        let patterns = parse_exclude_patterns(&["*.min.js".to_string()]);
+        let path = Path::new("/project/app.min.js");
+        assert!(should_exclude(path, &patterns));
+    }
+
+    #[test]
+    fn test_should_not_exclude_non_matching() {
+        let patterns = parse_exclude_patterns(&["vendor".to_string()]);
+        let path = Path::new("/project/src/main.rs");
+        assert!(!should_exclude(path, &patterns));
+    }
+
+    #[test]
+    fn test_parse_exclude_patterns_empty() {
+        let patterns = parse_exclude_patterns(&[]);
+        assert!(patterns.is_empty());
+    }
+
+    #[test]
+    fn test_parse_exclude_patterns_mixed() {
+        let input = vec![
+            "node_modules".to_string(),
+            "*.min.js".to_string(),
+            "vendor".to_string(),
+        ];
+        let patterns = parse_exclude_patterns(&input);
+        assert_eq!(patterns.len(), 3);
     }
 }

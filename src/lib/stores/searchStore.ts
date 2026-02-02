@@ -154,6 +154,7 @@ function createSearchStore() {
           rootPath,
           query,
           maxResults: 50,
+          excludePatterns: [],
         });
 
         update((state) => ({

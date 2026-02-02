@@ -421,3 +421,91 @@ export async function saveSettings(settings: PersistedSettings): Promise<void> {
 export function getDefaultSettings(): PersistedSettings {
   return { ...DEFAULT_SETTINGS };
 }
+
+// ============================================================================
+// Project-specific settings
+// ============================================================================
+
+/**
+ * Project-specific settings (stored per project path)
+ */
+export interface ProjectSettings {
+  searchExcludePatterns: string[];
+}
+
+/**
+ * Default exclude patterns for content search
+ */
+export const DEFAULT_EXCLUDE_PATTERNS: string[] = [
+  '*.min.js',
+  '*.min.css',
+  '*.map',
+  '*.lock',
+  'package-lock.json',
+  'yarn.lock',
+  'pnpm-lock.yaml',
+  '.DS_Store',
+  'Thumbs.db',
+  '*.log',
+];
+
+const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
+  searchExcludePatterns: [...DEFAULT_EXCLUDE_PATTERNS],
+};
+
+/**
+ * Normalize project path for use as a store key
+ */
+function normalizeProjectPath(projectPath: string): string {
+  // Replace special characters that might cause issues in keys
+  return projectPath.replace(/[/\\:]/g, '_');
+}
+
+/**
+ * Load project-specific settings
+ */
+export async function loadProjectSettings(projectPath: string): Promise<ProjectSettings> {
+  try {
+    const s = await getStore();
+    await s.reload();
+
+    const key = `project_${normalizeProjectPath(projectPath)}`;
+    const settings = await s.get<ProjectSettings>(key);
+
+    if (!settings) {
+      return { ...DEFAULT_PROJECT_SETTINGS };
+    }
+
+    return {
+      searchExcludePatterns:
+        settings.searchExcludePatterns ?? DEFAULT_PROJECT_SETTINGS.searchExcludePatterns,
+    };
+  } catch (error) {
+    console.error('Failed to load project settings:', error);
+    return { ...DEFAULT_PROJECT_SETTINGS };
+  }
+}
+
+/**
+ * Save project-specific settings
+ */
+export async function saveProjectSettings(
+  projectPath: string,
+  settings: ProjectSettings
+): Promise<void> {
+  try {
+    const s = await getStore();
+    const key = `project_${normalizeProjectPath(projectPath)}`;
+    await s.set(key, settings);
+    await s.save();
+  } catch (error) {
+    console.error('Failed to save project settings:', error);
+  }
+}
+
+/**
+ * Get default project settings
+ */
+export function getDefaultProjectSettings(): ProjectSettings {
+  return { ...DEFAULT_PROJECT_SETTINGS };
+}
