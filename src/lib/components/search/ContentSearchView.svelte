@@ -141,7 +141,7 @@
               class:selected={store.selectedFileIndex === index}
               onclick={() => handleFileClick(index)}
               ondblclick={() => handleFileDoubleClick(file)}
-              title={file.path}
+              title={getRelativePath(file.path)}
             >
               <span class="file-icon">
                 <svg
@@ -156,7 +156,7 @@
                   <polyline points="14 2 14 8 20 8"></polyline>
                 </svg>
               </span>
-              <span class="file-item-name">{getFileName(file.path)}</span>
+              <span class="file-item-name">{getRelativePath(file.path)}</span>
               <span class="match-badge">{file.matches.length}</span>
             </button>
           {/each}
