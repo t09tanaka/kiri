@@ -27,6 +27,39 @@ pub struct BranchInfo {
     pub last_commit_time: Option<i64>,
 }
 
+/// Get the default branch name for a repository.
+/// First checks origin/HEAD, then falls back to main or master.
+fn get_default_branch(repo: &Repository) -> Result<String, String> {
+    // Try to get default branch from origin/HEAD
+    if let Ok(reference) = repo.find_reference("refs/remotes/origin/HEAD") {
+        if let Ok(resolved) = reference.resolve() {
+            if let Some(name) = resolved.shorthand() {
+                // name is like "origin/main", extract just "main"
+                if let Some(branch) = name.strip_prefix("origin/") {
+                    return Ok(branch.to_string());
+                }
+            }
+        }
+    }
+
+    // Fallback: check if main or master exists
+    if repo
+        .find_branch("main", git2::BranchType::Local)
+        .is_ok()
+    {
+        return Ok("main".to_string());
+    }
+
+    if repo
+        .find_branch("master", git2::BranchType::Local)
+        .is_ok()
+    {
+        return Ok("master".to_string());
+    }
+
+    Err("Could not determine default branch".to_string())
+}
+
 /// Get the branch name for a worktree by opening the repo at that path
 fn get_worktree_branch(wt_path: &Path) -> Option<String> {
     Repository::open(wt_path)
@@ -169,12 +202,19 @@ pub fn create_worktree(
         .is_ok();
 
     if !branch_exists {
-        // Create new branch from HEAD (regardless of new_branch flag)
-        let head = repo.head().map_err(|e| e.to_string())?;
-        let head_commit = head.peel_to_commit().map_err(|e| e.to_string())?;
+        // Create new branch from the default branch
+        let default_branch = get_default_branch(&repo)?;
+        let base_branch = repo
+            .find_branch(&default_branch, git2::BranchType::Local)
+            .map_err(|e| format!("Could not find default branch '{}': {}", default_branch, e))?;
+
+        let base_commit = base_branch
+            .get()
+            .peel_to_commit()
+            .map_err(|e| e.to_string())?;
 
         // Create the branch
-        repo.branch(&branch_name, &head_commit, false)
+        repo.branch(&branch_name, &base_commit, false)
             .map_err(|e| e.to_string())?;
     }
 
