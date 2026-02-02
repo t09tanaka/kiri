@@ -7,6 +7,7 @@
     type ContentSearchResult,
     type ContentMatch,
   } from '@/lib/stores/contentSearchStore';
+  import { fileService } from '@/lib/services/fileService';
   import { Spinner } from '@/lib/components/ui';
 
   interface Props {
@@ -24,23 +25,86 @@
   // Total match count
   const totalMatches = $derived(results.reduce((sum, r) => sum + r.matches.length, 0));
 
+  // File content cache
+  let fileContentCache = $state<Map<string, string[]>>(new Map());
+  let loadingFile = $state<string | null>(null);
+
+  // Expanded files in sidebar
+  let expandedFiles = $state<Set<string>>(new Set());
+
+  // Reference to main content container for scrolling
+  let mainContentRef: HTMLDivElement | null = $state(null);
+
   function getFileName(path: string): string {
     return path.split('/').pop() ?? path;
   }
 
   function getRelativePath(path: string): string {
-    // Show path relative to project root with leading slash
     const projectPath = store.projectPath;
     if (projectPath && path.startsWith(projectPath)) {
       const relative = path.slice(projectPath.length);
-      // Ensure leading slash to indicate project root
       return relative.startsWith('/') ? relative : '/' + relative;
     }
     return path;
   }
 
+  async function loadFileContent(path: string) {
+    if (fileContentCache.has(path)) return;
+
+    loadingFile = path;
+    try {
+      const content = await fileService.readFile(path);
+      const lines = content.split('\n');
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity
+      fileContentCache = new Map(fileContentCache).set(path, lines);
+    } catch (error) {
+      console.error('Failed to load file:', error);
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity
+      fileContentCache = new Map(fileContentCache).set(path, ['// Failed to load file']);
+    } finally {
+      loadingFile = null;
+    }
+  }
+
   function handleFileClick(index: number) {
-    contentSearchStore.selectFile(index);
+    const file = results[index];
+    if (file) {
+      contentSearchStore.selectFile(index);
+      loadFileContent(file.path);
+      // Toggle expand
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity
+      const newExpanded = new Set(expandedFiles);
+      if (newExpanded.has(file.path)) {
+        newExpanded.delete(file.path);
+      } else {
+        newExpanded.add(file.path);
+      }
+      expandedFiles = newExpanded;
+    }
+  }
+
+  function handleMatchClick(fileIndex: number, matchIndex: number, line: number) {
+    contentSearchStore.selectFile(fileIndex);
+    // Update match index
+    const currentState = $contentSearchStore;
+    if (currentState.selectedFileIndex === fileIndex) {
+      // Set match index directly through multiple calls
+      for (let i = 0; i < matchIndex; i++) {
+        contentSearchStore.selectNextMatch();
+      }
+    }
+
+    // Scroll to line in main content
+    scrollToLine(line);
+  }
+
+  function scrollToLine(line: number) {
+    if (!mainContentRef) return;
+
+    const lineElement = mainContentRef.querySelector(`[data-line="${line}"]`);
+    if (lineElement) {
+      lineElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
   }
 
   function handleFileDoubleClick(file: ContentSearchResult, match?: ContentMatch) {
@@ -48,28 +112,35 @@
     onClose();
   }
 
-  function handleMatchClick(e: MouseEvent, fileIndex: number, matchIndex: number) {
-    e.stopPropagation();
-    contentSearchStore.selectFile(fileIndex);
-    // Small delay to ensure file selection is applied first
-    setTimeout(() => {
-      const currentStore = $contentSearchStore;
-      if (currentStore.selectedFileIndex === fileIndex) {
-        // Update match index directly via store
-        contentSearchStore.selectFile(fileIndex);
-        // Navigate to the specific match
-        for (let i = 0; i < matchIndex; i++) {
-          contentSearchStore.selectNextMatch();
-        }
-      }
-    }, 0);
-  }
+  function highlightMatches(line: string, lineNumber: number, matches: ContentMatch[]): string {
+    const lineMatches = matches.filter((m) => m.line === lineNumber);
+    if (lineMatches.length === 0) {
+      return escapeHtml(line);
+    }
 
-  function highlightMatch(content: string, start: number, end: number): string {
-    const before = escapeHtml(content.slice(0, start));
-    const match = escapeHtml(content.slice(start, end));
-    const after = escapeHtml(content.slice(end));
-    return `${before}<mark>${match}</mark>${after}`;
+    // Sort matches by start position (reverse order for replacement)
+    const sortedMatches = [...lineMatches].sort((a, b) => b.start - a.start);
+
+    let result = line;
+    const markers: { start: number; end: number }[] = [];
+
+    for (const match of sortedMatches) {
+      markers.push({ start: match.start, end: match.end });
+    }
+
+    // Build highlighted string
+    markers.sort((a, b) => a.start - b.start);
+    let highlighted = '';
+    let lastIndex = 0;
+
+    for (const marker of markers) {
+      highlighted += escapeHtml(result.slice(lastIndex, marker.start));
+      highlighted += `<mark>${escapeHtml(result.slice(marker.start, marker.end))}</mark>`;
+      lastIndex = marker.end;
+    }
+    highlighted += escapeHtml(result.slice(lastIndex));
+
+    return highlighted;
   }
 
   function escapeHtml(text: string): string {
@@ -80,6 +151,21 @@
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
   }
+
+  // Load file content when selected file changes
+  $effect(() => {
+    const selectedFile = results[store.selectedFileIndex];
+    if (selectedFile && !fileContentCache.has(selectedFile.path)) {
+      loadFileContent(selectedFile.path);
+    }
+  });
+
+  // Auto-expand all files when results change
+  $effect(() => {
+    if (results.length > 0) {
+      expandedFiles = new Set(results.map((r) => r.path));
+    }
+  });
 </script>
 
 <div class="content-search-view">
@@ -128,37 +214,63 @@
     </div>
   {:else}
     <div class="split-layout">
-      <!-- File list sidebar -->
+      <!-- File tree sidebar -->
       <div class="file-sidebar">
         <div class="sidebar-header">
-          <span class="sidebar-title">FILES</span>
-          <span class="file-count">{results.length}</span>
+          <span class="sidebar-title">RESULTS</span>
+          <span class="file-count">{totalMatches}</span>
         </div>
-        <div class="file-list">
-          {#each results as file, index (file.path)}
-            <button
-              class="file-item"
-              class:selected={store.selectedFileIndex === index}
-              onclick={() => handleFileClick(index)}
-              ondblclick={() => handleFileDoubleClick(file)}
-              title={getRelativePath(file.path)}
-            >
-              <span class="file-icon">
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                >
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                  <polyline points="14 2 14 8 20 8"></polyline>
-                </svg>
-              </span>
-              <span class="file-item-name">{getRelativePath(file.path)}</span>
-              <span class="match-badge">{file.matches.length}</span>
-            </button>
+        <div class="file-tree">
+          {#each results as file, fileIndex (file.path)}
+            {@const isExpanded = expandedFiles.has(file.path)}
+            {@const isSelected = store.selectedFileIndex === fileIndex}
+            <div class="tree-file">
+              <button
+                class="tree-file-header"
+                class:selected={isSelected}
+                onclick={() => handleFileClick(fileIndex)}
+                ondblclick={() => handleFileDoubleClick(file)}
+                title={getRelativePath(file.path)}
+              >
+                <span class="expand-icon" class:expanded={isExpanded}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M8 5l8 7-8 7z"></path>
+                  </svg>
+                </span>
+                <span class="file-icon">
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                  </svg>
+                </span>
+                <span class="tree-file-name">{getFileName(file.path)}</span>
+                <span class="match-badge">{file.matches.length}</span>
+              </button>
+
+              {#if isExpanded}
+                <div class="tree-matches">
+                  {#each file.matches as match, matchIndex (matchIndex)}
+                    {@const isMatchSelected = isSelected && store.selectedMatchIndex === matchIndex}
+                    <button
+                      class="tree-match-item"
+                      class:selected={isMatchSelected}
+                      onclick={() => handleMatchClick(fileIndex, matchIndex, match.line)}
+                      ondblclick={() => handleFileDoubleClick(file, match)}
+                    >
+                      <span class="match-line-num">{match.line}</span>
+                      <span class="match-preview">{match.content.trim()}</span>
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
           {/each}
         </div>
         <div class="sidebar-footer">
@@ -166,30 +278,56 @@
         </div>
       </div>
 
-      <!-- Match preview area -->
+      <!-- File content preview -->
       <div class="preview-main">
         {#if results[store.selectedFileIndex]}
           {@const selectedFile = results[store.selectedFileIndex]}
+          {@const fileLines = fileContentCache.get(selectedFile.path) ?? []}
           <div class="preview-header">
             <span class="preview-file-name">{getFileName(selectedFile.path)}</span>
             <span class="preview-file-path">{getRelativePath(selectedFile.path)}</span>
-          </div>
-          <div class="match-list">
-            {#each selectedFile.matches as match, matchIndex (matchIndex)}
-              {@const isSelectedMatch = store.selectedMatchIndex === matchIndex}
-              <button
-                class="match-item"
-                class:selected={isSelectedMatch}
-                onclick={(e) => handleMatchClick(e, store.selectedFileIndex, matchIndex)}
-                ondblclick={() => handleFileDoubleClick(selectedFile, match)}
+            <button
+              class="open-file-btn"
+              onclick={() => handleFileDoubleClick(selectedFile)}
+              title="Open in editor"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
               >
-                <span class="match-line-number">{match.line}</span>
-                <span class="match-content">
-                  <!-- eslint-disable-next-line svelte/no-at-html-tags -- escapeHtml sanitizes content -->
-                  {@html highlightMatch(match.content, match.start, match.end)}
-                </span>
-              </button>
-            {/each}
+                <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                <polyline points="15 3 21 3 21 9"></polyline>
+                <line x1="10" y1="14" x2="21" y2="3"></line>
+              </svg>
+            </button>
+          </div>
+          <div class="file-content" bind:this={mainContentRef}>
+            {#if loadingFile === selectedFile.path}
+              <div class="loading-content">
+                <Spinner size="sm" />
+                <span>Loading file...</span>
+              </div>
+            {:else if fileLines.length > 0}
+              {#each fileLines as line, lineIndex (lineIndex)}
+                {@const lineNumber = lineIndex + 1}
+                {@const hasMatch = selectedFile.matches.some((m) => m.line === lineNumber)}
+                <div class="code-line" class:has-match={hasMatch} data-line={lineNumber}>
+                  <span class="line-number">{lineNumber}</span>
+                  <span class="line-content">
+                    <!-- eslint-disable-next-line svelte/no-at-html-tags -- escapeHtml sanitizes content -->
+                    {@html highlightMatches(line, lineNumber, selectedFile.matches)}
+                  </span>
+                </div>
+              {/each}
+            {:else}
+              <div class="empty-file">
+                <span>Empty file or unable to load content</span>
+              </div>
+            {/if}
           </div>
         {/if}
       </div>
@@ -214,9 +352,9 @@
 
   /* File sidebar */
   .file-sidebar {
-    width: 240px;
-    min-width: 180px;
-    max-width: 320px;
+    width: 300px;
+    min-width: 200px;
+    max-width: 400px;
     display: flex;
     flex-direction: column;
     background: var(--bg-secondary);
@@ -251,41 +389,48 @@
     border-radius: var(--radius-sm);
   }
 
-  .file-list {
+  .file-tree {
     flex: 1;
     overflow-y: auto;
     padding: var(--space-2) 0;
   }
 
-  .file-item {
+  .tree-file {
+    margin-bottom: 2px;
+  }
+
+  .tree-file-header {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
+    gap: var(--space-1);
     width: 100%;
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-1) var(--space-2);
     background: transparent;
     border: none;
     cursor: pointer;
     text-align: left;
     transition: background var(--transition-fast);
+    font-size: 12px;
   }
 
-  .file-item:hover {
+  .tree-file-header:hover {
     background: var(--bg-elevated);
   }
 
-  .file-item.selected {
+  .tree-file-header.selected {
     background: var(--accent-subtle);
   }
 
-  .file-item.selected::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: var(--accent-color);
+  .expand-icon {
+    color: var(--text-muted);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    transition: transform var(--transition-fast);
+  }
+
+  .expand-icon.expanded {
+    transform: rotate(90deg);
   }
 
   .file-icon {
@@ -295,13 +440,12 @@
     align-items: center;
   }
 
-  .file-item-name {
-    font-size: 12px;
+  .tree-file-name {
+    flex: 1;
     color: var(--text-primary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    flex: 1;
     min-width: 0;
   }
 
@@ -315,6 +459,49 @@
     border-radius: var(--radius-sm);
     min-width: 18px;
     text-align: center;
+  }
+
+  .tree-matches {
+    padding-left: var(--space-5);
+  }
+
+  .tree-match-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    width: 100%;
+    padding: var(--space-1) var(--space-2);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    font-size: 11px;
+    font-family: var(--font-mono);
+    transition: background var(--transition-fast);
+  }
+
+  .tree-match-item:hover {
+    background: var(--bg-elevated);
+  }
+
+  .tree-match-item.selected {
+    background: var(--accent-subtle);
+  }
+
+  .match-line-num {
+    color: var(--text-muted);
+    min-width: 32px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .match-preview {
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    min-width: 0;
   }
 
   .sidebar-footer {
@@ -334,6 +521,7 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    min-width: 0;
   }
 
   .preview-header {
@@ -362,55 +550,80 @@
     white-space: nowrap;
   }
 
-  .match-list {
-    flex: 1;
-    overflow-y: auto;
-    padding: var(--space-2) 0;
-  }
-
-  .match-item {
+  .open-file-btn {
     display: flex;
-    align-items: flex-start;
-    gap: var(--space-2);
-    width: 100%;
-    padding: var(--space-2) var(--space-4);
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
     background: transparent;
     border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
     cursor: pointer;
-    text-align: left;
+    transition: all var(--transition-fast);
+  }
+
+  .open-file-btn:hover {
+    background: rgba(125, 211, 252, 0.1);
+    color: var(--accent-color);
+  }
+
+  .file-content {
+    flex: 1;
+    overflow: auto;
+    background: var(--bg-primary);
     font-family: var(--font-mono);
     font-size: 12px;
-    line-height: 1.5;
-    transition: background var(--transition-fast);
+    line-height: 1.6;
   }
 
-  .match-item:hover {
-    background: var(--bg-elevated);
+  .loading-content {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    padding: var(--space-6);
+    color: var(--text-muted);
   }
 
-  .match-item.selected {
-    background: var(--accent-subtle);
+  .empty-file {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-6);
+    color: var(--text-muted);
   }
 
-  .match-line-number {
+  .code-line {
+    display: flex;
+    min-height: 1.6em;
+    padding: 0 var(--space-2);
+  }
+
+  .code-line.has-match {
+    background: rgba(125, 211, 252, 0.08);
+  }
+
+  .line-number {
     flex-shrink: 0;
-    width: 40px;
+    width: 48px;
+    padding-right: var(--space-3);
     text-align: right;
     color: var(--text-muted);
     user-select: none;
-    padding-right: var(--space-2);
     border-right: 1px solid var(--border-subtle);
+    margin-right: var(--space-3);
   }
 
-  .match-content {
+  .line-content {
     flex: 1;
-    color: var(--text-primary);
-    white-space: pre;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: pre-wrap;
+    word-break: break-all;
   }
 
-  .match-content :global(mark) {
+  .line-content :global(mark) {
     background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
     color: var(--bg-primary);
     padding: 1px 4px;
