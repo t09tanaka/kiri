@@ -52,10 +52,6 @@
   let resizeObserver: ResizeObserver | null = null;
   let isFocused = $state(false);
 
-  // Maximum terminal width to prevent rendering issues with Ink-based apps
-  // Wide terminals (140+ cols) can cause spinner glitches due to cursor movement calculations
-  const MAX_TERMINAL_COLS = 120;
-
   // Reserve 1 row for PTY to prevent Ink full-height flickering issue
   // See: https://github.com/vadimdemedes/ink/issues/450
   // When Ink renders at exactly terminal height, unintended scrolling occurs
@@ -78,8 +74,6 @@
   let initialSetupComplete = false;
 
   // Track last sent PTY size to prevent duplicate resize calls
-  // This is needed because fitTerminalToContainer() may trigger onResize twice:
-  // once from fitAddon.fit() and once from terminal.resize() for MAX_TERMINAL_COLS capping
   let lastSentPtySize: { cols: number; rows: number } | null = null;
 
   // Watch for tab activation to focus terminal
@@ -372,12 +366,10 @@
             requestAnimationFrame(() => {
               requestAnimationFrame(() => {
                 if (fitAddon && terminal && terminalContainer) {
-                  // Use proposeDimensions to calculate, then resize with capped cols
+                  // Use proposeDimensions to calculate and resize
                   const dimensions = fitAddon.proposeDimensions();
                   if (dimensions) {
-                    const cols = Math.min(dimensions.cols, MAX_TERMINAL_COLS);
-                    const rows = dimensions.rows;
-                    terminal.resize(cols, rows);
+                    terminal.resize(dimensions.cols, dimensions.rows);
                   }
 
                   // Calculate expected minimum rows based on container height
@@ -392,8 +384,7 @@
                     setTimeout(() => {
                       const dims = fitAddon.proposeDimensions();
                       if (dims) {
-                        const cols = Math.min(dims.cols, MAX_TERMINAL_COLS);
-                        terminal.resize(cols, dims.rows);
+                        terminal.resize(dims.cols, dims.rows);
                       }
                       resolve();
                     }, 100);
@@ -417,7 +408,6 @@
         await waitForLayout();
       } else {
         // Wait for layout before creating PTY
-        // waitForLayout already caps cols at MAX_TERMINAL_COLS
         await waitForLayout();
 
         // Now create PTY with correct initial size
@@ -571,7 +561,7 @@
           // Apply row margin to prevent Ink full-height flickering
           const ptyRows = Math.max(rows - PTY_ROW_MARGIN, 10);
 
-          // Skip if size hasn't changed (prevents duplicate calls during MAX_TERMINAL_COLS capping)
+          // Skip if size hasn't changed
           if (
             lastSentPtySize &&
             lastSentPtySize.cols === cols &&
@@ -658,18 +648,11 @@
     }
 
     try {
-      // Use proposeDimensions() to calculate size without applying,
-      // then apply capped size in a single resize to avoid duplicate PTY updates
+      // Use proposeDimensions() to calculate size
       const dimensions = fitAddon.proposeDimensions();
       if (!dimensions) return;
 
-      let { cols, rows } = dimensions;
-
-      // Cap terminal width to prevent issues with Ink-based CLI apps
-      // Very wide terminals can cause spinner/progress bar rendering glitches
-      if (cols > MAX_TERMINAL_COLS) {
-        cols = MAX_TERMINAL_COLS;
-      }
+      const { cols, rows } = dimensions;
 
       // Only resize if size actually changed
       if (terminal.cols !== cols || terminal.rows !== rows) {
