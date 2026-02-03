@@ -7,7 +7,12 @@
   import FileTreeItem from './FileTreeItem.svelte';
   import type { FileEntry } from './types';
   import { gitStore, gitStatusMap } from '@/lib/stores/gitStore';
-  import { dragDropStore, isDragging, dropTargetPath } from '@/lib/stores/dragDropStore';
+  import {
+    dragDropStore,
+    isDragging,
+    dropTargetPath,
+    draggedPaths,
+  } from '@/lib/stores/dragDropStore';
   import { toastStore } from '@/lib/stores/toastStore';
   import { Skeleton } from '@/lib/components/ui';
 
@@ -37,6 +42,47 @@
 
   // Extract project name from rootPath
   const projectName = $derived(rootPath ? rootPath.split('/').pop() || rootPath : null);
+
+  // Preview entries shown during drag (before drop)
+  const previewEntries = $derived.by(() => {
+    // Show preview when dragging and targeting root
+    if (!$isDragging || !rootPath) return [];
+    const targetIsRoot = !$dropTargetPath || $dropTargetPath === rootPath;
+    if (!targetIsRoot) return [];
+
+    return $draggedPaths.map((sourcePath) => {
+      const name = sourcePath.split('/').pop() || sourcePath;
+      return {
+        name,
+        path: `${rootPath}/${name}`,
+        is_dir: false, // We don't know yet, but it doesn't matter for preview
+        is_hidden: name.startsWith('.'),
+        is_gitignored: false,
+        is_pending: true,
+      } satisfies FileEntry;
+    });
+  });
+
+  // Sort entries: directories first, then alphabetically by name (case-insensitive)
+  function sortEntries(items: FileEntry[]): FileEntry[] {
+    return [...items].sort((a, b) => {
+      // Directories come first
+      if (a.is_dir !== b.is_dir) {
+        return a.is_dir ? -1 : 1;
+      }
+      // Then sort alphabetically (case-insensitive)
+      return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    });
+  }
+
+  // Combined entries: real entries + preview entries (during drag), sorted
+  const displayEntries = $derived.by(() => {
+    if (previewEntries.length === 0) return entries;
+    // Filter out any entries that have the same path as preview entries (avoid duplicates)
+    const previewPaths = new Set(previewEntries.map((e) => e.path));
+    const filtered = entries.filter((e) => !previewPaths.has(e.path));
+    return sortEntries([...filtered, ...previewEntries]);
+  });
 
   async function loadRootDirectory(showLoading = true) {
     if (showLoading) {
@@ -140,20 +186,18 @@
     try {
       const result = await dragDropService.copyToDirectory(paths, targetDir);
 
-      if (result.success) {
-        const count = result.copied.length;
-        const fileWord = count === 1 ? 'file' : 'files';
-        const targetName = targetDir.split('/').pop() || targetDir;
-        toastStore.success(`${count} ${fileWord} copied to ${targetName}`);
-      } else if (result.copied.length > 0) {
-        const successCount = result.copied.length;
-        const errorCount = result.errors.length;
-        toastStore.warning(
-          `${successCount} copied, ${errorCount} failed: ${result.errors[0]?.error || 'Unknown error'}`
-        );
-      } else {
-        const errorMsg = result.errors[0]?.error || 'Unknown error';
-        toastStore.error(`Copy failed: ${errorMsg}`);
+      // Only show notifications for errors (success is shown via optimistic UI)
+      if (!result.success) {
+        if (result.copied.length > 0) {
+          const successCount = result.copied.length;
+          const errorCount = result.errors.length;
+          toastStore.warning(
+            `${successCount} copied, ${errorCount} failed: ${result.errors[0]?.error || 'Unknown error'}`
+          );
+        } else {
+          const errorMsg = result.errors[0]?.error || 'Unknown error';
+          toastStore.error(`Copy failed: ${errorMsg}`);
+        }
       }
     } catch (e) {
       toastStore.error(`Copy failed: ${String(e)}`);
@@ -278,7 +322,7 @@
         </button>
       {/if}
       {#if projectExpanded}
-        {#if entries.length === 0}
+        {#if displayEntries.length === 0}
           <div class="empty">
             <svg
               width="20"
@@ -297,7 +341,7 @@
             <span>Empty directory</span>
           </div>
         {:else}
-          {#each entries as entry (entry.path)}
+          {#each displayEntries as entry (entry.path)}
             <FileTreeItem
               {entry}
               {selectedPath}
@@ -557,9 +601,7 @@
 
   /* Drag and drop active state */
   .file-tree.drag-active {
-    background: rgba(125, 211, 252, 0.02);
-    border: 1px dashed var(--border-glow);
-    border-radius: var(--radius-md);
+    background: rgba(125, 211, 252, 0.03);
   }
 
   .file-tree.drag-active::before {

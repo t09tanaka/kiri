@@ -39,6 +39,7 @@
   let contextMenu = $state<{ x: number; y: number } | null>(null);
   let isDeleted = $state(false);
 
+  const isPending = $derived(entry.is_pending ?? false);
   const isSelected = $derived(selectedPath === entry.path);
   const paddingLeft = $derived(12 + depth * 16);
 
@@ -216,11 +217,13 @@
       class:gitignored={entry.is_gitignored}
       class:directory={entry.is_dir}
       class:drop-target={isDropTarget}
+      class:pending={isPending}
       style="padding-left: {paddingLeft}px"
-      onclick={handleClick}
-      onkeydown={handleKeyDown}
-      oncontextmenu={handleContextMenu}
-      title={entry.path}
+      onclick={isPending ? undefined : handleClick}
+      onkeydown={isPending ? undefined : handleKeyDown}
+      oncontextmenu={isPending ? undefined : handleContextMenu}
+      title={isPending ? 'Copying...' : entry.path}
+      disabled={isPending}
     >
       {#if entry.is_dir}
         <span class="chevron" class:expanded>
@@ -421,6 +424,22 @@
 
   .tree-item.gitignored {
     opacity: 0.4;
+  }
+
+  /* Pending (copying) state */
+  .tree-item.pending {
+    opacity: 0.5;
+    pointer-events: none;
+    cursor: default;
+  }
+
+  .tree-item.pending .name {
+    font-style: italic;
+    color: var(--text-muted);
+  }
+
+  .tree-item.pending .icon {
+    color: var(--text-muted);
   }
 
   .chevron {
