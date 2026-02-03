@@ -60,15 +60,17 @@ Parallel development made simple:
 | **Zoom Control** | `Cmd+`/`-` to adjust font size |
 | **Independent Sessions** | Each pane runs its own PTY |
 
-### 📝 Editor
+### 📝 File Viewer
 
 | Feature | Description |
 |---------|-------------|
 | **Syntax Highlighting** | 20+ languages (TypeScript, Rust, Svelte, etc.) |
-| **Git Diff Gutter** | See changes inline as you edit |
+| **Git Diff Gutter** | See changes inline |
 | **Diff View Modal** | Full diff comparison view |
 | **Copy Button** | One-click code copying |
 | **Quick Open** | `Cmd+P` for fuzzy file search |
+
+> **Note**: kiri is a read-only file viewer optimized for AI coding agents. Human editing features are intentionally omitted. For editing, use your preferred external editor or let your AI agent handle it.
 
 ### 📁 File Management
 
@@ -89,7 +91,6 @@ Parallel development made simple:
 | `Cmd+G` | Git Worktrees |
 | `` Cmd+` `` | New Terminal |
 | `Cmd+W` | Close Tab |
-| `Cmd+S` | Save File |
 | `?` | Show All Shortcuts |
 
 ## Installation
@@ -129,7 +130,7 @@ npm run tauri build
 | Frontend | [Svelte 5](https://svelte.dev/) + TypeScript | Near-zero runtime overhead |
 | Backend | Rust | Native speed for file/git operations |
 | Terminal | [xterm.js](https://xtermjs.org/) | Lightweight terminal emulator |
-| Editor | [CodeMirror 6](https://codemirror.net/) | Modular, lazy-loadable |
+| File Viewer | [CodeMirror 6](https://codemirror.net/) | Modular, lazy-loadable |
 | Git | [git2](https://github.com/rust-lang/git2-rs) | Native Rust bindings |
 
 ## Performance

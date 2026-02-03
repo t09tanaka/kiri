@@ -8,7 +8,7 @@ use commands::{
     is_terminal_alive, list_branches, list_worktrees, read_directory, read_file,
     record_command_timing, register_window, resize_terminal, remove_worktree, reveal_in_finder,
     run_init_command, search_content, search_files, set_window_geometry, setup_menu, start_watching,
-    stop_all_watching, stop_watching, unregister_window, write_file, write_terminal, TerminalState,
+    stop_all_watching, stop_watching, unregister_window, write_terminal, TerminalState,
     WatcherState, WindowRegistry, WindowRegistryState,
 };
 use std::sync::{Arc, Mutex};
@@ -47,7 +47,6 @@ pub fn run() {
             close_terminal,
             is_terminal_alive,
             read_file,
-            write_file,
             get_git_status,
             get_git_file_status,
             get_git_diff,

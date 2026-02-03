@@ -5,15 +5,8 @@
   import { projectStore } from '@/lib/stores/projectStore';
   import { fontSize } from '@/lib/stores/settingsStore';
   import { gitDiffExtension, updateGitDiff } from './extensions';
-  import {
-    EditorView,
-    keymap,
-    lineNumbers,
-    highlightActiveLine,
-    drawSelection,
-  } from '@codemirror/view';
+  import { EditorView, lineNumbers, highlightActiveLine, drawSelection } from '@codemirror/view';
   import { EditorState, Compartment } from '@codemirror/state';
-  import { defaultKeymap, indentWithTab } from '@codemirror/commands';
   import { syntaxHighlighting, HighlightStyle, bracketMatching } from '@codemirror/language';
   import { tags } from '@lezer/highlight';
   import { getLanguageExtension } from './languages';
@@ -21,17 +14,14 @@
 
   interface Props {
     filePath: string | null;
-    onSave?: () => void;
-    onModifiedChange?: (modified: boolean) => void;
   }
 
-  let { filePath, onSave, onModifiedChange }: Props = $props();
+  let { filePath }: Props = $props();
 
   let editorContainer: HTMLDivElement = $state(null!);
   let view: EditorView | null = null;
   let loading = $state(true);
   let error = $state<string | null>(null);
-  let modified = $state(false);
   let isFocused = $state(false);
 
   // Compartment for dynamic theme updates (font size)
@@ -227,13 +217,6 @@
     );
   }
 
-  function setModified(value: boolean) {
-    if (modified !== value) {
-      modified = value;
-      onModifiedChange?.(value);
-    }
-  }
-
   async function loadFile() {
     if (!filePath) {
       loading = false;
@@ -242,7 +225,6 @@
 
     loading = true;
     error = null;
-    setModified(false);
 
     try {
       const content = await fileService.readFile(filePath);
@@ -282,22 +264,6 @@
     }
   }
 
-  async function saveFile() {
-    if (!filePath || !view) return;
-
-    try {
-      const content = view.state.doc.toString();
-      await fileService.writeFile(filePath, content);
-      setModified(false);
-      onSave?.();
-      // Refresh git diff after save
-      await loadGitDiff();
-    } catch (e) {
-      console.error('Failed to save file:', e);
-      error = String(e);
-    }
-  }
-
   async function createEditor(content: string) {
     if (view) {
       view.destroy();
@@ -318,22 +284,7 @@
       syntaxHighlighting(mistHighlightStyle),
       themeCompartment.of(createMistTheme(currentFontSize)),
       ...gitDiffExtension(),
-      keymap.of([
-        ...defaultKeymap,
-        indentWithTab,
-        {
-          key: 'Mod-s',
-          run: () => {
-            saveFile();
-            return true;
-          },
-        },
-      ]),
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          setModified(true);
-        }
-      }),
+      EditorView.editable.of(false),
     ];
 
     // Add language extension if available (lazy-loaded)
@@ -440,7 +391,7 @@
           <polyline points="14 2 14 8 20 8"></polyline>
         </svg>
       </div>
-      <span class="no-file-text">Select a file to edit</span>
+      <span class="no-file-text">Select a file to view</span>
       <span class="no-file-hint">Choose from the file tree or use <kbd>⌘P</kbd></span>
     </div>
   {:else}

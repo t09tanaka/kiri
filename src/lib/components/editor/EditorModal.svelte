@@ -1,7 +1,5 @@
 <script lang="ts">
   import Editor from './Editor.svelte';
-  import { editorModalStore } from '@/lib/stores/editorModalStore';
-  import { dialogService } from '@/lib/services/dialogService';
   import { fileService } from '@/lib/services/fileService';
   import { onMount, onDestroy } from 'svelte';
 
@@ -19,25 +17,6 @@
     return path.split('/').pop() || path;
   }
 
-  function handleModifiedChange(modified: boolean) {
-    editorModalStore.setModified(modified);
-  }
-
-  function handleSave() {
-    // Trigger save via keyboard event dispatch to Editor
-    const event = new KeyboardEvent('keydown', {
-      key: 's',
-      metaKey: true,
-      bubbles: true,
-    });
-    document.dispatchEvent(event);
-  }
-
-  function handleEditorSave() {
-    // Called when editor successfully saves
-    editorModalStore.setModified(false);
-  }
-
   async function handleCopyAll() {
     try {
       const content = await fileService.readFile(filePath);
@@ -51,56 +30,18 @@
     }
   }
 
-  async function handleClose() {
-    if ($editorModalStore.modified) {
-      const result = await showUnsavedChangesDialog();
-      if (result === 'cancel') {
-        return;
-      }
-      if (result === 'save') {
-        handleSave();
-        // Wait a bit for save to complete, then close
-        setTimeout(() => {
-          onClose();
-        }, 100);
-        return;
-      }
-      // result === 'discard'
-    }
-    onClose();
-  }
-
-  async function showUnsavedChangesDialog(): Promise<'save' | 'discard' | 'cancel'> {
-    // Use a simple confirm dialog for now
-    // In a real implementation, you might want a custom dialog with 3 options
-    const confirmed = await dialogService.confirm(
-      'You have unsaved changes. Do you want to save before closing?',
-      {
-        title: 'Unsaved Changes',
-        okLabel: 'Save and Close',
-        cancelLabel: 'Discard Changes',
-      }
-    );
-
-    if (confirmed) {
-      return 'save';
-    }
-    return 'discard';
-  }
-
   function handleKeyDown(e: KeyboardEvent) {
-    // Escape to close (with unsaved check)
+    // Escape to close
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      handleClose();
+      onClose();
     }
-    // Cmd+S to save - let it bubble to Editor component
   }
 
   function handleBackdropClick(e: MouseEvent) {
     if (e.target === e.currentTarget) {
-      handleClose();
+      onClose();
     }
   }
 
@@ -142,9 +83,6 @@
             <polyline points="14 2 14 8 20 8"></polyline>
           </svg>
           <span class="title">{getFileName(filePath)}</span>
-          {#if $editorModalStore.modified}
-            <span class="modified-indicator" title="Unsaved changes"></span>
-          {/if}
           <span class="file-path">{filePath}</span>
         </div>
         <div class="header-actions">
@@ -178,28 +116,7 @@
               </svg>
             {/if}
           </button>
-          <button
-            class="action-btn save-btn"
-            onclick={handleSave}
-            disabled={!$editorModalStore.modified}
-            title="Save (Cmd+S)"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-              <polyline points="17 21 17 13 7 13 7 21"></polyline>
-              <polyline points="7 3 7 8 15 8"></polyline>
-            </svg>
-          </button>
-          <button class="action-btn close-btn" onclick={handleClose} title="Close (Esc)">
+          <button class="action-btn close-btn" onclick={onClose} title="Close (Esc)">
             <svg
               width="14"
               height="14"
@@ -216,17 +133,13 @@
       </div>
 
       <div class="modal-body">
-        <Editor {filePath} onSave={handleEditorSave} onModifiedChange={handleModifiedChange} />
+        <Editor {filePath} />
       </div>
 
       <div class="modal-footer">
         <span class="footer-item">
           <kbd>Esc</kbd>
           <span>close</span>
-        </span>
-        <span class="footer-item">
-          <kbd>Cmd+S</kbd>
-          <span>save</span>
         </span>
       </div>
     </div>
@@ -333,27 +246,6 @@
     letter-spacing: 0.02em;
   }
 
-  .modified-indicator {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--accent-color);
-    flex-shrink: 0;
-    animation: modifiedPulse 2s ease-in-out infinite;
-  }
-
-  @keyframes modifiedPulse {
-    0%,
-    100% {
-      opacity: 0.6;
-      transform: scale(1);
-    }
-    50% {
-      opacity: 1;
-      transform: scale(1.15);
-    }
-  }
-
   .file-path {
     font-size: 11px;
     color: var(--text-muted);
@@ -391,16 +283,6 @@
   .action-btn:hover:not(:disabled) {
     background: rgba(125, 211, 252, 0.1);
     color: var(--accent-color);
-  }
-
-  .action-btn:disabled {
-    cursor: not-allowed;
-    opacity: 0.3;
-  }
-
-  .action-btn.save-btn:not(:disabled):hover {
-    background: rgba(74, 222, 128, 0.1);
-    color: #4ade80;
   }
 
   .action-btn.copy-btn:hover {

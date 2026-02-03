@@ -42,15 +42,6 @@
       ],
     },
     {
-      title: 'Editor',
-      icon: '📝',
-      shortcuts: [
-        { keys: ['⌘', 'S'], description: 'Save File' },
-        { keys: ['⌘', 'Z'], description: 'Undo' },
-        { keys: ['⌘', '⇧', 'Z'], description: 'Redo' },
-      ],
-    },
-    {
       title: 'View',
       icon: '🔍',
       shortcuts: [

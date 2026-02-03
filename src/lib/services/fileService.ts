@@ -12,12 +12,6 @@ export const fileService = {
   readFile: (path: string): Promise<string> => invoke('read_file', { path }),
 
   /**
-   * Write file contents
-   */
-  writeFile: (path: string, content: string): Promise<void> =>
-    invoke('write_file', { path, content }),
-
-  /**
    * Read directory entries
    */
   readDirectory: (path: string): Promise<FileEntry[]> => invoke('read_directory', { path }),
