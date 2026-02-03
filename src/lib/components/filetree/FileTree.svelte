@@ -448,7 +448,6 @@
   /* Tree content relative positioning */
   .tree-content {
     position: relative;
-    z-index: 1;
   }
 
   /* Enhanced scrollbar on hover */

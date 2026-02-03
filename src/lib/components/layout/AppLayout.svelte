@@ -265,7 +265,6 @@
     flex: 1;
     display: flex;
     overflow: hidden;
-    z-index: 2;
   }
 
   .sidebar-container {
