@@ -102,8 +102,6 @@
       >
         {#if item.icon}
           <span class="icon">{item.icon}</span>
-        {:else}
-          <span class="icon-placeholder"></span>
         {/if}
         <span class="label">{item.label}</span>
         {#if item.shortcut}
@@ -118,7 +116,7 @@
   .context-menu {
     position: fixed;
     z-index: 1000;
-    min-width: 180px;
+    min-width: 140px;
     max-width: 280px;
     background: var(--bg-glass);
     border: 1px solid var(--border-glow);
@@ -236,11 +234,6 @@
   .menu-item:hover:not(.disabled):not(.danger) .icon {
     color: var(--accent-color);
     transform: scale(1.1);
-  }
-
-  .icon-placeholder {
-    width: 16px;
-    flex-shrink: 0;
   }
 
   .label {

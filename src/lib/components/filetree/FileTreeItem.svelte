@@ -9,6 +9,7 @@
   } from '@/lib/stores/gitStore';
   import { getFileIconInfo, getFolderColor } from '@/lib/utils/fileIcons';
   import ContextMenu, { type MenuItem } from '@/lib/components/ui/ContextMenu.svelte';
+  import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
   import FileTreeItem from './FileTreeItem.svelte';
 
   interface Props {
@@ -123,14 +124,18 @@
         { id: 'open-terminal', label: 'Open in Terminal', icon: '>' },
         { id: 'separator1', label: '', separator: true },
         { id: 'copy-path', label: 'Copy Path', shortcut: '⌘C' },
-        { id: 'reveal', label: 'Reveal in Finder', shortcut: '⌘⇧R' }
+        { id: 'reveal', label: 'Reveal in Finder', shortcut: '⌘⇧R' },
+        { id: 'separator2', label: '', separator: true },
+        { id: 'delete', label: 'Delete', danger: true }
       );
     } else {
       items.push(
-        { id: 'open', label: 'Open', icon: '📄' },
+        { id: 'open', label: 'Open' },
         { id: 'separator1', label: '', separator: true },
         { id: 'copy-path', label: 'Copy Path', shortcut: '⌘C' },
-        { id: 'reveal', label: 'Reveal in Finder', shortcut: '⌘⇧R' }
+        { id: 'reveal', label: 'Reveal in Finder', shortcut: '⌘⇧R' },
+        { id: 'separator2', label: '', separator: true },
+        { id: 'delete', label: 'Delete', danger: true }
       );
     }
 
@@ -154,6 +159,28 @@
       case 'reveal':
         await fileService.revealInFinder(entry.path);
         break;
+      case 'delete':
+        await handleDelete();
+        break;
+    }
+  }
+
+  async function handleDelete() {
+    const itemType = entry.is_dir ? 'folder' : 'file';
+    const confirmed = await confirmDialogStore.confirm({
+      title: `Delete ${itemType}`,
+      message: `Are you sure you want to delete "${entry.name}"?${entry.is_dir ? ' This will delete all contents inside.' : ''}`,
+      confirmLabel: 'Delete',
+      cancelLabel: 'Cancel',
+      kind: 'error',
+    });
+
+    if (confirmed) {
+      try {
+        await fileService.deletePath(entry.path);
+      } catch (e) {
+        console.error('Failed to delete:', e);
+      }
     }
   }
 </script>

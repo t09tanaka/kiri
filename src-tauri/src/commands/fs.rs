@@ -109,6 +109,21 @@ pub fn get_home_directory() -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn delete_path(path: String) -> Result<(), String> {
+    let path = Path::new(&path);
+
+    if !path.exists() {
+        return Err(format!("Path does not exist: {}", path.display()));
+    }
+
+    if path.is_dir() {
+        std::fs::remove_dir_all(path).map_err(|e| format!("Failed to delete directory: {}", e))
+    } else {
+        std::fs::remove_file(path).map_err(|e| format!("Failed to delete file: {}", e))
+    }
+}
+
+#[tauri::command]
 pub fn reveal_in_finder(path: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -367,6 +382,38 @@ mod tests {
         let result = reveal_in_finder(dir.path().join("test.txt").to_string_lossy().to_string());
         // Result depends on platform and environment
         assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_delete_path_file() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("to_delete.txt");
+        fs::write(&file_path, "content").unwrap();
+        assert!(file_path.exists());
+
+        let result = delete_path(file_path.to_string_lossy().to_string());
+        assert!(result.is_ok());
+        assert!(!file_path.exists());
+    }
+
+    #[test]
+    fn test_delete_path_directory() {
+        let dir = tempdir().unwrap();
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+        fs::write(subdir.join("file.txt"), "content").unwrap();
+        assert!(subdir.exists());
+
+        let result = delete_path(subdir.to_string_lossy().to_string());
+        assert!(result.is_ok());
+        assert!(!subdir.exists());
+    }
+
+    #[test]
+    fn test_delete_path_nonexistent() {
+        let result = delete_path("/nonexistent/path/to/delete".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
     }
 
     #[test]

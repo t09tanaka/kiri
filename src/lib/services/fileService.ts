@@ -25,4 +25,9 @@ export const fileService = {
    * Reveal file or directory in Finder
    */
   revealInFinder: (path: string): Promise<void> => invoke('reveal_in_finder', { path }),
+
+  /**
+   * Delete file or directory
+   */
+  deletePath: (path: string): Promise<void> => invoke('delete_path', { path }),
 };
