@@ -25,11 +25,15 @@ describe('terminalKeys', () => {
     it('should have correct escape sequence for LINE_END (Ctrl+E)', () => {
       expect(TERMINAL_SEQUENCES.LINE_END).toBe('\x05');
     });
+
+    it('should have correct escape sequence for KILL_LINE (Ctrl+U)', () => {
+      expect(TERMINAL_SEQUENCES.KILL_LINE).toBe('\x15');
+    });
   });
 
   describe('MAC_TERMINAL_KEYBINDINGS', () => {
-    it('should have 4 key bindings', () => {
-      expect(MAC_TERMINAL_KEYBINDINGS).toHaveLength(4);
+    it('should have 5 key bindings', () => {
+      expect(MAC_TERMINAL_KEYBINDINGS).toHaveLength(5);
     });
 
     it('should map Option+Left to WORD_BACKWARD', () => {
@@ -62,6 +66,14 @@ describe('terminalKeys', () => {
       );
       expect(binding).toBeDefined();
       expect(binding?.sequence).toBe(TERMINAL_SEQUENCES.LINE_END);
+    });
+
+    it('should map Cmd+Backspace to KILL_LINE', () => {
+      const binding = MAC_TERMINAL_KEYBINDINGS.find(
+        (b) => b.key === 'Backspace' && b.metaKey === true
+      );
+      expect(binding).toBeDefined();
+      expect(binding?.sequence).toBe(TERMINAL_SEQUENCES.KILL_LINE);
     });
   });
 
@@ -156,6 +168,11 @@ describe('terminalKeys', () => {
     it('should return LINE_END for Cmd+Right', () => {
       const event = createKeyboardEvent({ key: 'ArrowRight', metaKey: true });
       expect(getTerminalSequence(event)).toBe(TERMINAL_SEQUENCES.LINE_END);
+    });
+
+    it('should return KILL_LINE for Cmd+Backspace', () => {
+      const event = createKeyboardEvent({ key: 'Backspace', metaKey: true });
+      expect(getTerminalSequence(event)).toBe(TERMINAL_SEQUENCES.KILL_LINE);
     });
 
     it('should return null for plain ArrowLeft', () => {

@@ -18,6 +18,8 @@ export const TERMINAL_SEQUENCES = {
   LINE_START: '\x01',
   /** Ctrl+E - Move to line end */
   LINE_END: '\x05',
+  /** Ctrl+U - Kill line (delete from cursor to line start) */
+  KILL_LINE: '\x15',
 } as const;
 
 /**
@@ -46,6 +48,8 @@ export const MAC_TERMINAL_KEYBINDINGS: KeyBinding[] = [
   { key: 'ArrowLeft', metaKey: true, sequence: TERMINAL_SEQUENCES.LINE_START },
   // Cmd + Right: Move to line end
   { key: 'ArrowRight', metaKey: true, sequence: TERMINAL_SEQUENCES.LINE_END },
+  // Cmd + Delete (Backspace): Kill entire line
+  { key: 'Backspace', metaKey: true, sequence: TERMINAL_SEQUENCES.KILL_LINE },
 ];
 
 /**

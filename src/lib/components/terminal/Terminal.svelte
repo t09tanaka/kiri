@@ -350,6 +350,11 @@
         }
       }
 
+      // Block Cmd+Backspace on macOS (handled in capture phase for kill line)
+      if (isMacOS() && event.key === 'Backspace' && event.metaKey) {
+        return false; // Prevent xterm from processing
+      }
+
       return true;
     });
 
