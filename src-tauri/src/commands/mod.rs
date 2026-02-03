@@ -1,3 +1,4 @@
+pub mod drag_drop;
 pub mod file;
 pub mod file_io;
 pub mod fs;
@@ -18,6 +19,7 @@ pub mod watcher;
 pub mod watcher_commands;
 pub mod window;
 
+pub use drag_drop::*;
 pub use file::*;
 pub use fs::*;
 pub use git::*;

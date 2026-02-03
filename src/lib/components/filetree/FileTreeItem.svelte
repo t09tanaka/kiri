@@ -10,6 +10,7 @@
   import { getFileIconInfo, getFolderColor } from '@/lib/utils/fileIcons';
   import ContextMenu, { type MenuItem } from '@/lib/components/ui/ContextMenu.svelte';
   import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
+  import { dragDropStore, isDragging, dropTargetPath } from '@/lib/stores/dragDropStore';
   import FileTreeItem from './FileTreeItem.svelte';
 
   interface Props {
@@ -72,6 +73,9 @@
     }
     return gitStatus() ? getStatusColor(gitStatus()!) : '';
   });
+
+  // Drop target detection
+  const isDropTarget = $derived($isDragging && entry.is_dir && $dropTargetPath === entry.path);
 
   async function toggleExpand() {
     if (!entry.is_dir) return;
@@ -183,14 +187,40 @@
       }
     }
   }
+
+  // Drag and drop handlers
+  function handleDragMouseEnter() {
+    if (!$isDragging || !entry.is_dir) return;
+
+    dragDropStore.setDropTarget(entry.path);
+
+    // Start auto-expand timer if directory is collapsed
+    if (!expanded) {
+      dragDropStore.startHoverTimer(entry.path, () => {
+        toggleExpand();
+      });
+    }
+  }
+
+  function handleDragMouseLeave() {
+    if (!$isDragging || !entry.is_dir) return;
+
+    dragDropStore.clearHoverTimer(entry.path);
+  }
 </script>
 
-<div class="tree-item-container">
+<div
+  class="tree-item-container"
+  role="treeitem"
+  onmouseenter={handleDragMouseEnter}
+  onmouseleave={handleDragMouseLeave}
+>
   <button
     class="tree-item"
     class:selected={isSelected}
     class:gitignored={entry.is_gitignored}
     class:directory={entry.is_dir}
+    class:drop-target={isDropTarget}
     style="padding-left: {paddingLeft}px"
     onclick={handleClick}
     onkeydown={handleKeyDown}
@@ -596,6 +626,33 @@
     }
     80% {
       transform: translateX(2px);
+    }
+  }
+
+  /* Drop target styles */
+  .tree-item.drop-target {
+    background: var(--accent-subtle);
+    border: 1px solid var(--border-glow);
+    box-shadow: 0 0 20px rgba(125, 211, 252, 0.1);
+    animation: dropTargetGlow 1.5s ease-in-out infinite;
+  }
+
+  .tree-item.drop-target .icon {
+    color: var(--accent-color);
+    transform: scale(1.15);
+  }
+
+  .tree-item.drop-target .name {
+    color: var(--accent-color);
+  }
+
+  @keyframes dropTargetGlow {
+    0%,
+    100% {
+      box-shadow: 0 0 12px rgba(125, 211, 252, 0.1);
+    }
+    50% {
+      box-shadow: 0 0 24px rgba(125, 211, 252, 0.2);
     }
   }
 </style>

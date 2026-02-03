@@ -3,9 +3,12 @@
   import { fileService } from '@/lib/services/fileService';
   import { watcherService } from '@/lib/services/watcherService';
   import { eventService, type UnlistenFn } from '@/lib/services/eventService';
+  import { dragDropService } from '@/lib/services/dragDropService';
   import FileTreeItem from './FileTreeItem.svelte';
   import type { FileEntry } from './types';
   import { gitStore, gitStatusMap } from '@/lib/stores/gitStore';
+  import { dragDropStore, isDragging, dropTargetPath } from '@/lib/stores/dragDropStore';
+  import { toastStore } from '@/lib/stores/toastStore';
   import { Skeleton } from '@/lib/components/ui';
 
   interface Props {
@@ -26,6 +29,11 @@
   let unlistenGit: UnlistenFn | null = null;
   let currentWatchPath: string | null = null;
   let refreshDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Drag and drop state
+  let unlistenDragEnter: UnlistenFn | null = null;
+  let unlistenDragDrop: UnlistenFn | null = null;
+  let unlistenDragLeave: UnlistenFn | null = null;
 
   // Extract project name from rootPath
   const projectName = $derived(rootPath ? rootPath.split('/').pop() || rootPath : null);
@@ -122,15 +130,87 @@
     }
   }
 
+  // Drag and drop handlers
+  interface DragPayload {
+    paths: string[];
+    position: { x: number; y: number };
+  }
+
+  async function handleDrop(paths: string[], targetDir: string) {
+    try {
+      const result = await dragDropService.copyToDirectory(paths, targetDir);
+
+      if (result.success) {
+        const count = result.copied.length;
+        const fileWord = count === 1 ? 'file' : 'files';
+        const targetName = targetDir.split('/').pop() || targetDir;
+        toastStore.success(`${count} ${fileWord} copied to ${targetName}`);
+      } else if (result.copied.length > 0) {
+        const successCount = result.copied.length;
+        const errorCount = result.errors.length;
+        toastStore.warning(
+          `${successCount} copied, ${errorCount} failed: ${result.errors[0]?.error || 'Unknown error'}`
+        );
+      } else {
+        const errorMsg = result.errors[0]?.error || 'Unknown error';
+        toastStore.error(`Copy failed: ${errorMsg}`);
+      }
+    } catch (e) {
+      toastStore.error(`Copy failed: ${String(e)}`);
+    }
+  }
+
+  async function setupDragDropListeners() {
+    // Listen for drag enter
+    unlistenDragEnter = await eventService.listen<DragPayload>('tauri://drag-enter', (event) => {
+      dragDropStore.startDrag(event.payload.paths);
+    });
+
+    // Listen for drag drop
+    unlistenDragDrop = await eventService.listen<DragPayload>(
+      'tauri://drag-drop',
+      async (event) => {
+        const targetDir = $dropTargetPath || rootPath;
+        if (targetDir) {
+          await handleDrop(event.payload.paths, targetDir);
+        }
+        dragDropStore.endDrag();
+      }
+    );
+
+    // Listen for drag leave
+    unlistenDragLeave = await eventService.listen('tauri://drag-leave', () => {
+      dragDropStore.endDrag();
+    });
+  }
+
+  function cleanupDragDropListeners() {
+    if (unlistenDragEnter) {
+      unlistenDragEnter();
+      unlistenDragEnter = null;
+    }
+    if (unlistenDragDrop) {
+      unlistenDragDrop();
+      unlistenDragDrop = null;
+    }
+    if (unlistenDragLeave) {
+      unlistenDragLeave();
+      unlistenDragLeave = null;
+    }
+    dragDropStore.endDrag();
+  }
+
   onMount(() => {
     loadRootDirectory();
     if (rootPath) {
       setupWatcher(rootPath);
     }
+    setupDragDropListeners();
   });
 
   onDestroy(() => {
     cleanupWatcher();
+    cleanupDragDropListeners();
   });
 
   // Reload when rootPath changes
@@ -144,7 +224,7 @@
   });
 </script>
 
-<div class="file-tree" data-testid="file-tree">
+<div class="file-tree" class:drag-active={$isDragging} data-testid="file-tree">
   {#if loading}
     <div class="loading-skeleton">
       {#each Array(6) as _, i (i)}
@@ -473,5 +553,16 @@
 
   .file-tree:hover::before {
     background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.08), transparent);
+  }
+
+  /* Drag and drop active state */
+  .file-tree.drag-active {
+    background: rgba(125, 211, 252, 0.02);
+    border: 1px dashed var(--border-glow);
+    border-radius: var(--radius-md);
+  }
+
+  .file-tree.drag-active::before {
+    background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.15), transparent);
   }
 </style>
