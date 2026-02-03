@@ -12,6 +12,7 @@
   import { openerService } from '@/lib/services/openerService';
   import { notificationService } from '@/lib/services/notificationService';
   import { createFilePathLinkProvider } from '@/lib/services/filePathLinkProvider';
+  import { getTerminalSequence, isMacOS } from '@/lib/utils/terminalKeys';
 
   // Lazy-loaded xterm modules (loaded on first terminal creation)
   let xtermLoaded = false;
@@ -339,13 +340,20 @@
       })
     );
 
-    // Handle keyboard events for Shift+Enter
+    // Handle keyboard events - prevent xterm from processing keys we handle in capture phase
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== 'keydown') return true;
 
-      // Handle Shift+Enter
+      // Block Shift+Enter (handled in capture phase)
       if (event.key === 'Enter' && event.shiftKey) {
-        return false; // Prevent xterm from processing this key
+        return false;
+      }
+
+      // Block Option+Arrow and Cmd+Arrow on macOS (handled in capture phase)
+      if (isMacOS() && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+        if (event.altKey || event.metaKey) {
+          return false; // Prevent xterm from processing
+        }
       }
 
       return true;
@@ -602,16 +610,29 @@
         isFocused = false;
       });
 
-      // Handle Shift+Enter to send literal newline (like VSCode)
+      // Handle special keyboard shortcuts
       // Using capture phase on textarea to intercept before xterm processes it
       terminal.textarea?.addEventListener(
         'keydown',
         (event) => {
+          // Handle Shift+Enter to send literal newline (like VSCode)
           if (event.key === 'Enter' && event.shiftKey) {
             event.preventDefault();
             event.stopPropagation();
             if (terminalId !== null) {
               terminalService.writeTerminal(terminalId, '\n');
+            }
+            return;
+          }
+
+          // Handle macOS keyboard navigation (Option+Arrow, Cmd+Arrow)
+          // Must intercept here to prevent xterm.js from processing with macOptionIsMeta
+          if (isMacOS()) {
+            const sequence = getTerminalSequence(event);
+            if (sequence && terminalId !== null) {
+              event.preventDefault();
+              event.stopPropagation();
+              terminalService.writeTerminal(terminalId, sequence);
             }
           }
         },

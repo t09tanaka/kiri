@@ -82,6 +82,11 @@ pub fn build_shell_command(shell: &str, cwd: Option<&str>) -> CommandBuilder {
     // and line clearing for progress indicators
     cmd.env("TERM", "xterm-256color");
 
+    // Set TERM_PROGRAM so shell config can detect kiri
+    // Users can add to ~/.zshrc:
+    //   if [[ "$TERM_PROGRAM" == "kiri" ]]; then bindkey -e; fi
+    cmd.env("TERM_PROGRAM", "kiri");
+
     if let Some(dir) = cwd {
         cmd.cwd(dir);
     }

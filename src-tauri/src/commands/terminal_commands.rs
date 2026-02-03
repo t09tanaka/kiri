@@ -5,7 +5,7 @@ use super::terminal::{
     create_pty_size, find_utf8_boundary, open_pty_with_shell, resolve_cwd, resolve_terminal_size,
     PtyInstance, TerminalOutput, TerminalState,
 };
-use std::io::Read;
+use std::io::{Read, Write};
 use std::str;
 use std::thread;
 use tauri::{AppHandle, Emitter};
@@ -41,6 +41,13 @@ pub fn create_terminal(
 
     // Get shell PID for foreground process checking
     let shell_pid = pty_with_shell.child.process_id();
+
+    // Send bindkey -e to enable emacs mode for keyboard navigation
+    // This ensures Option+Arrow and Cmd+Arrow work correctly regardless of user's shell config
+    // Use clear to hide the command from the user
+    let mut writer = writer;
+    let _ = writer.write_all(b"bindkey -e && clear\n");
+    let _ = writer.flush();
 
     manager.instances.insert(
         id,
