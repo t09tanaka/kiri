@@ -9,7 +9,6 @@
   } from '@/lib/stores/gitStore';
   import { getFileIconInfo, getFolderColor } from '@/lib/utils/fileIcons';
   import ContextMenu, { type MenuItem } from '@/lib/components/ui/ContextMenu.svelte';
-  import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
   import { dragDropStore, isDragging, dropTargetPath } from '@/lib/stores/dragDropStore';
   import FileTreeItem from './FileTreeItem.svelte';
 
@@ -38,6 +37,7 @@
   let loading = $state(false);
   let error = $state<string | null>(null);
   let contextMenu = $state<{ x: number; y: number } | null>(null);
+  let isDeleted = $state(false);
 
   const isSelected = $derived(selectedPath === entry.path);
   const paddingLeft = $derived(12 + depth * 16);
@@ -170,21 +170,15 @@
   }
 
   async function handleDelete() {
-    const itemType = entry.is_dir ? 'folder' : 'file';
-    const confirmed = await confirmDialogStore.confirm({
-      title: `Delete ${itemType}`,
-      message: `Are you sure you want to delete "${entry.name}"?${entry.is_dir ? ' This will delete all contents inside.' : ''}`,
-      confirmLabel: 'Delete',
-      cancelLabel: 'Cancel',
-      kind: 'error',
-    });
+    // Hide from UI first (optimistic update)
+    isDeleted = true;
 
-    if (confirmed) {
-      try {
-        await fileService.deletePath(entry.path);
-      } catch (e) {
-        console.error('Failed to delete:', e);
-      }
+    try {
+      await fileService.deletePath(entry.path);
+    } catch (e) {
+      console.error('Failed to delete:', e);
+      // Restore visibility on error
+      isDeleted = false;
     }
   }
 
@@ -209,78 +203,116 @@
   }
 </script>
 
-<div
-  class="tree-item-container"
-  role="treeitem"
-  onmouseenter={handleDragMouseEnter}
-  onmouseleave={handleDragMouseLeave}
->
-  <button
-    class="tree-item"
-    class:selected={isSelected}
-    class:gitignored={entry.is_gitignored}
-    class:directory={entry.is_dir}
-    class:drop-target={isDropTarget}
-    style="padding-left: {paddingLeft}px"
-    onclick={handleClick}
-    onkeydown={handleKeyDown}
-    oncontextmenu={handleContextMenu}
-    title={entry.path}
+{#if !isDeleted}
+  <div
+    class="tree-item-container"
+    role="treeitem"
+    onmouseenter={handleDragMouseEnter}
+    onmouseleave={handleDragMouseLeave}
   >
-    {#if entry.is_dir}
-      <span class="chevron" class:expanded>
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <polyline points="9 18 15 12 9 6"></polyline>
-        </svg>
-      </span>
-      <span class="icon folder" style="color: {folderColor}">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-          {#if expanded}
-            <path
-              d="M19 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6l2 2h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2z"
-            />
-          {:else}
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-          {/if}
-        </svg>
-      </span>
-    {:else}
-      <span class="spacer"></span>
-      <span class="icon file" style="color: {fileIconInfo.color}">
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-          <polyline points="14 2 14 8 20 8"></polyline>
-        </svg>
-      </span>
-    {/if}
-    <span class="name" class:git-modified={statusColor()} style:color={statusColor() || null}
-      >{entry.name}</span
+    <button
+      class="tree-item"
+      class:selected={isSelected}
+      class:gitignored={entry.is_gitignored}
+      class:directory={entry.is_dir}
+      class:drop-target={isDropTarget}
+      style="padding-left: {paddingLeft}px"
+      onclick={handleClick}
+      onkeydown={handleKeyDown}
+      oncontextmenu={handleContextMenu}
+      title={entry.path}
     >
-    {#if statusIcon}
-      <span class="git-status" style="color: {statusColor()}">{statusIcon}</span>
+      {#if entry.is_dir}
+        <span class="chevron" class:expanded>
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </span>
+        <span class="icon folder" style="color: {folderColor}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            {#if expanded}
+              <path
+                d="M19 20H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6l2 2h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2z"
+              />
+            {:else}
+              <path
+                d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+              />
+            {/if}
+          </svg>
+        </span>
+      {:else}
+        <span class="spacer"></span>
+        <span class="icon file" style="color: {fileIconInfo.color}">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+          </svg>
+        </span>
+      {/if}
+      <span class="name" class:git-modified={statusColor()} style:color={statusColor() || null}
+        >{entry.name}</span
+      >
+      {#if statusIcon}
+        <span class="git-status" style="color: {statusColor()}">{statusIcon}</span>
+      {/if}
+      {#if loading}
+        <span class="loading">
+          <svg
+            class="spinner"
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <circle cx="12" cy="12" r="10" stroke-opacity="0.25" />
+            <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" />
+          </svg>
+        </span>
+      {/if}
+    </button>
+
+    {#if expanded && children.length > 0}
+      <div class="children">
+        {#each children as child, index (child.path)}
+          <div class="child-wrapper" style="--child-index: {index}">
+            <FileTreeItem
+              entry={child}
+              depth={depth + 1}
+              {selectedPath}
+              {onSelect}
+              {onOpenInTerminal}
+              {gitStatusMap}
+              {repoRoot}
+            />
+          </div>
+        {/each}
+      </div>
     {/if}
-    {#if loading}
-      <span class="loading">
+
+    {#if error}
+      <div class="error" style="padding-left: {paddingLeft + 16}px">
         <svg
-          class="spinner"
           width="12"
           height="12"
           viewBox="0 0 24 24"
@@ -288,49 +320,15 @@
           stroke="currentColor"
           stroke-width="2"
         >
-          <circle cx="12" cy="12" r="10" stroke-opacity="0.25" />
-          <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round" />
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="8" x2="12" y2="12"></line>
+          <line x1="12" y1="16" x2="12.01" y2="16"></line>
         </svg>
-      </span>
+        Failed to load
+      </div>
     {/if}
-  </button>
-
-  {#if expanded && children.length > 0}
-    <div class="children">
-      {#each children as child, index (child.path)}
-        <div class="child-wrapper" style="--child-index: {index}">
-          <FileTreeItem
-            entry={child}
-            depth={depth + 1}
-            {selectedPath}
-            {onSelect}
-            {onOpenInTerminal}
-            {gitStatusMap}
-            {repoRoot}
-          />
-        </div>
-      {/each}
-    </div>
-  {/if}
-
-  {#if error}
-    <div class="error" style="padding-left: {paddingLeft + 16}px">
-      <svg
-        width="12"
-        height="12"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-      >
-        <circle cx="12" cy="12" r="10"></circle>
-        <line x1="12" y1="8" x2="12" y2="12"></line>
-        <line x1="12" y1="16" x2="12.01" y2="16"></line>
-      </svg>
-      Failed to load
-    </div>
-  {/if}
-</div>
+  </div>
+{/if}
 
 {#if contextMenu}
   <ContextMenu
