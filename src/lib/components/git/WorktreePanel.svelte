@@ -1110,54 +1110,22 @@
       </div>
 
       <div class="modal-footer">
-        <!-- Execution summary badges -->
+        <!-- Execution summary -->
         <div class="execution-summary">
-          {#if getCopyFileCount() > 0}
-            <span class="summary-badge" title="Files to copy">
-              <svg
-                width="10"
-                height="10"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                <polyline points="14 2 14 8 20 8"></polyline>
-              </svg>
-              <span>{getCopyFileCount()}</span>
-            </span>
-          {/if}
-          {#if getEnabledCommandCount() > 0}
-            <span class="summary-badge" title="Commands to run">
-              <svg
-                width="10"
-                height="10"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <polyline points="4 17 10 11 4 5"></polyline>
-                <line x1="12" y1="19" x2="20" y2="19"></line>
-              </svg>
-              <span>{getEnabledCommandCount()}</span>
-            </span>
-          {/if}
-          {#if getPortCount() > 0}
-            <span class="summary-badge badge-port" title="Ports to isolate">
-              <svg
-                width="10"
-                height="10"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <circle cx="12" cy="12" r="10"></circle>
-                <circle cx="12" cy="12" r="3"></circle>
-              </svg>
-              <span>{getPortCount()}</span>
+          {#if getCopyFileCount() > 0 || getEnabledCommandCount() > 0 || getPortCount() > 0}
+            <span class="summary-text">
+              {#if getCopyFileCount() > 0}
+                <span class="summary-item">{getCopyFileCount()} files</span>
+              {/if}
+              {#if getEnabledCommandCount() > 0}
+                <span class="summary-item"
+                  >{getEnabledCommandCount()}
+                  {getEnabledCommandCount() === 1 ? 'command' : 'commands'}</span
+                >
+              {/if}
+              {#if getPortCount() > 0}
+                <span class="summary-item summary-port">{getPortCount()} ports</span>
+              {/if}
             </span>
           {/if}
         </div>
@@ -1762,42 +1730,34 @@
 
   .execution-summary {
     display: flex;
-    gap: var(--space-2);
-  }
-
-  .summary-badge {
-    display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 3px 8px;
-    background: rgba(125, 211, 252, 0.1);
-    border: 1px solid rgba(125, 211, 252, 0.2);
-    border-radius: var(--radius-full);
+  }
+
+  .summary-text {
+    display: flex;
+    align-items: center;
+    gap: 0;
     font-size: 11px;
-    font-family: var(--font-mono);
-    color: var(--accent-color);
-    transition: all var(--transition-fast);
+    color: var(--text-muted);
   }
 
-  .summary-badge:hover {
-    background: rgba(125, 211, 252, 0.15);
-    border-color: rgba(125, 211, 252, 0.3);
-    transform: translateY(-1px);
+  .summary-item {
+    color: var(--text-secondary);
   }
 
-  .summary-badge svg {
-    opacity: 0.8;
+  .summary-item::after {
+    content: '·';
+    margin: 0 6px;
+    color: var(--text-muted);
+    opacity: 0.5;
   }
 
-  .summary-badge.badge-port {
-    background: rgba(196, 181, 253, 0.1);
-    border-color: rgba(196, 181, 253, 0.2);
+  .summary-item:last-child::after {
+    display: none;
+  }
+
+  .summary-item.summary-port {
     color: var(--accent2-color);
-  }
-
-  .summary-badge.badge-port:hover {
-    background: rgba(196, 181, 253, 0.15);
-    border-color: rgba(196, 181, 253, 0.3);
   }
 
   .footer-actions {
