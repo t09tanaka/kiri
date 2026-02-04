@@ -7,6 +7,8 @@ use std::path::Path;
 
 // Regex patterns for port detection
 const ENV_PORT_PATTERN: &str = r"^([A-Z_]*PORT[A-Z_]*)=(\d+)";
+// Pattern for URLs with ports: VAR_URL=protocol://host:PORT or VAR_URL=protocol://user:pass@host:PORT
+const ENV_URL_PORT_PATTERN: &str = r"^([A-Z][A-Z0-9_]*_URL)=\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:(\d+)";
 const DOCKERFILE_EXPOSE_PATTERN: &str = r"^EXPOSE\s+(\d+)";
 const COMPOSE_PORT_PATTERN: &str = r#"^\s*-\s*"?(\d+):(\d+)"?"#;
 
@@ -74,7 +76,8 @@ pub struct PortReplacement {
 
 /// Detect port variables in .env file content
 pub fn detect_ports_in_env_file(content: &str, file_path: &str) -> Vec<PortSource> {
-    let re = Regex::new(ENV_PORT_PATTERN).unwrap();
+    let port_re = Regex::new(ENV_PORT_PATTERN).unwrap();
+    let url_re = Regex::new(ENV_URL_PORT_PATTERN).unwrap();
     let mut ports = Vec::new();
 
     for (line_num, line) in content.lines().enumerate() {
@@ -84,7 +87,21 @@ pub fn detect_ports_in_env_file(content: &str, file_path: &str) -> Vec<PortSourc
             continue;
         }
 
-        if let Some(caps) = re.captures(trimmed) {
+        // Check for PORT variables (e.g., PORT=3000, DB_PORT=5432)
+        if let Some(caps) = port_re.captures(trimmed) {
+            if let (Some(var_name), Some(port_str)) = (caps.get(1), caps.get(2)) {
+                if let Ok(port) = port_str.as_str().parse::<u16>() {
+                    ports.push(PortSource {
+                        file_path: file_path.to_string(),
+                        variable_name: var_name.as_str().to_string(),
+                        port_value: port,
+                        line_number: (line_num + 1) as u32,
+                    });
+                }
+            }
+        }
+        // Check for URL variables with ports (e.g., REDIS_URL=redis://localhost:6379)
+        else if let Some(caps) = url_re.captures(trimmed) {
             if let (Some(var_name), Some(port_str)) = (caps.get(1), caps.get(2)) {
                 if let Ok(port) = port_str.as_str().parse::<u16>() {
                     ports.push(PortSource {
@@ -335,7 +352,11 @@ pub fn transform_env_content(
         .map(|a| (a.variable_name.as_str(), a))
         .collect();
 
-    let re = Regex::new(ENV_PORT_PATTERN).unwrap();
+    let port_re = Regex::new(ENV_PORT_PATTERN).unwrap();
+    // For URL replacement, capture the part before the port and the port itself
+    // Pattern: (VAR_URL=...://host):PORT -> captures prefix and port separately
+    let url_re =
+        Regex::new(r"^([A-Z][A-Z0-9_]*_URL=\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+):(\d+)").unwrap();
 
     for (line_num, line) in content.lines().enumerate() {
         let trimmed = line.trim();
@@ -347,11 +368,12 @@ pub fn transform_env_content(
             continue;
         }
 
-        if let Some(caps) = re.captures(trimmed) {
+        // Check for PORT variables (e.g., PORT=3000)
+        if let Some(caps) = port_re.captures(trimmed) {
             if let Some(var_name) = caps.get(1) {
                 if let Some(assignment) = assignment_map.get(var_name.as_str()) {
                     // Replace the port value
-                    let new_line = re.replace(line, |caps: &regex::Captures| {
+                    let new_line = port_re.replace(line, |caps: &regex::Captures| {
                         format!("{}={}", &caps[1], assignment.assigned_value)
                     });
                     result.push_str(&new_line);
@@ -363,6 +385,31 @@ pub fn transform_env_content(
                         line_number: (line_num + 1) as u32,
                     });
                     continue;
+                }
+            }
+        }
+        // Check for URL variables with ports (e.g., REDIS_URL=redis://localhost:6379)
+        else if let Some(caps) = url_re.captures(trimmed) {
+            // Extract variable name from the prefix (VAR_URL=...)
+            if let Some(prefix) = caps.get(1) {
+                let prefix_str = prefix.as_str();
+                if let Some(eq_pos) = prefix_str.find('=') {
+                    let var_name = &prefix_str[..eq_pos];
+                    if let Some(assignment) = assignment_map.get(var_name) {
+                        // Replace the port in the URL
+                        let new_line = url_re.replace(line, |caps: &regex::Captures| {
+                            format!("{}:{}", &caps[1], assignment.assigned_value)
+                        });
+                        result.push_str(&new_line);
+                        result.push('\n');
+                        replacements.push(PortReplacement {
+                            variable_name: var_name.to_string(),
+                            original_value: assignment.original_value,
+                            new_value: assignment.assigned_value,
+                            line_number: (line_num + 1) as u32,
+                        });
+                        continue;
+                    }
                 }
             }
         }
@@ -1111,5 +1158,70 @@ API_URL=http://localhost:8080
         assert_eq!(parsed.env_ports.len(), 1);
         assert!(parsed.dockerfile_ports.is_empty());
         assert!(parsed.compose_ports.is_empty());
+    }
+
+    #[test]
+    fn test_detect_ports_in_url_variables() {
+        let content = r#"
+# Database URLs
+REDIS_URL=redis://localhost:6379
+DATABASE_URL=postgres://user:pass@localhost:5432/mydb
+MONGO_URL=mongodb://localhost:27017/test
+# Simple port
+PORT=3000
+"#;
+
+        let ports = detect_ports_in_env_file(content, ".env");
+        assert_eq!(ports.len(), 4);
+
+        // Check URL-based ports
+        assert_eq!(ports[0].variable_name, "REDIS_URL");
+        assert_eq!(ports[0].port_value, 6379);
+
+        assert_eq!(ports[1].variable_name, "DATABASE_URL");
+        assert_eq!(ports[1].port_value, 5432);
+
+        assert_eq!(ports[2].variable_name, "MONGO_URL");
+        assert_eq!(ports[2].port_value, 27017);
+
+        // Check simple port
+        assert_eq!(ports[3].variable_name, "PORT");
+        assert_eq!(ports[3].port_value, 3000);
+    }
+
+    #[test]
+    fn test_transform_env_content_with_urls() {
+        let content = r#"# Config
+PORT=3000
+REDIS_URL=redis://localhost:6379
+DATABASE_URL=postgres://user:pass@localhost:5432/mydb
+"#;
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 20000,
+            },
+            PortAssignment {
+                variable_name: "REDIS_URL".to_string(),
+                original_value: 6379,
+                assigned_value: 20001,
+            },
+            PortAssignment {
+                variable_name: "DATABASE_URL".to_string(),
+                original_value: 5432,
+                assigned_value: 20002,
+            },
+        ];
+
+        let result = transform_env_content(content, &assignments);
+
+        assert!(result.content.contains("PORT=20000"));
+        assert!(result.content.contains("REDIS_URL=redis://localhost:20001"));
+        assert!(result.content.contains("DATABASE_URL=postgres://user:pass@localhost:20002/mydb"));
+        assert!(result.content.contains("# Config")); // comment preserved
+
+        assert_eq!(result.replacements.len(), 3);
     }
 }
