@@ -41,7 +41,7 @@ export const DEFAULT_PORT_BLOCK_SIZE = 100;
 export const DEFAULT_PORT_RANGE_END = DEFAULT_PORT_RANGE_START + DEFAULT_PORT_BLOCK_SIZE - 1;
 
 // Default target files for port isolation
-export const DEFAULT_TARGET_FILES = ['.env*'];
+export const DEFAULT_TARGET_FILES = ['.env*', 'docker-compose.yml'];
 
 /**
  * Port isolation service for worktrees
