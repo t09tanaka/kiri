@@ -1,5 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { CopyResult } from './worktreeService';
+import type {
+  PortConfig as PersistencePortConfig,
+  PortAssignment as PersistencePortAssignment,
+  WorktreePortAssignment as PersistenceWorktreePortAssignment,
+} from './persistenceService';
 
 export interface PortSource {
   file_path: string;
@@ -39,20 +44,10 @@ export interface CustomRuleReplacement {
   line_number: number;
 }
 
-export interface PortConfig {
-  enabled: boolean;
-  port_range_start: number;
-  port_range_end: number;
-  next_port: number;
-  worktree_assignments: Record<string, WorktreePortAssignment>;
-  custom_rules: CustomPortRule[];
-}
-
-export interface WorktreePortAssignment {
-  worktree_name: string;
-  assignments: PortAssignment[];
-  created_at: string;
-}
+// Re-export persistence types for convenience
+export type { PersistencePortConfig as PortConfig };
+export type { PersistencePortAssignment };
+export type { PersistenceWorktreePortAssignment as WorktreePortAssignment };
 
 // Default port range
 export const DEFAULT_PORT_RANGE_START = 20000;
@@ -69,7 +64,7 @@ export const portIsolationService = {
   detectPorts: (dirPath: string): Promise<DetectedPorts> => invoke('detect_ports', { dirPath }),
 
   /**
-   * Allocate unique ports for the given port sources
+   * Allocate unique ports for the given port sources (Tauri command wrapper)
    */
   allocatePorts: (ports: PortSource[], startPort: number): Promise<PortAllocationResult> =>
     invoke('allocate_worktree_ports', { ports, startPort }),
@@ -124,39 +119,108 @@ export const portIsolationService = {
   /**
    * Create default port config
    */
-  createDefaultConfig: (): PortConfig => ({
+  createDefaultConfig: (): PersistencePortConfig => ({
     enabled: true,
-    port_range_start: DEFAULT_PORT_RANGE_START,
-    port_range_end: DEFAULT_PORT_RANGE_END,
-    next_port: DEFAULT_PORT_RANGE_START,
-    worktree_assignments: {},
-    custom_rules: [],
+    portRangeStart: DEFAULT_PORT_RANGE_START,
+    portRangeEnd: DEFAULT_PORT_RANGE_END,
+    worktreeAssignments: {},
+    customRules: [],
   }),
 
   /**
-   * Generate port assignments for a worktree
+   * Get all ports currently in use by existing worktrees
    */
-  generateAssignments: async (
-    dirPath: string,
-    config: PortConfig
-  ): Promise<{ assignments: PortAssignment[]; updatedConfig: PortConfig } | null> => {
-    const detected = await portIsolationService.detectPorts(dirPath);
+  getUsedPorts: (config: PersistencePortConfig): Set<number> => {
+    const usedPorts = new Set<number>();
+    // Handle case where worktreeAssignments is undefined (old config format)
+    if (!config.worktreeAssignments) {
+      return usedPorts;
+    }
+    for (const assignment of Object.values(config.worktreeAssignments)) {
+      for (const port of assignment.assignments) {
+        usedPorts.add(port.assignedValue);
+      }
+    }
+    return usedPorts;
+  },
 
-    if (!portIsolationService.hasDetectablePorts(detected)) {
-      return null;
+  /**
+   * Allocate ports avoiding those already used by other worktrees
+   */
+  allocatePortsAvoidingUsed: (
+    ports: PortSource[],
+    config: PersistencePortConfig
+  ): PortAssignment[] => {
+    const usedPorts = portIsolationService.getUsedPorts(config);
+    const assignments: PortAssignment[] = [];
+
+    let nextAvailable = config.portRangeStart;
+
+    for (const port of ports) {
+      // Find next available port that's not in use
+      while (usedPorts.has(nextAvailable) && nextAvailable <= config.portRangeEnd) {
+        nextAvailable++;
+      }
+
+      if (nextAvailable > config.portRangeEnd) {
+        console.error('Port range exhausted');
+        break;
+      }
+
+      assignments.push({
+        variable_name: port.variable_name,
+        original_value: port.port_value,
+        assigned_value: nextAvailable,
+      });
+
+      // Mark this port as used and move to next
+      usedPorts.add(nextAvailable);
+      nextAvailable++;
     }
 
-    const uniquePorts = portIsolationService.getUniqueEnvPorts(detected);
-    const result = await portIsolationService.allocatePorts(uniquePorts, config.next_port);
+    return assignments;
+  },
 
-    const updatedConfig: PortConfig = {
-      ...config,
-      next_port: result.next_port,
-    };
-
+  /**
+   * Register port assignments for a worktree
+   */
+  registerWorktreeAssignments: (
+    config: PersistencePortConfig,
+    worktreeName: string,
+    assignments: PortAssignment[]
+  ): PersistencePortConfig => {
     return {
-      assignments: result.assignments,
-      updatedConfig,
+      ...config,
+      worktreeAssignments: {
+        ...(config.worktreeAssignments ?? {}),
+        [worktreeName]: {
+          worktreeName,
+          assignments: assignments.map((a) => ({
+            variableName: a.variable_name,
+            originalValue: a.original_value,
+            assignedValue: a.assigned_value,
+          })),
+        },
+      },
+    };
+  },
+
+  /**
+   * Remove port assignments for a worktree (called when worktree is deleted)
+   */
+  removeWorktreeAssignments: (
+    config: PersistencePortConfig,
+    worktreeName: string
+  ): PersistencePortConfig => {
+    // Handle case where worktreeAssignments is undefined
+    if (!config.worktreeAssignments) {
+      return config;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- intentionally discarding removed entry
+    const { [worktreeName]: _removed, ...remainingAssignments } = config.worktreeAssignments;
+    return {
+      ...config,
+      worktreeAssignments: remainingAssignments,
     };
   },
 };

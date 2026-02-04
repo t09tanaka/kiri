@@ -437,13 +437,30 @@ export interface WorktreeInitCommand {
 }
 
 /**
+ * Port assignment for a single variable
+ */
+export interface PortAssignment {
+  variableName: string;
+  originalValue: number;
+  assignedValue: number;
+}
+
+/**
+ * Port assignments for a worktree
+ */
+export interface WorktreePortAssignment {
+  worktreeName: string;
+  assignments: PortAssignment[];
+}
+
+/**
  * Port isolation configuration
  */
 export interface PortConfig {
   enabled: boolean;
   portRangeStart: number;
   portRangeEnd: number;
-  nextPort: number;
+  worktreeAssignments: Record<string, WorktreePortAssignment>;
   customRules: CustomPortRule[];
 }
 
@@ -521,6 +538,7 @@ export async function loadProjectSettings(projectPath: string): Promise<ProjectS
         settings.worktreeCopyPatterns ?? DEFAULT_PROJECT_SETTINGS.worktreeCopyPatterns,
       worktreeInitCommands:
         settings.worktreeInitCommands ?? DEFAULT_PROJECT_SETTINGS.worktreeInitCommands,
+      portConfig: settings.portConfig,
     };
   } catch (error) {
     console.error('Failed to load project settings:', error);

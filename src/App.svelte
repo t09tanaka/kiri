@@ -39,9 +39,12 @@
     removeOtherWindow,
     loadSettings,
     saveSettings,
+    loadProjectSettings,
+    saveProjectSettings,
     type PersistedWindowState,
     type PersistedWindowGeometry,
   } from '@/lib/services/persistenceService';
+  import { portIsolationService } from '@/lib/services/portIsolationService';
 
   let showShortcuts = $state(false);
   let windowLabel = $state('');
@@ -540,6 +543,20 @@
               worktreeContext.main_repo_path,
               worktreeContext.worktree_name
             );
+
+            // Release port assignments for this worktree
+            try {
+              const settings = await loadProjectSettings(worktreeContext.main_repo_path);
+              if (settings.portConfig) {
+                settings.portConfig = portIsolationService.removeWorktreeAssignments(
+                  settings.portConfig,
+                  worktreeContext.worktree_name
+                );
+                await saveProjectSettings(worktreeContext.main_repo_path, settings);
+              }
+            } catch (portError) {
+              console.error('Failed to release port assignments:', portError);
+            }
 
             // Emit event to notify other windows
             await eventService.emit('worktree-removed', { path: currentPath });

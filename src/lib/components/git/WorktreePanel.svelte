@@ -260,7 +260,7 @@
         enabled: true,
         portRangeStart: DEFAULT_PORT_RANGE_START,
         portRangeEnd: DEFAULT_PORT_RANGE_END,
-        nextPort: DEFAULT_PORT_RANGE_START,
+        worktreeAssignments: {},
         customRules: [],
       };
     } catch {
@@ -298,7 +298,7 @@
         }
         selectedPorts = newSelected;
         // Allocate ports
-        await allocatePortsForWorktree();
+        allocatePortsForWorktree();
       } else {
         detectedPorts = null;
       }
@@ -310,7 +310,7 @@
     }
   }
 
-  async function allocatePortsForWorktree(): Promise<void> {
+  function allocatePortsForWorktree(): void {
     if (!detectedPorts || !portConfig) return;
 
     const selectedVars = new Set(
@@ -327,13 +327,8 @@
     const uniquePorts = portIsolationService.getUniqueEnvPorts(detectedPorts);
     const portsToAllocate = uniquePorts.filter((p) => selectedVars.has(p.variable_name));
 
-    try {
-      const result = await portIsolationService.allocatePorts(portsToAllocate, portConfig.nextPort);
-      portAssignments = result.assignments;
-    } catch (e) {
-      console.error('Failed to allocate ports:', e);
-      portAssignments = [];
-    }
+    // Allocate ports avoiding those already used by other worktrees
+    portAssignments = portIsolationService.allocatePortsAvoidingUsed(portsToAllocate, portConfig);
   }
 
   function togglePortSelection(variableName: string) {
@@ -569,11 +564,14 @@
               currentPortAssignments
             );
             addCreationOutput(`Ports transformed: ${currentPortAssignments.length} variables`);
-            // Update nextPort in config
+            // Register port assignments for this worktree and persist
             if (portConfig) {
-              const maxAssigned = Math.max(...currentPortAssignments.map((a) => a.assigned_value));
-              portConfig = { ...portConfig, nextPort: maxAssigned + 1 };
-              savePortConfig();
+              portConfig = portIsolationService.registerWorktreeAssignments(
+                portConfig,
+                wtName,
+                currentPortAssignments
+              );
+              await savePortConfig();
             }
           } else {
             // Regular copy
