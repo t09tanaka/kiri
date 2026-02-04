@@ -437,12 +437,31 @@ export interface WorktreeInitCommand {
 }
 
 /**
+ * Port isolation configuration
+ */
+export interface PortConfig {
+  enabled: boolean;
+  portRangeStart: number;
+  portRangeEnd: number;
+  nextPort: number;
+  customRules: CustomPortRule[];
+}
+
+export interface CustomPortRule {
+  id: string;
+  filePattern: string;
+  searchPattern: string;
+  enabled: boolean;
+}
+
+/**
  * Project-specific settings (stored per project path)
  */
 export interface ProjectSettings {
   searchExcludePatterns: string[];
   worktreeCopyPatterns: string[];
   worktreeInitCommands: WorktreeInitCommand[];
+  portConfig?: PortConfig;
 }
 
 /**

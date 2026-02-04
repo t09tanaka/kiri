@@ -1,16 +1,17 @@
 mod commands;
 
 use commands::{
-    clear_performance_timings, close_terminal, copy_files_to_worktree, copy_paths_to_directory,
-    create_directory, create_terminal, create_window, create_worktree, delete_path,
-    detect_package_manager, focus_or_create_window, get_all_git_diffs, get_git_diff,
-    get_git_file_status, get_git_status, get_home_directory, get_memory_metrics,
-    get_performance_report, get_window_geometry, get_worktree_context, is_terminal_alive,
-    list_branches, list_worktrees, read_directory, read_file, record_command_timing,
-    register_window, resize_terminal, remove_worktree, reveal_in_finder, run_init_command,
-    search_content, search_files, set_window_geometry, setup_menu, start_watching,
-    stop_all_watching, stop_watching, unregister_window, write_terminal, TerminalState,
-    WatcherState, WindowRegistry, WindowRegistryState,
+    allocate_worktree_ports, apply_port_custom_rules, clear_performance_timings, close_terminal,
+    copy_files_to_worktree, copy_files_with_ports, copy_paths_to_directory, create_directory,
+    create_terminal, create_window, create_worktree, delete_path, detect_package_manager,
+    detect_ports, focus_or_create_window, get_all_git_diffs, get_git_diff, get_git_file_status,
+    get_git_status, get_home_directory, get_memory_metrics, get_performance_report,
+    get_window_geometry, get_worktree_context, is_terminal_alive, list_branches, list_worktrees,
+    read_directory, read_file, record_command_timing, register_window, resize_terminal,
+    remove_worktree, reveal_in_finder, run_init_command, search_content, search_files,
+    set_window_geometry, setup_menu, start_watching, stop_all_watching, stop_watching,
+    unregister_window, write_terminal, TerminalState, WatcherState, WindowRegistry,
+    WindowRegistryState,
 };
 use std::sync::{Arc, Mutex};
 
@@ -81,6 +82,11 @@ pub fn run() {
             clear_performance_timings,
             // Drag and drop
             copy_paths_to_directory,
+            // Port isolation
+            detect_ports,
+            allocate_worktree_ports,
+            copy_files_with_ports,
+            apply_port_custom_rules,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

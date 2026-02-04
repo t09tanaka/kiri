@@ -10,6 +10,7 @@
     saveProjectSettings,
     DEFAULT_WORKTREE_COPY_PATTERNS,
     type WorktreeInitCommand,
+    type PortConfig,
   } from '@/lib/services/persistenceService';
   import type {
     WorktreeInfo,
@@ -17,6 +18,14 @@
     WorktreeContext,
     PackageManager,
   } from '@/lib/services/worktreeService';
+  import {
+    portIsolationService,
+    DEFAULT_PORT_RANGE_START,
+    DEFAULT_PORT_RANGE_END,
+    type DetectedPorts,
+    type PortAssignment,
+    type PortSource,
+  } from '@/lib/services/portIsolationService';
   import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
   import { formatRelativeTime } from '@/lib/utils/dateFormat';
 
@@ -63,6 +72,13 @@
   let openStep = $state<OpenStep | null>(null);
   let openOutput = $state<string[]>([]);
   let openCancelled = $state(false);
+
+  // Port isolation state
+  let portConfig = $state<PortConfig | null>(null);
+  let detectedPorts = $state<DetectedPorts | null>(null);
+  let isDetectingPorts = $state(false);
+  let selectedPorts = $state<Map<string, boolean>>(new Map());
+  let portAssignments = $state<PortAssignment[]>([]);
 
   // Helper to force UI update - uses setTimeout to ensure render cycle completes
   async function forceUIUpdate(delayMs = 50): Promise<void> {
@@ -158,6 +174,8 @@
     await loadCopySettings();
     await loadInitCommands();
     await detectPackageManager();
+    await loadPortConfig();
+    await detectPortsForWorktree();
   });
 
   async function loadContext() {
@@ -232,6 +250,135 @@
       detectedPackageManager = await worktreeService.detectPackageManager(projectPath);
     } catch {
       detectedPackageManager = null;
+    }
+  }
+
+  async function loadPortConfig() {
+    try {
+      const settings = await loadProjectSettings(projectPath);
+      portConfig = settings.portConfig ?? {
+        enabled: true,
+        portRangeStart: DEFAULT_PORT_RANGE_START,
+        portRangeEnd: DEFAULT_PORT_RANGE_END,
+        nextPort: DEFAULT_PORT_RANGE_START,
+        customRules: [],
+      };
+    } catch {
+      portConfig = null;
+    }
+  }
+
+  async function savePortConfig() {
+    if (!portConfig) return;
+    try {
+      const settings = await loadProjectSettings(projectPath);
+      settings.portConfig = portConfig;
+      await saveProjectSettings(projectPath, settings);
+    } catch (e) {
+      console.error('Failed to save port config:', e);
+    }
+  }
+
+  async function detectPortsForWorktree(): Promise<void> {
+    if (!portConfig?.enabled) {
+      detectedPorts = null;
+      return;
+    }
+    isDetectingPorts = true;
+    try {
+      const detected = await portIsolationService.detectPorts(projectPath);
+      if (portIsolationService.hasDetectablePorts(detected)) {
+        detectedPorts = detected;
+        // Initialize selected ports (all checked by default)
+        const uniquePorts = portIsolationService.getUniqueEnvPorts(detected);
+        // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally using Map
+        const newSelected = new Map<string, boolean>();
+        for (const port of uniquePorts) {
+          newSelected.set(port.variable_name, true);
+        }
+        selectedPorts = newSelected;
+        // Allocate ports
+        await allocatePortsForWorktree();
+      } else {
+        detectedPorts = null;
+      }
+    } catch (e) {
+      console.error('Failed to detect ports:', e);
+      detectedPorts = null;
+    } finally {
+      isDetectingPorts = false;
+    }
+  }
+
+  async function allocatePortsForWorktree(): Promise<void> {
+    if (!detectedPorts || !portConfig) return;
+
+    const selectedVars = new Set(
+      Array.from(selectedPorts.entries())
+        .filter(([, selected]) => selected)
+        .map(([name]) => name)
+    );
+
+    if (selectedVars.size === 0) {
+      portAssignments = [];
+      return;
+    }
+
+    const uniquePorts = portIsolationService.getUniqueEnvPorts(detectedPorts);
+    const portsToAllocate = uniquePorts.filter((p) => selectedVars.has(p.variable_name));
+
+    try {
+      const result = await portIsolationService.allocatePorts(portsToAllocate, portConfig.nextPort);
+      portAssignments = result.assignments;
+    } catch (e) {
+      console.error('Failed to allocate ports:', e);
+      portAssignments = [];
+    }
+  }
+
+  function togglePortSelection(variableName: string) {
+    const current = selectedPorts.get(variableName) ?? true;
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally using Map
+    selectedPorts = new Map(selectedPorts).set(variableName, !current);
+    allocatePortsForWorktree();
+  }
+
+  function getAssignedPortValue(variableName: string): number | null {
+    const assignment = portAssignments.find((a) => a.variable_name === variableName);
+    return assignment?.assigned_value ?? null;
+  }
+
+  function getPortSourceFiles(variableName: string): string[] {
+    if (!detectedPorts) return [];
+    return detectedPorts.env_ports
+      .filter((p) => p.variable_name === variableName)
+      .map((p) => {
+        const filename = p.file_path.split('/').pop() ?? p.file_path;
+        return `${filename}:${p.line_number}`;
+      });
+  }
+
+  // Get unique ports for display
+  function getUniqueEnvPorts(): PortSource[] {
+    if (!detectedPorts) return [];
+    return portIsolationService.getUniqueEnvPorts(detectedPorts);
+  }
+
+  // Count of selected ports
+  function getSelectedPortCount(): number {
+    return Array.from(selectedPorts.values()).filter(Boolean).length;
+  }
+
+  function togglePortIsolation() {
+    if (portConfig) {
+      portConfig = { ...portConfig, enabled: !portConfig.enabled };
+      savePortConfig();
+      if (portConfig.enabled) {
+        detectPortsForWorktree();
+      } else {
+        detectedPorts = null;
+        portAssignments = [];
+      }
     }
   }
 
@@ -362,6 +509,12 @@
       createError = 'Project path is not available';
       return;
     }
+
+    // Proceed with worktree creation using pre-configured port assignments
+    continueWorktreeCreation();
+  }
+
+  async function continueWorktreeCreation() {
     isCreating = true;
     createError = null;
     creationStep = 'worktree';
@@ -396,19 +549,36 @@
       addCreationOutput('Worktree created');
       await forceUIUpdate();
 
-      // Step 2: Copy files
+      // Step 2: Copy files (with port transformation if assignments exist)
       creationStep = 'copy';
       await forceUIUpdate();
       const allPatterns = [...DEFAULT_WORKTREE_COPY_PATTERNS, ...userCopyPatterns];
+      // Get current port assignments if port isolation is enabled
+      const currentPortAssignments = portConfig?.enabled ? portAssignments : [];
       if (allPatterns.length > 0) {
         addCreationOutput('Copying files...');
         await forceUIUpdate();
         try {
-          const copyResult = await worktreeService.copyFiles(
-            currentProjectPath,
-            wt.path,
-            allPatterns
-          );
+          let copyResult;
+          if (currentPortAssignments.length > 0) {
+            // Use port-aware copy
+            copyResult = await portIsolationService.copyFilesWithPorts(
+              currentProjectPath,
+              wt.path,
+              allPatterns,
+              currentPortAssignments
+            );
+            addCreationOutput(`Ports transformed: ${currentPortAssignments.length} variables`);
+            // Update nextPort in config
+            if (portConfig) {
+              const maxAssigned = Math.max(...currentPortAssignments.map((a) => a.assigned_value));
+              portConfig = { ...portConfig, nextPort: maxAssigned + 1 };
+              savePortConfig();
+            }
+          } else {
+            // Regular copy
+            copyResult = await worktreeService.copyFiles(currentProjectPath, wt.path, allPatterns);
+          }
           if (copyResult.copied_files.length > 0) {
             addCreationOutput(`${copyResult.copied_files.length} files copied`);
           } else {
@@ -492,6 +662,8 @@
       resetCreation();
       createName = '';
       isExistingBranch = false;
+      // Re-detect and re-allocate ports for next worktree
+      await detectPortsForWorktree();
       await forceUIUpdate();
     } catch (e) {
       createError = e instanceof Error ? e.message : String(e);
@@ -1079,6 +1251,104 @@
               Add
             </button>
           </div>
+        </div>
+
+        <!-- Port Isolation Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="settings-section-title">Port isolation</div>
+            <label class="toggle-switch">
+              <input
+                type="checkbox"
+                checked={portConfig?.enabled ?? true}
+                onchange={() => togglePortIsolation()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <p class="settings-section-description">
+            Automatically assign unique ports to prevent conflicts when running multiple worktrees.
+          </p>
+
+          {#if portConfig?.enabled}
+            {#if isDetectingPorts}
+              <div class="port-loading">
+                <Spinner size="sm" />
+                <span>Detecting ports...</span>
+              </div>
+            {:else if getUniqueEnvPorts().length > 0}
+              <div class="port-table">
+                <div class="port-table-header">
+                  <div class="port-col-check"></div>
+                  <div class="port-col-var">Variable</div>
+                  <div class="port-col-before">Before</div>
+                  <div class="port-col-after">After</div>
+                  <div class="port-col-source">Source</div>
+                </div>
+                {#each getUniqueEnvPorts() as port (port.variable_name)}
+                  {@const isSelected = selectedPorts.get(port.variable_name) ?? true}
+                  {@const assigned = getAssignedPortValue(port.variable_name)}
+                  {@const sources = getPortSourceFiles(port.variable_name)}
+                  <div class="port-table-row" class:disabled={!isSelected}>
+                    <div class="port-col-check">
+                      <input
+                        type="checkbox"
+                        class="port-checkbox"
+                        checked={isSelected}
+                        onchange={() => togglePortSelection(port.variable_name)}
+                      />
+                    </div>
+                    <div class="port-col-var">
+                      <code class="port-var-name">{port.variable_name}</code>
+                    </div>
+                    <div class="port-col-before">
+                      <span class="port-value port-original">{port.port_value}</span>
+                    </div>
+                    <div class="port-col-after">
+                      {#if isSelected && assigned !== null}
+                        <span class="port-value port-new">{assigned}</span>
+                      {:else}
+                        <span class="port-value port-unchanged">-</span>
+                      {/if}
+                    </div>
+                    <div class="port-col-source">
+                      <span class="port-source-files" title={sources.join(', ')}>
+                        {sources[0]}{sources.length > 1 ? ` +${sources.length - 1}` : ''}
+                      </span>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+              {#if getSelectedPortCount() > 0}
+                <div class="port-summary">
+                  {getSelectedPortCount()} port{getSelectedPortCount() !== 1 ? 's' : ''} will be transformed
+                </div>
+              {/if}
+            {:else}
+              <div class="port-empty">No port variables detected in .env files</div>
+            {/if}
+
+            <!-- Reference: Dockerfile & docker-compose -->
+            {#if detectedPorts && (detectedPorts.dockerfile_ports.length > 0 || detectedPorts.compose_ports.length > 0)}
+              <div class="port-reference">
+                <div class="port-reference-title">Reference (not transformed)</div>
+                <div class="port-reference-list">
+                  {#each detectedPorts.dockerfile_ports as port, i (`dockerfile-${i}`)}
+                    <div class="port-reference-item">
+                      <span class="port-ref-label">Dockerfile</span>
+                      <code class="port-ref-value">EXPOSE {port.port_value}</code>
+                    </div>
+                  {/each}
+                  {#each detectedPorts.compose_ports as port, i (`compose-${i}`)}
+                    <div class="port-reference-item">
+                      <span class="port-ref-label">compose</span>
+                      <code class="port-ref-value">ports: {port.port_value}</code>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          {/if}
         </div>
       </div>
     </div>
@@ -2172,5 +2442,226 @@
 
   .command-add > .pattern-add-btn {
     align-self: flex-end;
+  }
+
+  /* Port Isolation Section */
+  .settings-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+  }
+
+  .toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    transition: all var(--transition-fast);
+  }
+
+  .toggle-slider::before {
+    position: absolute;
+    content: '';
+    height: 14px;
+    width: 14px;
+    left: 2px;
+    bottom: 2px;
+    background-color: var(--text-muted);
+    border-radius: 50%;
+    transition: all var(--transition-fast);
+  }
+
+  .toggle-switch input:checked + .toggle-slider {
+    background-color: rgba(125, 211, 252, 0.2);
+    border-color: var(--accent-color);
+  }
+
+  .toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(16px);
+    background-color: var(--accent-color);
+  }
+
+  .port-loading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .port-table {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .port-table-header {
+    display: flex;
+    padding: var(--space-2) var(--space-2);
+    background: rgba(0, 0, 0, 0.15);
+    font-size: 9px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .port-table-row {
+    display: flex;
+    padding: var(--space-2) var(--space-2);
+    border-top: 1px solid var(--border-subtle);
+    font-size: 11px;
+    transition: opacity var(--transition-fast);
+  }
+
+  .port-table-row.disabled {
+    opacity: 0.4;
+  }
+
+  .port-col-check {
+    width: 20px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+  }
+
+  .port-col-var {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .port-col-before,
+  .port-col-after {
+    width: 50px;
+    flex-shrink: 0;
+    text-align: right;
+  }
+
+  .port-col-source {
+    width: 80px;
+    flex-shrink: 0;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .port-checkbox {
+    width: 12px;
+    height: 12px;
+    accent-color: var(--accent-color);
+    cursor: pointer;
+  }
+
+  .port-var-name {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-primary);
+  }
+
+  .port-value {
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+
+  .port-original {
+    color: var(--text-muted);
+  }
+
+  .port-new {
+    color: var(--accent-color);
+    font-weight: 500;
+  }
+
+  .port-unchanged {
+    color: var(--text-muted);
+    opacity: 0.5;
+  }
+
+  .port-source-files {
+    font-size: 9px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+
+  .port-summary {
+    font-size: 11px;
+    color: var(--accent-color);
+    padding: var(--space-2) 0;
+  }
+
+  .port-empty {
+    padding: var(--space-3);
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .port-reference {
+    margin-top: var(--space-2);
+  }
+
+  .port-reference-title {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-muted);
+    margin-bottom: var(--space-1);
+  }
+
+  .port-reference-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .port-reference-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-size: 10px;
+  }
+
+  .port-ref-label {
+    font-size: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    padding: 1px 4px;
+    background: rgba(125, 211, 252, 0.1);
+    border-radius: 2px;
+    color: var(--text-muted);
+  }
+
+  .port-ref-value {
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    font-size: 10px;
   }
 </style>
