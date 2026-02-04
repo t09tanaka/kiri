@@ -9,6 +9,10 @@ docs/
 .env
 .env.*
 
+# Docker (for testing port isolation)
+docker-compose.yml
+Dockerfile
+
 # Logs
 logs
 *.log
