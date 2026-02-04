@@ -377,6 +377,39 @@
     return Array.from(selectedPorts.values()).filter(Boolean).length;
   }
 
+  // Counts for execution summary
+  function getCopyFileCount(): number {
+    // Default patterns + user patterns + enabled target files (for port isolation)
+    const regularPatterns = DEFAULT_WORKTREE_COPY_PATTERNS.length + userCopyPatterns.length;
+    const disabledFiles = portConfig?.disabledTargetFiles ?? [];
+    const enabledTargetFiles = (portConfig?.targetFiles ?? DEFAULT_TARGET_FILES).filter(
+      (f) => !disabledFiles.includes(f)
+    );
+    return regularPatterns + enabledTargetFiles.length;
+  }
+
+  function getEnabledCommandCount(): number {
+    // Enabled init commands (auto-detected + user-added)
+    let count = 0;
+    // Check if package manager command is enabled
+    if (detectedPackageManager) {
+      const hasUserOverride = initCommands.some(
+        (c) => c.name === 'Install dependencies' && !c.auto
+      );
+      if (!hasUserOverride) {
+        count++; // Auto-detected package manager
+      }
+    }
+    // Count enabled user commands
+    count += initCommands.filter((c) => c.enabled).length;
+    return count;
+  }
+
+  function getPortCount(): number {
+    if (!portConfig?.enabled) return 0;
+    return portAssignments.length;
+  }
+
   function togglePortIsolation() {
     if (portConfig) {
       portConfig = { ...portConfig, enabled: !portConfig.enabled };
@@ -1077,14 +1110,67 @@
       </div>
 
       <div class="modal-footer">
-        <span class="footer-item">
-          <kbd>↵</kbd>
-          <span>create</span>
-        </span>
-        <span class="footer-item">
-          <kbd>Esc</kbd>
-          <span>close</span>
-        </span>
+        <!-- Execution summary badges -->
+        <div class="execution-summary">
+          {#if getCopyFileCount() > 0}
+            <span class="summary-badge" title="Files to copy">
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+              </svg>
+              <span>{getCopyFileCount()}</span>
+            </span>
+          {/if}
+          {#if getEnabledCommandCount() > 0}
+            <span class="summary-badge" title="Commands to run">
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <polyline points="4 17 10 11 4 5"></polyline>
+                <line x1="12" y1="19" x2="20" y2="19"></line>
+              </svg>
+              <span>{getEnabledCommandCount()}</span>
+            </span>
+          {/if}
+          {#if getPortCount() > 0}
+            <span class="summary-badge badge-port" title="Ports to isolate">
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="12" cy="12" r="10"></circle>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+              <span>{getPortCount()}</span>
+            </span>
+          {/if}
+        </div>
+        <div class="footer-actions">
+          <span class="footer-item">
+            <kbd>↵</kbd>
+            <span>create</span>
+          </span>
+          <span class="footer-item">
+            <kbd>Esc</kbd>
+            <span>close</span>
+          </span>
+        </div>
       </div>
     </div>
   </div>
@@ -1637,14 +1723,18 @@
   }
 
   .settings-btn {
-    opacity: 0.5;
+    background: rgba(125, 211, 252, 0.15);
+    border: 1px solid rgba(125, 211, 252, 0.3);
+    color: var(--accent-color);
     transition: all var(--transition-fast);
+    box-shadow: 0 0 8px rgba(125, 211, 252, 0.1);
   }
 
   .settings-btn:hover {
-    opacity: 1;
-    background: rgba(125, 211, 252, 0.1);
-    color: var(--accent-color);
+    background: rgba(125, 211, 252, 0.25);
+    border-color: rgba(125, 211, 252, 0.5);
+    box-shadow: 0 0 12px rgba(125, 211, 252, 0.2);
+    transform: translateY(-1px);
   }
 
   .settings-btn:hover svg {
@@ -1663,11 +1753,56 @@
 
   .modal-footer {
     display: flex;
-    justify-content: flex-end;
-    gap: var(--space-5);
+    justify-content: space-between;
+    align-items: center;
     padding: var(--space-3) var(--space-4);
     background: rgba(0, 0, 0, 0.2);
     border-top: 1px solid var(--border-subtle);
+  }
+
+  .execution-summary {
+    display: flex;
+    gap: var(--space-2);
+  }
+
+  .summary-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: rgba(125, 211, 252, 0.1);
+    border: 1px solid rgba(125, 211, 252, 0.2);
+    border-radius: var(--radius-full);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--accent-color);
+    transition: all var(--transition-fast);
+  }
+
+  .summary-badge:hover {
+    background: rgba(125, 211, 252, 0.15);
+    border-color: rgba(125, 211, 252, 0.3);
+    transform: translateY(-1px);
+  }
+
+  .summary-badge svg {
+    opacity: 0.8;
+  }
+
+  .summary-badge.badge-port {
+    background: rgba(196, 181, 253, 0.1);
+    border-color: rgba(196, 181, 253, 0.2);
+    color: var(--accent2-color);
+  }
+
+  .summary-badge.badge-port:hover {
+    background: rgba(196, 181, 253, 0.15);
+    border-color: rgba(196, 181, 253, 0.3);
+  }
+
+  .footer-actions {
+    display: flex;
+    gap: var(--space-5);
   }
 
   .footer-item {
