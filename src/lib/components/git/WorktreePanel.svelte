@@ -410,6 +410,52 @@
     return portAssignments.length;
   }
 
+  // Tooltip descriptions for execution summary
+  function getCopyFilesTooltip(): string {
+    const patterns: string[] = [];
+    // Default patterns
+    patterns.push(...DEFAULT_WORKTREE_COPY_PATTERNS);
+    // User patterns
+    patterns.push(...userCopyPatterns);
+    // Enabled target files
+    const disabledFiles = portConfig?.disabledTargetFiles ?? [];
+    const enabledTargetFiles = (portConfig?.targetFiles ?? DEFAULT_TARGET_FILES).filter(
+      (f) => !disabledFiles.includes(f)
+    );
+    patterns.push(...enabledTargetFiles);
+
+    if (patterns.length === 0) return 'No files to copy';
+    return `Copy to worktree:\n${patterns.map((p) => `  ${p}`).join('\n')}`;
+  }
+
+  function getCommandsTooltip(): string {
+    const commands: string[] = [];
+    // Auto-detected package manager
+    if (detectedPackageManager) {
+      const hasUserOverride = initCommands.some(
+        (c) => c.name === 'Install dependencies' && !c.auto
+      );
+      if (!hasUserOverride) {
+        commands.push(detectedPackageManager.command);
+      }
+    }
+    // User commands
+    for (const cmd of initCommands.filter((c) => c.enabled)) {
+      commands.push(cmd.command);
+    }
+
+    if (commands.length === 0) return 'No commands to run';
+    return `Run after creation:\n${commands.map((c) => `  ${c}`).join('\n')}`;
+  }
+
+  function getPortsTooltip(): string {
+    if (portAssignments.length === 0) return 'No ports to isolate';
+    const lines = portAssignments.map(
+      (a) => `  ${a.variable_name}: ${a.original_value} → ${a.assigned_value}`
+    );
+    return `Port isolation:\n${lines.join('\n')}`;
+  }
+
   function togglePortIsolation() {
     if (portConfig) {
       portConfig = { ...portConfig, enabled: !portConfig.enabled };
@@ -1115,16 +1161,20 @@
           {#if getCopyFileCount() > 0 || getEnabledCommandCount() > 0 || getPortCount() > 0}
             <span class="summary-text">
               {#if getCopyFileCount() > 0}
-                <span class="summary-item">{getCopyFileCount()} files</span>
+                <span class="summary-item" title={getCopyFilesTooltip()}
+                  >{getCopyFileCount()} files</span
+                >
               {/if}
               {#if getEnabledCommandCount() > 0}
-                <span class="summary-item"
+                <span class="summary-item" title={getCommandsTooltip()}
                   >{getEnabledCommandCount()}
                   {getEnabledCommandCount() === 1 ? 'command' : 'commands'}</span
                 >
               {/if}
               {#if getPortCount() > 0}
-                <span class="summary-item summary-port">{getPortCount()} ports</span>
+                <span class="summary-item summary-port" title={getPortsTooltip()}
+                  >{getPortCount()} ports</span
+                >
               {/if}
             </span>
           {/if}
@@ -1743,6 +1793,12 @@
 
   .summary-item {
     color: var(--text-secondary);
+    cursor: help;
+    transition: color var(--transition-fast);
+  }
+
+  .summary-item:hover {
+    color: var(--text-primary);
   }
 
   .summary-item::after {
@@ -1758,6 +1814,11 @@
 
   .summary-item.summary-port {
     color: var(--accent2-color);
+  }
+
+  .summary-item.summary-port:hover {
+    color: var(--accent2-color);
+    filter: brightness(1.2);
   }
 
   .footer-actions {
