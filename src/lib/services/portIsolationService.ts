@@ -30,20 +30,6 @@ export interface PortAllocationResult {
   next_port: number;
 }
 
-export interface CustomPortRule {
-  id: string;
-  file_pattern: string;
-  search_pattern: string;
-  enabled: boolean;
-}
-
-export interface CustomRuleReplacement {
-  file_path: string;
-  original_value: number;
-  new_value: number;
-  line_number: number;
-}
-
 // Re-export persistence types for convenience
 export type { PersistencePortConfig as PortConfig };
 export type { PersistencePortAssignment };
@@ -53,6 +39,9 @@ export type { PersistenceWorktreePortAssignment as WorktreePortAssignment };
 export const DEFAULT_PORT_RANGE_START = 20000;
 export const DEFAULT_PORT_BLOCK_SIZE = 100;
 export const DEFAULT_PORT_RANGE_END = DEFAULT_PORT_RANGE_START + DEFAULT_PORT_BLOCK_SIZE - 1;
+
+// Default target files for port isolation
+export const DEFAULT_TARGET_FILES = ['.env*'];
 
 /**
  * Port isolation service for worktrees
@@ -72,7 +61,7 @@ export const portIsolationService = {
 
   /**
    * Copy files with port transformation
-   * .env files will have their port values replaced according to assignments
+   * Files will have their port values replaced according to assignments
    */
   copyFilesWithPorts: (
     sourcePath: string,
@@ -81,17 +70,6 @@ export const portIsolationService = {
     assignments: PortAssignment[]
   ): Promise<CopyResult> =>
     invoke('copy_files_with_ports', { sourcePath, targetPath, patterns, assignments }),
-
-  /**
-   * Apply custom port rules to files
-   */
-  applyCustomRules: (
-    sourcePath: string,
-    targetPath: string,
-    rules: CustomPortRule[],
-    portOffset: number
-  ): Promise<CustomRuleReplacement[]> =>
-    invoke('apply_port_custom_rules', { sourcePath, targetPath, rules, portOffset }),
 
   /**
    * Get all unique env ports (deduplicated by variable name)
@@ -125,7 +103,7 @@ export const portIsolationService = {
     portRangeStart: DEFAULT_PORT_RANGE_START,
     portRangeEnd: DEFAULT_PORT_RANGE_END,
     worktreeAssignments: {},
-    customRules: [],
+    targetFiles: [...DEFAULT_TARGET_FILES],
   }),
 
   /**

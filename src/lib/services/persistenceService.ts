@@ -461,14 +461,7 @@ export interface PortConfig {
   portRangeStart: number;
   portRangeEnd: number;
   worktreeAssignments: Record<string, WorktreePortAssignment>;
-  customRules: CustomPortRule[];
-}
-
-export interface CustomPortRule {
-  id: string;
-  filePattern: string;
-  searchPattern: string;
-  enabled: boolean;
+  targetFiles: string[]; // File patterns to process (default: ['.env*'])
 }
 
 /**

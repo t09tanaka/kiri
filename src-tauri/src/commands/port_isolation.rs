@@ -39,22 +39,6 @@ pub struct DetectedPorts {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CustomPortRule {
-    pub id: String,
-    pub file_pattern: String,
-    pub search_pattern: String,
-    pub enabled: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CustomRuleReplacement {
-    pub file_path: String,
-    pub original_value: u16,
-    pub new_value: u16,
-    pub line_number: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortAllocationResult {
     pub assignments: Vec<PortAssignment>,
     pub next_port: u16,
@@ -430,6 +414,46 @@ pub fn transform_env_content(
     }
 }
 
+/// Transform generic file content by replacing port numbers
+/// This is a simple find-and-replace approach for non-.env files
+pub fn transform_generic_content(content: &str, assignments: &[PortAssignment]) -> String {
+    let mut result = content.to_string();
+
+    // Sort by original_value descending to replace longer numbers first
+    // This prevents issues like 3000 being replaced before 30001
+    let mut sorted_assignments: Vec<&PortAssignment> = assignments.iter().collect();
+    sorted_assignments.sort_by(|a, b| b.original_value.cmp(&a.original_value));
+
+    for assignment in sorted_assignments {
+        let original = assignment.original_value.to_string();
+        let new_value = assignment.assigned_value.to_string();
+
+        // Use word boundary matching to avoid partial replacements
+        // Match port numbers surrounded by non-digit characters
+        // We need to run multiple passes because Rust regex doesn't support lookbehind
+        // and matches can overlap (e.g., "3000:3000" needs two replacements)
+        let pattern = format!(
+            r"(?P<before>^|[^0-9]){}(?P<after>[^0-9]|$)",
+            regex::escape(&original)
+        );
+
+        if let Ok(re) = Regex::new(&pattern) {
+            // Run multiple passes until no more replacements occur
+            loop {
+                let new_result = re
+                    .replace_all(&result, format!("${{before}}{}${{after}}", new_value))
+                    .to_string();
+                if new_result == result {
+                    break;
+                }
+                result = new_result;
+            }
+        }
+    }
+
+    result
+}
+
 /// Copy files with port transformation
 pub fn copy_files_with_port_transformation(
     source_path: String,
@@ -501,12 +525,19 @@ pub fn copy_files_with_port_transformation(
             }
         }
 
-        // Check if this is an .env file that needs transformation
-        if is_env_file(path) && !assignments.is_empty() {
+        // Transform file content based on file type
+        if !assignments.is_empty() {
             match fs::read_to_string(path) {
                 Ok(content) => {
-                    let transformed = transform_env_content(&content, assignments);
-                    if let Err(e) = fs::write(&target_file, transformed.content) {
+                    let transformed = if is_env_file(path) {
+                        // Use specialized .env transformation (preserves variable names)
+                        transform_env_content(&content, assignments).content
+                    } else {
+                        // Use generic port number replacement
+                        transform_generic_content(&content, assignments)
+                    };
+
+                    if let Err(e) = fs::write(&target_file, transformed) {
                         errors.push(format!(
                             "Failed to write transformed file {}: {}",
                             target_file.display(),
@@ -521,7 +552,7 @@ pub fn copy_files_with_port_transformation(
                 }
             }
         } else {
-            // Regular copy
+            // No assignments, just copy
             match fs::copy(path, &target_file) {
                 Ok(_) => {
                     copied_files.push(relative.to_string_lossy().to_string());
@@ -624,118 +655,6 @@ pub fn copy_files_with_port_transformation(
         skipped_files,
         errors,
     })
-}
-
-/// Apply custom rules to files in source directory and write to target
-pub fn apply_custom_rules(
-    source_path: String,
-    target_path: String,
-    rules: Vec<CustomPortRule>,
-    port_offset: u16,
-) -> Result<Vec<CustomRuleReplacement>, String> {
-    let source = Path::new(&source_path);
-    let target = Path::new(&target_path);
-
-    if !source.exists() {
-        return Err(format!("Source path does not exist: {}", source_path));
-    }
-
-    if !target.exists() {
-        return Err(format!("Target path does not exist: {}", target_path));
-    }
-
-    let mut all_replacements = Vec::new();
-
-    for rule in rules {
-        if !rule.enabled {
-            continue;
-        }
-
-        let pattern = source.join(&rule.file_pattern).to_string_lossy().to_string();
-        let search_re = match Regex::new(&rule.search_pattern) {
-            Ok(re) => re,
-            Err(e) => {
-                return Err(format!(
-                    "Invalid regex pattern '{}': {}",
-                    rule.search_pattern, e
-                ));
-            }
-        };
-
-        if let Ok(entries) = glob(&pattern) {
-            for entry in entries.flatten() {
-                if !entry.is_file() {
-                    continue;
-                }
-
-                let content = match fs::read_to_string(&entry) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-
-                let relative = entry.strip_prefix(source).unwrap_or(&entry);
-                let target_file = target.join(relative);
-
-                // Create parent directories
-                if let Some(parent) = target_file.parent() {
-                    if !parent.exists() {
-                        let _ = fs::create_dir_all(parent);
-                    }
-                }
-
-                let mut new_content = String::new();
-                let mut replacements_for_file = Vec::new();
-
-                for (line_num, line) in content.lines().enumerate() {
-                    if let Some(caps) = search_re.captures(line) {
-                        if let Some(port_match) = caps.get(1) {
-                            if let Ok(original_port) = port_match.as_str().parse::<u16>() {
-                                let new_port = original_port.saturating_add(port_offset);
-                                let new_line = search_re.replace(line, |caps: &regex::Captures| {
-                                    let full_match = caps.get(0).map(|m| m.as_str()).unwrap_or("");
-                                    let port_match = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-                                    full_match.replace(port_match, &new_port.to_string())
-                                });
-                                new_content.push_str(&new_line);
-                                replacements_for_file.push(CustomRuleReplacement {
-                                    file_path: relative.to_string_lossy().to_string(),
-                                    original_value: original_port,
-                                    new_value: new_port,
-                                    line_number: (line_num + 1) as u32,
-                                });
-                            } else {
-                                new_content.push_str(line);
-                            }
-                        } else {
-                            new_content.push_str(line);
-                        }
-                    } else {
-                        new_content.push_str(line);
-                    }
-                    new_content.push('\n');
-                }
-
-                // Remove trailing newline if original didn't have one
-                if !content.ends_with('\n') && new_content.ends_with('\n') {
-                    new_content.pop();
-                }
-
-                // Write the transformed file
-                if !replacements_for_file.is_empty() {
-                    if let Err(e) = fs::write(&target_file, &new_content) {
-                        return Err(format!(
-                            "Failed to write file {}: {}",
-                            target_file.display(),
-                            e
-                        ));
-                    }
-                    all_replacements.extend(replacements_for_file);
-                }
-            }
-        }
-    }
-
-    Ok(all_replacements)
 }
 
 #[cfg(test)]
@@ -944,6 +863,109 @@ API_URL=http://localhost:8080
     }
 
     #[test]
+    fn test_transform_generic_content_docker_compose() {
+        let content = r#"services:
+  web:
+    ports:
+      - "3000:3000"
+      - "5432:5432"
+  db:
+    ports:
+      - "6379:6379"
+"#;
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 20000,
+            },
+            PortAssignment {
+                variable_name: "DB_PORT".to_string(),
+                original_value: 5432,
+                assigned_value: 20001,
+            },
+        ];
+
+        let result = transform_generic_content(content, &assignments);
+
+        // Both host and container port should be replaced
+        assert!(result.contains("20000:20000"));
+        assert!(result.contains("20001:20001"));
+        // Unchanged ports should remain
+        assert!(result.contains("6379:6379"));
+    }
+
+    #[test]
+    fn test_transform_generic_content_json_config() {
+        let content = r#"{
+  "port": 3000,
+  "database": {
+    "port": 5432
+  }
+}"#;
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 20000,
+            },
+            PortAssignment {
+                variable_name: "DB_PORT".to_string(),
+                original_value: 5432,
+                assigned_value: 20001,
+            },
+        ];
+
+        let result = transform_generic_content(content, &assignments);
+
+        assert!(result.contains("\"port\": 20000"));
+        assert!(result.contains("\"port\": 20001"));
+    }
+
+    #[test]
+    fn test_transform_generic_content_dockerfile() {
+        let content = r#"FROM node:18
+WORKDIR /app
+COPY . .
+EXPOSE 3000
+CMD ["node", "index.js"]
+"#;
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 20000,
+        }];
+
+        let result = transform_generic_content(content, &assignments);
+
+        assert!(result.contains("EXPOSE 20000"));
+    }
+
+    #[test]
+    fn test_transform_generic_content_avoids_partial_match() {
+        // Ensure 3000 doesn't match inside 30001
+        let content = "PORT=30001\nOTHER_PORT=3000";
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 20000,
+        }];
+
+        let result = transform_generic_content(content, &assignments);
+
+        // 30001 should remain unchanged (not become 200001)
+        assert!(result.contains("30001"));
+        // 3000 should be replaced
+        assert!(result.contains("20000"));
+        // Should not contain "200001"
+        assert!(!result.contains("200001"));
+    }
+
+    #[test]
     fn test_scan_env_files_for_ports() {
         let dir = tempdir().unwrap();
         fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
@@ -1052,73 +1074,6 @@ API_URL=http://localhost:8080
         // Content should be unchanged
         let env_content = fs::read_to_string(target_dir.path().join(".env")).unwrap();
         assert!(env_content.contains("PORT=3000"));
-    }
-
-    #[test]
-    fn test_apply_custom_rules_basic() {
-        let source_dir = tempdir().unwrap();
-        let target_dir = tempdir().unwrap();
-
-        // Create a JSON config file
-        fs::write(
-            source_dir.path().join("config.json"),
-            r#"{"port": 3000, "name": "test"}"#,
-        )
-        .unwrap();
-
-        let rules = vec![CustomPortRule {
-            id: "json-port".to_string(),
-            file_pattern: "config.json".to_string(),
-            search_pattern: r#""port":\s*(\d+)"#.to_string(),
-            enabled: true,
-        }];
-
-        let result = apply_custom_rules(
-            source_dir.path().to_string_lossy().to_string(),
-            target_dir.path().to_string_lossy().to_string(),
-            rules,
-            17000, // offset
-        )
-        .unwrap();
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].original_value, 3000);
-        assert_eq!(result[0].new_value, 20000); // 3000 + 17000
-
-        // Verify file was written
-        let content = fs::read_to_string(target_dir.path().join("config.json")).unwrap();
-        assert!(content.contains("20000"));
-    }
-
-    #[test]
-    fn test_apply_custom_rules_disabled() {
-        let source_dir = tempdir().unwrap();
-        let target_dir = tempdir().unwrap();
-
-        fs::write(
-            source_dir.path().join("config.json"),
-            r#"{"port": 3000}"#,
-        )
-        .unwrap();
-
-        let rules = vec![CustomPortRule {
-            id: "json-port".to_string(),
-            file_pattern: "config.json".to_string(),
-            search_pattern: r#""port":\s*(\d+)"#.to_string(),
-            enabled: false, // disabled
-        }];
-
-        let result = apply_custom_rules(
-            source_dir.path().to_string_lossy().to_string(),
-            target_dir.path().to_string_lossy().to_string(),
-            rules,
-            17000,
-        )
-        .unwrap();
-
-        assert!(result.is_empty());
-        // File should not be created
-        assert!(!target_dir.path().join("config.json").exists());
     }
 
     #[test]

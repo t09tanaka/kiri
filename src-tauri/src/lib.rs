@@ -1,7 +1,7 @@
 mod commands;
 
 use commands::{
-    allocate_worktree_ports, apply_port_custom_rules, clear_performance_timings, close_terminal,
+    allocate_worktree_ports, clear_performance_timings, close_terminal,
     copy_files_to_worktree, copy_files_with_ports, copy_paths_to_directory, create_directory,
     create_terminal, create_window, create_worktree, delete_path, detect_package_manager,
     detect_ports, focus_or_create_window, get_all_git_diffs, get_git_diff, get_git_file_status,
@@ -86,7 +86,6 @@ pub fn run() {
             detect_ports,
             allocate_worktree_ports,
             copy_files_with_ports,
-            apply_port_custom_rules,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

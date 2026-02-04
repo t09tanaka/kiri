@@ -1,8 +1,5 @@
 use super::git_worktree::CopyResult;
-use super::port_isolation::{
-    CustomPortRule, CustomRuleReplacement, DetectedPorts, PortAllocationResult, PortAssignment,
-    PortSource,
-};
+use super::port_isolation::{DetectedPorts, PortAllocationResult, PortAssignment, PortSource};
 
 #[tauri::command]
 pub fn detect_ports(dir_path: String) -> Result<DetectedPorts, String> {
@@ -30,14 +27,4 @@ pub fn copy_files_with_ports(
         patterns,
         assignments,
     )
-}
-
-#[tauri::command]
-pub fn apply_port_custom_rules(
-    source_path: String,
-    target_path: String,
-    rules: Vec<CustomPortRule>,
-    port_offset: u16,
-) -> Result<Vec<CustomRuleReplacement>, String> {
-    super::port_isolation::apply_custom_rules(source_path, target_path, rules, port_offset)
 }

@@ -23,6 +23,7 @@
     DEFAULT_PORT_RANGE_START,
     DEFAULT_PORT_RANGE_END,
     DEFAULT_PORT_BLOCK_SIZE,
+    DEFAULT_TARGET_FILES,
     type DetectedPorts,
     type PortAssignment,
     type PortSource,
@@ -80,6 +81,7 @@
   let isDetectingPorts = $state(false);
   let selectedPorts = $state<Map<string, boolean>>(new Map());
   let portAssignments = $state<PortAssignment[]>([]);
+  let newTargetFile = $state('');
 
   // Helper to force UI update - uses setTimeout to ensure render cycle completes
   async function forceUIUpdate(delayMs = 50): Promise<void> {
@@ -271,7 +273,7 @@
           portRangeStart: DEFAULT_PORT_RANGE_START,
           portRangeEnd: DEFAULT_PORT_RANGE_END,
           worktreeAssignments: {},
-          customRules: [],
+          targetFiles: [...DEFAULT_TARGET_FILES],
         };
       }
     } catch {
@@ -402,6 +404,37 @@
     if (detectedPorts) {
       allocatePortsForWorktree();
     }
+  }
+
+  function addTargetFile() {
+    const pattern = newTargetFile.trim();
+    if (!pattern || !portConfig) return;
+    // Prevent duplicates
+    if (portConfig.targetFiles?.includes(pattern)) {
+      newTargetFile = '';
+      return;
+    }
+    portConfig = {
+      ...portConfig,
+      targetFiles: [...(portConfig.targetFiles ?? DEFAULT_TARGET_FILES), pattern],
+    };
+    newTargetFile = '';
+    savePortConfig();
+  }
+
+  function removeTargetFile(pattern: string) {
+    if (!portConfig) return;
+    // Prevent removing the default .env* pattern
+    if (pattern === '.env*') return;
+    portConfig = {
+      ...portConfig,
+      targetFiles: (portConfig.targetFiles ?? []).filter((p) => p !== pattern),
+    };
+    savePortConfig();
+  }
+
+  function isDefaultTargetFile(pattern: string): boolean {
+    return DEFAULT_TARGET_FILES.includes(pattern);
   }
 
   function addInitCommand() {
@@ -1278,10 +1311,10 @@
           </div>
         </div>
 
-        <!-- Incremental Replace Section -->
+        <!-- Port Isolation Section -->
         <div class="settings-section">
           <div class="settings-section-header">
-            <div class="settings-section-title">Incremental replace</div>
+            <div class="settings-section-title">Port isolation</div>
             <label class="toggle-switch">
               <input
                 type="checkbox"
@@ -1292,7 +1325,7 @@
             </label>
           </div>
           <p class="settings-section-description">
-            Auto-increment values in .env files to prevent conflicts between worktrees.
+            Auto-replace port values to prevent conflicts between worktrees.
           </p>
 
           {#if portConfig?.enabled}
@@ -1372,29 +1405,56 @@
                 </div>
               {/if}
             {:else}
-              <div class="port-empty">No port variables detected in .env files</div>
+              <div class="port-empty">No port variables detected in target files</div>
             {/if}
 
-            <!-- Reference: Dockerfile & docker-compose -->
-            {#if detectedPorts && (detectedPorts.dockerfile_ports.length > 0 || detectedPorts.compose_ports.length > 0)}
-              <div class="port-reference">
-                <div class="port-reference-title">Reference (not transformed)</div>
-                <div class="port-reference-list">
-                  {#each detectedPorts.dockerfile_ports as port, i (`dockerfile-${i}`)}
-                    <div class="port-reference-item">
-                      <span class="port-ref-label">Dockerfile</span>
-                      <code class="port-ref-value">EXPOSE {port.port_value}</code>
-                    </div>
-                  {/each}
-                  {#each detectedPorts.compose_ports as port, i (`compose-${i}`)}
-                    <div class="port-reference-item">
-                      <span class="port-ref-label">compose</span>
-                      <code class="port-ref-value">ports: {port.port_value}</code>
-                    </div>
-                  {/each}
-                </div>
+            <!-- Target files configuration -->
+            <div class="target-files-section">
+              <div class="target-files-header">Target files</div>
+              <div class="target-files-list">
+                {#each portConfig.targetFiles ?? DEFAULT_TARGET_FILES as pattern (pattern)}
+                  <div class="target-file-item">
+                    <code class="target-file-pattern">{pattern}</code>
+                    {#if isDefaultTargetFile(pattern)}
+                      <span class="target-file-default">default</span>
+                    {:else}
+                      <button
+                        type="button"
+                        class="target-file-remove"
+                        onclick={() => removeTargetFile(pattern)}
+                        title="Remove"
+                      >
+                        ×
+                      </button>
+                    {/if}
+                  </div>
+                {/each}
               </div>
-            {/if}
+              <div class="target-files-add">
+                <input
+                  type="text"
+                  class="target-file-input"
+                  placeholder="docker-compose.yml"
+                  bind:value={newTargetFile}
+                  onkeydown={(e) => e.key === 'Enter' && addTargetFile()}
+                  spellcheck="false"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="off"
+                />
+                <button
+                  type="button"
+                  class="target-file-add-btn"
+                  onclick={() => addTargetFile()}
+                  disabled={!newTargetFile.trim()}
+                >
+                  Add
+                </button>
+              </div>
+              <span class="target-files-hint">
+                Detected ports will be replaced in these files
+              </span>
+            </div>
           {/if}
         </div>
       </div>
@@ -2491,7 +2551,7 @@
     align-self: flex-end;
   }
 
-  /* Incremental Replace Section */
+  /* Port Isolation Section */
   .settings-section-header {
     display: flex;
     align-items: center;
@@ -2715,47 +2775,124 @@
     font-size: 11px;
   }
 
-  .port-reference {
-    margin-top: var(--space-2);
+  /* Target files section */
+  .target-files-section {
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-subtle);
   }
 
-  .port-reference-title {
-    font-size: 10px;
+  .target-files-header {
+    font-size: 11px;
     font-weight: 500;
-    color: var(--text-muted);
-    margin-bottom: var(--space-1);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-2);
   }
 
-  .port-reference-list {
+  .target-files-list {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     gap: var(--space-1);
+    margin-bottom: var(--space-2);
   }
 
-  .port-reference-item {
+  .target-file-item {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-1) var(--space-2);
+    gap: var(--space-1);
+    padding: 2px 6px;
     background: var(--bg-secondary);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
-    font-size: 10px;
+    font-size: 11px;
   }
 
-  .port-ref-label {
-    font-size: 8px;
-    font-weight: 600;
-    text-transform: uppercase;
-    padding: 1px 4px;
-    background: rgba(125, 211, 252, 0.1);
-    border-radius: 2px;
-    color: var(--text-muted);
-  }
-
-  .port-ref-value {
+  .target-file-pattern {
     font-family: var(--font-mono);
-    color: var(--text-secondary);
+    color: var(--text-primary);
     font-size: 10px;
+  }
+
+  .target-file-default {
+    font-size: 8px;
+    font-weight: 500;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    opacity: 0.7;
+  }
+
+  .target-file-remove {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 12px;
+    line-height: 1;
+    opacity: 0.6;
+    transition: opacity 0.15s;
+  }
+
+  .target-file-remove:hover {
+    opacity: 1;
+    color: var(--text-primary);
+  }
+
+  .target-files-add {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-1);
+  }
+
+  .target-file-input {
+    flex: 1;
+    height: 26px;
+    padding: 0 var(--space-2);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color var(--transition-fast);
+  }
+
+  .target-file-input:focus {
+    border-color: var(--accent-color);
+  }
+
+  .target-file-input::placeholder {
+    color: var(--text-muted);
+    opacity: 0.6;
+  }
+
+  .target-file-add-btn {
+    height: 26px;
+    padding: 0 var(--space-2);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .target-file-add-btn:hover:not(:disabled) {
+    background: var(--bg-tertiary);
+    border-color: var(--border-default);
+  }
+
+  .target-file-add-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .target-files-hint {
+    font-size: 10px;
+    color: var(--text-muted);
+    display: block;
   }
 </style>
