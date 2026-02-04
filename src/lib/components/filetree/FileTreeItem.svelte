@@ -17,7 +17,6 @@
     depth?: number;
     selectedPath?: string | null;
     onSelect?: (path: string) => void;
-    onOpenInTerminal?: (path: string) => void;
     gitStatusMap?: Map<string, GitFileStatus>;
     repoRoot?: string;
   }
@@ -27,7 +26,6 @@
     depth = 0,
     selectedPath = null,
     onSelect,
-    onOpenInTerminal,
     gitStatusMap = new Map(),
     repoRoot = '',
   }: Props = $props();
@@ -125,12 +123,9 @@
 
     if (entry.is_dir) {
       items.push(
-        { id: 'expand', label: expanded ? 'Collapse' : 'Expand', icon: expanded ? '▼' : '▶' },
-        { id: 'open-terminal', label: 'Open in Terminal', icon: '>' },
-        { id: 'separator1', label: '', separator: true },
         { id: 'copy-path', label: 'Copy Path', shortcut: '⌘C' },
         { id: 'reveal', label: 'Reveal in Finder', shortcut: '⌘⇧R' },
-        { id: 'separator2', label: '', separator: true },
+        { id: 'separator1', label: '', separator: true },
         { id: 'delete', label: 'Delete', danger: true }
       );
     } else {
@@ -149,14 +144,8 @@
 
   async function handleContextMenuSelect(id: string) {
     switch (id) {
-      case 'expand':
-        toggleExpand();
-        break;
       case 'open':
         onSelect?.(entry.path);
-        break;
-      case 'open-terminal':
-        onOpenInTerminal?.(entry.path);
         break;
       case 'copy-path':
         await navigator.clipboard.writeText(displayPath() || entry.path);
@@ -304,7 +293,6 @@
               depth={depth + 1}
               {selectedPath}
               {onSelect}
-              {onOpenInTerminal}
               {gitStatusMap}
               {repoRoot}
             />
