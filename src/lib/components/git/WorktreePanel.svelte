@@ -1161,20 +1161,23 @@
           {#if getCopyFileCount() > 0 || getEnabledCommandCount() > 0 || getPortCount() > 0}
             <span class="summary-text">
               {#if getCopyFileCount() > 0}
-                <span class="summary-item" title={getCopyFilesTooltip()}
-                  >{getCopyFileCount()} files</span
-                >
+                <span class="summary-item has-tooltip">
+                  {getCopyFileCount()} files
+                  <span class="tooltip">{getCopyFilesTooltip()}</span>
+                </span>
               {/if}
               {#if getEnabledCommandCount() > 0}
-                <span class="summary-item" title={getCommandsTooltip()}
-                  >{getEnabledCommandCount()}
-                  {getEnabledCommandCount() === 1 ? 'command' : 'commands'}</span
-                >
+                <span class="summary-item has-tooltip">
+                  {getEnabledCommandCount()}
+                  {getEnabledCommandCount() === 1 ? 'command' : 'commands'}
+                  <span class="tooltip">{getCommandsTooltip()}</span>
+                </span>
               {/if}
               {#if getPortCount() > 0}
-                <span class="summary-item summary-port" title={getPortsTooltip()}
-                  >{getPortCount()} ports</span
-                >
+                <span class="summary-item summary-port has-tooltip">
+                  {getPortCount()} ports
+                  <span class="tooltip">{getPortsTooltip()}</span>
+                </span>
               {/if}
             </span>
           {/if}
@@ -1792,6 +1795,7 @@
   }
 
   .summary-item {
+    position: relative;
     color: var(--text-secondary);
     cursor: help;
     transition: color var(--transition-fast);
@@ -1801,15 +1805,11 @@
     color: var(--text-primary);
   }
 
-  .summary-item::after {
+  .summary-item:not(:last-child)::after {
     content: '·';
     margin: 0 6px;
     color: var(--text-muted);
     opacity: 0.5;
-  }
-
-  .summary-item:last-child::after {
-    display: none;
   }
 
   .summary-item.summary-port {
@@ -1819,6 +1819,57 @@
   .summary-item.summary-port:hover {
     color: var(--accent2-color);
     filter: brightness(1.2);
+  }
+
+  /* Custom tooltip */
+  .summary-item .tooltip {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    color: var(--text-secondary);
+    white-space: pre;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity var(--transition-fast),
+      visibility var(--transition-fast);
+    z-index: 100;
+    pointer-events: none;
+  }
+
+  .summary-item .tooltip::before {
+    content: '';
+    position: absolute;
+    bottom: -5px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 5px 5px 0 5px;
+    border-style: solid;
+    border-color: var(--border-color) transparent transparent transparent;
+  }
+
+  .summary-item .tooltip::after {
+    content: '';
+    position: absolute;
+    bottom: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 4px 4px 0 4px;
+    border-style: solid;
+    border-color: var(--bg-elevated) transparent transparent transparent;
+  }
+
+  .summary-item.has-tooltip:hover .tooltip {
+    opacity: 1;
+    visibility: visible;
   }
 
   .footer-actions {
