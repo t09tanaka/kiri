@@ -437,6 +437,30 @@
     return DEFAULT_TARGET_FILES.includes(pattern);
   }
 
+  function isTargetFileEnabled(pattern: string): boolean {
+    if (!portConfig) return true;
+    return !(portConfig.disabledTargetFiles ?? []).includes(pattern);
+  }
+
+  function toggleTargetFile(pattern: string) {
+    if (!portConfig) return;
+    const disabled = portConfig.disabledTargetFiles ?? [];
+    if (disabled.includes(pattern)) {
+      // Enable it
+      portConfig = {
+        ...portConfig,
+        disabledTargetFiles: disabled.filter((p) => p !== pattern),
+      };
+    } else {
+      // Disable it
+      portConfig = {
+        ...portConfig,
+        disabledTargetFiles: [...disabled, pattern],
+      };
+    }
+    savePortConfig();
+  }
+
   function addInitCommand() {
     const name = newInitCommandName.trim();
     const command = newInitCommandValue.trim();
@@ -607,7 +631,15 @@
       // Step 2: Copy files (with port transformation if assignments exist)
       creationStep = 'copy';
       await forceUIUpdate();
-      const allPatterns = [...DEFAULT_WORKTREE_COPY_PATTERNS, ...userCopyPatterns];
+      // Patterns for regular copy (user-configured + defaults)
+      const regularCopyPatterns = [...DEFAULT_WORKTREE_COPY_PATTERNS, ...userCopyPatterns];
+      // Patterns for port transformation (enabled target files only)
+      const disabledFiles = portConfig?.disabledTargetFiles ?? [];
+      const enabledTargetFiles = (portConfig?.targetFiles ?? DEFAULT_TARGET_FILES).filter(
+        (f) => !disabledFiles.includes(f)
+      );
+      // Combine: regular copy + enabled target files (deduplicated)
+      const allPatterns = [...new Set([...regularCopyPatterns, ...enabledTargetFiles])];
       // Get current port assignments if port isolation is enabled
       const currentPortAssignments = portConfig?.enabled ? portAssignments : [];
       if (allPatterns.length > 0) {
@@ -1413,7 +1445,15 @@
               <div class="target-files-header">Target files</div>
               <div class="target-files-list">
                 {#each portConfig.targetFiles ?? DEFAULT_TARGET_FILES as pattern (pattern)}
-                  <div class="target-file-item">
+                  {@const enabled = isTargetFileEnabled(pattern)}
+                  <div class="target-file-item" class:disabled={!enabled}>
+                    <input
+                      type="checkbox"
+                      class="target-file-checkbox"
+                      checked={enabled}
+                      onchange={() => toggleTargetFile(pattern)}
+                      title={enabled ? 'Disable' : 'Enable'}
+                    />
                     <code class="target-file-pattern">{pattern}</code>
                     {#if isDefaultTargetFile(pattern)}
                       <span class="target-file-default">default</span>
@@ -2807,10 +2847,26 @@
     font-size: 11px;
   }
 
+  .target-file-item.disabled {
+    opacity: 0.5;
+  }
+
+  .target-file-checkbox {
+    width: 12px;
+    height: 12px;
+    accent-color: var(--accent-color);
+    cursor: pointer;
+    margin: 0;
+  }
+
   .target-file-pattern {
     font-family: var(--font-mono);
     color: var(--text-primary);
     font-size: 10px;
+  }
+
+  .target-file-item.disabled .target-file-pattern {
+    text-decoration: line-through;
   }
 
   .target-file-default {
