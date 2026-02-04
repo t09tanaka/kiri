@@ -40,6 +40,9 @@
   let error = $state<string | null>(null);
   let contextMenu = $state<{ x: number; y: number } | null>(null);
   let isDeleted = $state(false);
+  let isCreatingFolder = $state(false);
+  let newFolderName = $state('');
+  let newFolderInput = $state<HTMLInputElement | null>(null);
 
   const isPending = $derived(entry.is_pending ?? false);
   const isSelected = $derived(selectedPath === entry.path);
@@ -134,9 +137,11 @@
 
     if (entry.is_dir) {
       items.push(
+        { id: 'new-folder', label: 'New Folder' },
+        { id: 'separator1', label: '', separator: true },
         { id: 'copy-path', label: 'Copy Path', shortcut: '⌘C' },
         { id: 'reveal', label: 'Reveal in Finder', shortcut: '⌘⇧R' },
-        { id: 'separator1', label: '', separator: true },
+        { id: 'separator2', label: '', separator: true },
         { id: 'delete', label: 'Delete', danger: true }
       );
     } else {
@@ -167,6 +172,58 @@
       case 'delete':
         await handleDelete();
         break;
+      case 'new-folder':
+        await startCreatingFolder();
+        break;
+    }
+  }
+
+  async function startCreatingFolder() {
+    // Expand directory if not expanded
+    if (!expanded) {
+      await toggleExpand();
+    }
+    isCreatingFolder = true;
+    newFolderName = '';
+    // Focus input after render
+    setTimeout(() => {
+      newFolderInput?.focus();
+    }, 0);
+  }
+
+  async function handleCreateFolder() {
+    const name = newFolderName.trim();
+    if (!name) {
+      isCreatingFolder = false;
+      return;
+    }
+
+    try {
+      await fileService.createDirectory(entry.path, name);
+      // File watcher will refresh the tree
+      isCreatingFolder = false;
+      newFolderName = '';
+    } catch (e) {
+      console.error('Failed to create folder:', e);
+      // Keep input visible on error
+    }
+  }
+
+  function handleNewFolderKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleCreateFolder();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      isCreatingFolder = false;
+      newFolderName = '';
+    }
+  }
+
+  function handleNewFolderBlur() {
+    // Only cancel if name is empty
+    if (!newFolderName.trim()) {
+      isCreatingFolder = false;
     }
   }
 
@@ -309,8 +366,32 @@
       {/if}
     </button>
 
-    {#if expanded && children.length > 0}
+    {#if expanded}
       <div class="children">
+        {#if isCreatingFolder}
+          <div class="new-folder-input-wrapper" style="padding-left: {12 + (depth + 1) * 16}px">
+            <span class="icon folder" style="color: var(--folder-color)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path
+                  d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                />
+              </svg>
+            </span>
+            <input
+              bind:this={newFolderInput}
+              bind:value={newFolderName}
+              type="text"
+              class="new-folder-input"
+              placeholder="Folder name"
+              spellcheck="false"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              onkeydown={handleNewFolderKeyDown}
+              onblur={handleNewFolderBlur}
+            />
+          </div>
+        {/if}
         {#each children as child, index (child.path)}
           <div class="child-wrapper" style="--child-index: {index}">
             <FileTreeItem
@@ -686,5 +767,50 @@
     50% {
       box-shadow: 0 0 24px rgba(125, 211, 252, 0.2);
     }
+  }
+
+  /* New folder input styles */
+  .new-folder-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    height: 28px;
+    padding-right: var(--space-3);
+    margin: 1px var(--space-1);
+    animation: fadeIn 0.15s ease-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .new-folder-input {
+    flex: 1;
+    height: 22px;
+    padding: 0 var(--space-2);
+    border: 1px solid var(--border-glow);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-family: var(--font-sans);
+    outline: none;
+    transition: all var(--transition-fast);
+  }
+
+  .new-folder-input:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.15);
+  }
+
+  .new-folder-input::placeholder {
+    color: var(--text-muted);
   }
 </style>

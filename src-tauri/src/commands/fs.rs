@@ -109,6 +109,27 @@ pub fn get_home_directory() -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn create_directory(parent_path: String, name: String) -> Result<String, String> {
+    let parent = Path::new(&parent_path);
+
+    if !parent.exists() {
+        return Err(format!("Parent path does not exist: {}", parent.display()));
+    }
+
+    if !parent.is_dir() {
+        return Err(format!("Parent path is not a directory: {}", parent.display()));
+    }
+
+    // Support nested directory creation (e.g., "test/opt" creates both)
+    let new_dir_path = parent.join(&name);
+
+    std::fs::create_dir_all(&new_dir_path)
+        .map_err(|e| format!("Failed to create directory: {}", e))?;
+
+    Ok(new_dir_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 pub fn delete_path(path: String) -> Result<(), String> {
     let path = Path::new(&path);
 
@@ -382,6 +403,80 @@ mod tests {
         let result = reveal_in_finder(dir.path().join("test.txt").to_string_lossy().to_string());
         // Result depends on platform and environment
         assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_create_directory_simple() {
+        let dir = tempdir().unwrap();
+
+        let result = create_directory(
+            dir.path().to_string_lossy().to_string(),
+            "new_folder".to_string(),
+        );
+        assert!(result.is_ok());
+
+        let new_path = result.unwrap();
+        assert!(Path::new(&new_path).exists());
+        assert!(Path::new(&new_path).is_dir());
+    }
+
+    #[test]
+    fn test_create_directory_nested() {
+        let dir = tempdir().unwrap();
+
+        // Create nested directories like "test/opt/deep"
+        let result = create_directory(
+            dir.path().to_string_lossy().to_string(),
+            "test/opt/deep".to_string(),
+        );
+        assert!(result.is_ok());
+
+        let new_path = result.unwrap();
+        assert!(Path::new(&new_path).exists());
+        assert!(Path::new(&new_path).is_dir());
+
+        // Verify intermediate directories were created
+        assert!(dir.path().join("test").exists());
+        assert!(dir.path().join("test/opt").exists());
+        assert!(dir.path().join("test/opt/deep").exists());
+    }
+
+    #[test]
+    fn test_create_directory_nonexistent_parent() {
+        let result = create_directory(
+            "/nonexistent/path".to_string(),
+            "new_folder".to_string(),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_create_directory_parent_is_file() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("file.txt");
+        fs::write(&file_path, "content").unwrap();
+
+        let result = create_directory(
+            file_path.to_string_lossy().to_string(),
+            "new_folder".to_string(),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not a directory"));
+    }
+
+    #[test]
+    fn test_create_directory_already_exists() {
+        let dir = tempdir().unwrap();
+        let existing = dir.path().join("existing");
+        fs::create_dir(&existing).unwrap();
+
+        // create_dir_all doesn't error if directory already exists
+        let result = create_directory(
+            dir.path().to_string_lossy().to_string(),
+            "existing".to_string(),
+        );
+        assert!(result.is_ok());
     }
 
     #[test]
