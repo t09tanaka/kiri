@@ -1253,10 +1253,10 @@
           </div>
         </div>
 
-        <!-- Port Isolation Section -->
+        <!-- Incremental Replace Section -->
         <div class="settings-section">
           <div class="settings-section-header">
-            <div class="settings-section-title">Port isolation</div>
+            <div class="settings-section-title">Incremental replace</div>
             <label class="toggle-switch">
               <input
                 type="checkbox"
@@ -1267,7 +1267,7 @@
             </label>
           </div>
           <p class="settings-section-description">
-            Automatically assign unique ports to prevent conflicts when running multiple worktrees.
+            Auto-increment values in .env files to prevent conflicts between worktrees.
           </p>
 
           {#if portConfig?.enabled}
@@ -2444,7 +2444,7 @@
     align-self: flex-end;
   }
 
-  /* Port Isolation Section */
+  /* Incremental Replace Section */
   .settings-section-header {
     display: flex;
     align-items: center;
