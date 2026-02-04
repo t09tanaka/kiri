@@ -28,6 +28,7 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   let projectExpanded = $state(true);
+  let refreshKey = $state(0);
 
   // Watcher state
   let unlistenFs: UnlistenFn | null = null;
@@ -119,6 +120,7 @@
     }
     refreshDebounceTimer = setTimeout(() => {
       loadRootDirectory(false); // Don't show loading state on refresh
+      refreshKey++; // Trigger refresh of expanded subdirectories
     }, 100);
   }
 
@@ -349,6 +351,7 @@
               gitStatusMap={$gitStatusMap}
               repoRoot={$gitStore.repoInfo?.root ?? ''}
               projectRoot={rootPath}
+              {refreshKey}
             />
           {/each}
         {/if}

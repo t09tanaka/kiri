@@ -20,6 +20,7 @@
     gitStatusMap?: Map<string, GitFileStatus>;
     repoRoot?: string;
     projectRoot?: string;
+    refreshKey?: number;
   }
 
   let {
@@ -30,6 +31,7 @@
     gitStatusMap = new Map(),
     repoRoot = '',
     projectRoot = '',
+    refreshKey = 0,
   }: Props = $props();
 
   let expanded = $state(false);
@@ -181,6 +183,20 @@
     }
   }
 
+  // Refresh children when refreshKey changes and directory is expanded
+  $effect(() => {
+    if (refreshKey > 0 && expanded && entry.is_dir) {
+      fileService
+        .readDirectory(entry.path)
+        .then((newChildren) => {
+          children = newChildren;
+        })
+        .catch((e) => {
+          console.error('Failed to refresh directory:', e);
+        });
+    }
+  });
+
   // Drag and drop handlers
   function handleDragMouseEnter() {
     if (!$isDragging || !entry.is_dir) return;
@@ -305,6 +321,7 @@
               {gitStatusMap}
               {repoRoot}
               {projectRoot}
+              {refreshKey}
             />
           </div>
         {/each}
