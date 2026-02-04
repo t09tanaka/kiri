@@ -58,6 +58,16 @@ describe('languages', () => {
       expect(ext).not.toBeNull();
     });
 
+    it('should return YAML extension for .yaml files', async () => {
+      const ext = await getLanguageExtension('file.yaml');
+      expect(ext).not.toBeNull();
+    });
+
+    it('should return YAML extension for .yml files', async () => {
+      const ext = await getLanguageExtension('file.yml');
+      expect(ext).not.toBeNull();
+    });
+
     it('should return null for unknown extensions', async () => {
       const ext = await getLanguageExtension('file.unknown');
       expect(ext).toBeNull();
@@ -129,6 +139,14 @@ describe('languages', () => {
 
     it('should return TOML for .toml files', () => {
       expect(getLanguageName('file.toml')).toBe('TOML');
+    });
+
+    it('should return YAML for .yaml files', () => {
+      expect(getLanguageName('file.yaml')).toBe('YAML');
+    });
+
+    it('should return YAML for .yml files', () => {
+      expect(getLanguageName('file.yml')).toBe('YAML');
     });
 
     it('should return Plain Text for unknown extensions', () => {

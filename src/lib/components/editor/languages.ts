@@ -67,6 +67,12 @@ export async function getLanguageExtension(filename: string): Promise<Extension 
       langExt = html();
       break;
     }
+    case 'yaml':
+    case 'yml': {
+      const { yaml } = await import('@codemirror/lang-yaml');
+      langExt = yaml();
+      break;
+    }
     default:
       return null;
   }
@@ -107,6 +113,9 @@ export function getLanguageName(filename: string): string {
       return 'Svelte';
     case 'toml':
       return 'TOML';
+    case 'yaml':
+    case 'yml':
+      return 'YAML';
     default:
       return 'Plain Text';
   }
