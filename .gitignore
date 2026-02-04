@@ -5,6 +5,10 @@ CLAUDE.md
 # Documentation (local only)
 docs/
 
+# Environment files
+.env
+.env.*
+
 # Logs
 logs
 *.log

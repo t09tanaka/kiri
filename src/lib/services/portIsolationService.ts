@@ -49,9 +49,10 @@ export type { PersistencePortConfig as PortConfig };
 export type { PersistencePortAssignment };
 export type { PersistenceWorktreePortAssignment as WorktreePortAssignment };
 
-// Default port range
+// Default port range (100 ports per project)
 export const DEFAULT_PORT_RANGE_START = 20000;
-export const DEFAULT_PORT_RANGE_END = 39999;
+export const DEFAULT_PORT_BLOCK_SIZE = 100;
+export const DEFAULT_PORT_RANGE_END = DEFAULT_PORT_RANGE_START + DEFAULT_PORT_BLOCK_SIZE - 1;
 
 /**
  * Port isolation service for worktrees

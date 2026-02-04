@@ -1,4 +1,4 @@
-use glob::glob;
+use glob::{glob, glob_with, MatchOptions};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -164,18 +164,36 @@ pub fn scan_env_files_for_ports(dir: &Path) -> Vec<PortSource> {
     let mut all_ports = Vec::new();
     let pattern = dir.join(".env*").to_string_lossy().to_string();
 
-    if let Ok(entries) = glob(&pattern) {
-        for entry in entries.flatten() {
-            if entry.is_file() {
-                if let Ok(content) = fs::read_to_string(&entry) {
-                    let file_path = entry.to_string_lossy().to_string();
-                    let ports = detect_ports_in_env_file(&content, &file_path);
-                    all_ports.extend(ports);
+    log::info!("Scanning for .env files with pattern: {}", pattern);
+
+    // Use glob options to match dot files (hidden files)
+    let options = MatchOptions {
+        require_literal_leading_dot: false, // Match .env* files
+        ..Default::default()
+    };
+
+    match glob_with(&pattern, options) {
+        Ok(entries) => {
+            let entries_vec: Vec<_> = entries.flatten().collect();
+            log::info!("Found {} entries matching pattern", entries_vec.len());
+            for entry in entries_vec {
+                log::info!("Processing entry: {:?}", entry);
+                if entry.is_file() {
+                    if let Ok(content) = fs::read_to_string(&entry) {
+                        let file_path = entry.to_string_lossy().to_string();
+                        let ports = detect_ports_in_env_file(&content, &file_path);
+                        log::info!("Found {} ports in {}", ports.len(), file_path);
+                        all_ports.extend(ports);
+                    }
                 }
             }
         }
+        Err(e) => {
+            log::error!("Glob pattern error: {}", e);
+        }
     }
 
+    log::info!("Total ports found: {}", all_ports.len());
     all_ports
 }
 

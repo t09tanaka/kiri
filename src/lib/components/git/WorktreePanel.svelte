@@ -22,6 +22,7 @@
     portIsolationService,
     DEFAULT_PORT_RANGE_START,
     DEFAULT_PORT_RANGE_END,
+    DEFAULT_PORT_BLOCK_SIZE,
     type DetectedPorts,
     type PortAssignment,
     type PortSource,
@@ -256,13 +257,23 @@
   async function loadPortConfig() {
     try {
       const settings = await loadProjectSettings(projectPath);
-      portConfig = settings.portConfig ?? {
-        enabled: true,
-        portRangeStart: DEFAULT_PORT_RANGE_START,
-        portRangeEnd: DEFAULT_PORT_RANGE_END,
-        worktreeAssignments: {},
-        customRules: [],
-      };
+      if (settings.portConfig) {
+        // Enforce 100-port block rule: recalculate portRangeEnd from portRangeStart
+        const start = settings.portConfig.portRangeStart ?? DEFAULT_PORT_RANGE_START;
+        portConfig = {
+          ...settings.portConfig,
+          portRangeStart: start,
+          portRangeEnd: start + DEFAULT_PORT_BLOCK_SIZE - 1,
+        };
+      } else {
+        portConfig = {
+          enabled: true,
+          portRangeStart: DEFAULT_PORT_RANGE_START,
+          portRangeEnd: DEFAULT_PORT_RANGE_END,
+          worktreeAssignments: {},
+          customRules: [],
+        };
+      }
     } catch {
       portConfig = null;
     }
@@ -374,6 +385,22 @@
         detectedPorts = null;
         portAssignments = [];
       }
+    }
+  }
+
+  function updateProjectBasePort(newBase: number) {
+    if (!portConfig) return;
+    // Ensure base port is within valid range and is a multiple of 100
+    const validBase = Math.max(1024, Math.floor(newBase / 100) * 100);
+    portConfig = {
+      ...portConfig,
+      portRangeStart: validBase,
+      portRangeEnd: validBase + DEFAULT_PORT_BLOCK_SIZE - 1,
+    };
+    savePortConfig();
+    // Re-allocate ports if there are detected ports
+    if (detectedPorts) {
+      allocatePortsForWorktree();
     }
   }
 
@@ -1269,6 +1296,28 @@
           </p>
 
           {#if portConfig?.enabled}
+            <!-- Project port range setting -->
+            <div class="port-range-setting">
+              <label class="port-range-label">
+                <span>Project port range:</span>
+                <input
+                  type="number"
+                  class="port-range-input"
+                  value={portConfig.portRangeStart}
+                  min="1024"
+                  max="65435"
+                  step="100"
+                  onchange={(e) => updateProjectBasePort(parseInt(e.currentTarget.value, 10))}
+                  spellcheck="false"
+                  autocomplete="off"
+                />
+                <span class="port-range-display">– {portConfig.portRangeEnd}</span>
+              </label>
+              <span class="port-range-hint"
+                >100 ports per project (e.g., 20000, 20100, 20200...)</span
+              >
+            </div>
+
             {#if isDetectingPorts}
               <div class="port-loading">
                 <Spinner size="sm" />
@@ -2505,6 +2554,53 @@
     padding: var(--space-3);
     color: var(--text-muted);
     font-size: 12px;
+  }
+
+  .port-range-setting {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    margin-bottom: var(--space-3);
+  }
+
+  .port-range-label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 13px;
+    color: var(--text-secondary);
+  }
+
+  .port-range-input {
+    width: 80px;
+    padding: var(--space-1) var(--space-2);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: var(--font-mono);
+    text-align: center;
+  }
+
+  .port-range-input:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px var(--accent-color-alpha);
+  }
+
+  .port-range-display {
+    font-family: var(--font-mono);
+    color: var(--text-muted);
+  }
+
+  .port-range-hint {
+    font-size: 11px;
+    color: var(--text-muted);
   }
 
   .port-table {
