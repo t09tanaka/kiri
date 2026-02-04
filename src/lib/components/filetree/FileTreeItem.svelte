@@ -19,6 +19,7 @@
     onSelect?: (path: string) => void;
     gitStatusMap?: Map<string, GitFileStatus>;
     repoRoot?: string;
+    projectRoot?: string;
   }
 
   let {
@@ -28,6 +29,7 @@
     onSelect,
     gitStatusMap = new Map(),
     repoRoot = '',
+    projectRoot = '',
   }: Props = $props();
 
   let expanded = $state(false);
@@ -45,14 +47,21 @@
   const fileIconInfo = $derived(getFileIconInfo(entry.name));
   const folderColor = $derived(getFolderColor(expanded));
 
+  // Relative path from git repo root (for git status)
   const relativePath = $derived(() => {
     if (!repoRoot || !entry.path.startsWith(repoRoot)) return '';
     return entry.path.slice(repoRoot.length + 1);
   });
 
+  // Relative path from project root (for copy path)
+  const projectRelativePath = $derived(() => {
+    if (!projectRoot || !entry.path.startsWith(projectRoot)) return '';
+    return entry.path.slice(projectRoot.length + 1);
+  });
+
   // Path with leading slash for display/copy (indicates project root)
   const displayPath = $derived(() => {
-    const rel = relativePath();
+    const rel = projectRelativePath();
     return rel ? '/' + rel : '';
   });
 
@@ -295,6 +304,7 @@
               {onSelect}
               {gitStatusMap}
               {repoRoot}
+              {projectRoot}
             />
           </div>
         {/each}

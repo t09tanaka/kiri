@@ -348,6 +348,7 @@
               onSelect={handleSelect}
               gitStatusMap={$gitStatusMap}
               repoRoot={$gitStore.repoInfo?.root ?? ''}
+              projectRoot={rootPath}
             />
           {/each}
         {/if}
