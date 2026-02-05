@@ -1155,43 +1155,118 @@
         </div>
       </div>
 
-      <div class="modal-footer">
-        <!-- Execution summary -->
-        <div class="execution-summary">
-          {#if getCopyFileCount() > 0 || getEnabledCommandCount() > 0 || getPortCount() > 0}
-            <span class="summary-text">
+      <!-- Initialization summary (above footer) -->
+      {#if getCopyFileCount() > 0 || getEnabledCommandCount() > 0 || getPortCount() > 0}
+        <div class="init-summary">
+          <div class="init-header">
+            <span class="init-label">Worktree initialization</span>
+            <button
+              type="button"
+              class="init-settings-btn"
+              onclick={() => (showCopySettingsModal = true)}
+              title="Settings"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="12" cy="12" r="3" />
+                <path
+                  d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                />
+              </svg>
+            </button>
+          </div>
+          <div class="init-content">
+            <div class="init-stats">
               {#if getCopyFileCount() > 0}
-                <span class="summary-item has-tooltip">
-                  {getCopyFileCount()} files
+                <span class="stat-item has-tooltip">
+                  <svg
+                    class="stat-icon stat-files"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <rect x="8" y="2" width="13" height="18" rx="2" />
+                    <path d="M16 2v4a2 2 0 0 0 2 2h4" />
+                    <path d="M5 10H3a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
+                  </svg>
+                  <span class="stat-text"
+                    >{getCopyFileCount()}
+                    {getCopyFileCount() === 1 ? 'file' : 'files'}
+                    <span class="stat-verb">copy</span></span
+                  >
                   <span class="tooltip">{getCopyFilesTooltip()}</span>
                 </span>
               {/if}
               {#if getEnabledCommandCount() > 0}
-                <span class="summary-item has-tooltip">
-                  {getEnabledCommandCount()}
-                  {getEnabledCommandCount() === 1 ? 'command' : 'commands'}
+                <span class="stat-item has-tooltip">
+                  <svg
+                    class="stat-icon stat-commands"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <polyline points="4 17 10 11 4 5" />
+                    <line x1="12" y1="19" x2="20" y2="19" />
+                  </svg>
+                  <span class="stat-text"
+                    >{getEnabledCommandCount()}
+                    {getEnabledCommandCount() === 1 ? 'command' : 'commands'}
+                    <span class="stat-verb">run</span></span
+                  >
                   <span class="tooltip">{getCommandsTooltip()}</span>
                 </span>
               {/if}
               {#if getPortCount() > 0}
-                <span class="summary-item summary-port has-tooltip">
-                  {getPortCount()} ports
+                <span class="stat-item has-tooltip">
+                  <svg
+                    class="stat-icon stat-ports"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <circle cx="12" cy="12" r="3" />
+                    <path
+                      d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"
+                    />
+                  </svg>
+                  <span class="stat-text"
+                    >{getPortCount()}
+                    {getPortCount() === 1 ? 'port' : 'ports'}
+                    <span class="stat-verb">remap</span></span
+                  >
                   <span class="tooltip">{getPortsTooltip()}</span>
                 </span>
               {/if}
-            </span>
-          {/if}
+            </div>
+          </div>
         </div>
-        <div class="footer-actions">
-          <span class="footer-item">
-            <kbd>↵</kbd>
-            <span>create</span>
-          </span>
-          <span class="footer-item">
-            <kbd>Esc</kbd>
-            <span>close</span>
-          </span>
-        </div>
+      {/if}
+
+      <!-- Row 2: Standard modal footer -->
+      <div class="modal-footer">
+        <span class="footer-item">
+          <kbd>↵</kbd>
+          <span>create</span>
+        </span>
+        <span class="footer-item">
+          <kbd>Esc</kbd>
+          <span>close</span>
+        </span>
       </div>
     </div>
   </div>
@@ -1745,18 +1820,15 @@
   }
 
   .settings-btn {
-    background: rgba(125, 211, 252, 0.15);
-    border: 1px solid rgba(125, 211, 252, 0.3);
+    background: transparent;
+    border: none;
     color: var(--accent-color);
     transition: all var(--transition-fast);
-    box-shadow: 0 0 8px rgba(125, 211, 252, 0.1);
   }
 
   .settings-btn:hover {
-    background: rgba(125, 211, 252, 0.25);
-    border-color: rgba(125, 211, 252, 0.5);
-    box-shadow: 0 0 12px rgba(125, 211, 252, 0.2);
-    transform: translateY(-1px);
+    color: var(--accent-color);
+    filter: brightness(1.2);
   }
 
   .settings-btn:hover svg {
@@ -1773,62 +1845,102 @@
     padding: var(--space-4);
   }
 
-  .modal-footer {
+  /* Initialization summary (above footer) */
+  .init-summary {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: var(--space-3) var(--space-4);
-    background: rgba(0, 0, 0, 0.2);
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-4);
+    background: rgba(255, 255, 255, 0.02);
     border-top: 1px solid var(--border-subtle);
-    border-radius: 0 0 var(--radius-xl) var(--radius-xl);
-    position: relative;
   }
 
-  .execution-summary {
+  .init-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
   }
 
-  .summary-text {
-    display: flex;
-    align-items: center;
-    gap: 0;
-    font-size: 11px;
+  .init-label {
+    font-size: 10px;
     color: var(--text-muted);
   }
 
-  .summary-item {
-    position: relative;
-    color: var(--text-secondary);
-    cursor: help;
+  .init-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .init-stats {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex: 1;
+  }
+
+  .init-settings-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
     transition: color var(--transition-fast);
+    flex-shrink: 0;
   }
 
-  .summary-item:hover {
-    color: var(--text-primary);
+  .init-settings-btn:hover {
+    color: var(--text-secondary);
   }
 
-  .summary-item:not(:last-child)::after {
-    content: '·';
-    margin: 0 6px;
+  .init-settings-btn:active {
+    transform: scale(0.95);
+  }
+
+  .stat-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    cursor: help;
+    transition: opacity var(--transition-fast);
+  }
+
+  .stat-item:hover {
+    opacity: 0.8;
+  }
+
+  .stat-icon {
+    flex-shrink: 0;
+    opacity: 0.6;
     color: var(--text-muted);
-    opacity: 0.5;
+    position: relative;
+    top: 2px;
   }
 
-  .summary-item.summary-port {
-    color: var(--accent2-color);
+  .stat-text {
+    color: var(--text-secondary);
   }
 
-  .summary-item.summary-port:hover {
-    color: var(--accent2-color);
-    filter: brightness(1.2);
+  .stat-verb {
+    color: var(--text-muted);
+    font-style: italic;
   }
 
-  /* Custom tooltip - positioned to the right */
-  .summary-item .tooltip {
+  /* Tooltip for stat items */
+  .stat-item .tooltip {
     position: absolute;
     bottom: 100%;
-    left: 0;
+    left: 50%;
+    transform: translateX(-50%);
     margin-bottom: 8px;
     padding: 8px 12px;
     background: var(--bg-elevated);
@@ -1838,7 +1950,7 @@
     font-family: var(--font-mono);
     color: var(--text-secondary);
     white-space: pre;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     opacity: 0;
     visibility: hidden;
     transition:
@@ -1848,34 +1960,42 @@
     pointer-events: none;
   }
 
-  .summary-item .tooltip::before {
+  .stat-item .tooltip::before {
     content: '';
     position: absolute;
     bottom: -5px;
-    left: 12px;
+    left: 50%;
+    transform: translateX(-50%);
     border-width: 5px 5px 0 5px;
     border-style: solid;
     border-color: var(--border-color) transparent transparent transparent;
   }
 
-  .summary-item .tooltip::after {
+  .stat-item .tooltip::after {
     content: '';
     position: absolute;
     bottom: -4px;
-    left: 13px;
+    left: 50%;
+    transform: translateX(-50%);
     border-width: 4px 4px 0 4px;
     border-style: solid;
     border-color: var(--bg-elevated) transparent transparent transparent;
   }
 
-  .summary-item.has-tooltip:hover .tooltip {
+  .stat-item.has-tooltip:hover .tooltip {
     opacity: 1;
     visibility: visible;
   }
 
-  .footer-actions {
+  /* Row 2: Standard modal footer */
+  .modal-footer {
     display: flex;
+    justify-content: flex-end;
     gap: var(--space-5);
+    padding: var(--space-3) var(--space-4);
+    background: rgba(0, 0, 0, 0.2);
+    border-top: 1px solid var(--border-subtle);
+    border-radius: 0 0 var(--radius-xl) var(--radius-xl);
   }
 
   .footer-item {
