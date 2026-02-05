@@ -59,6 +59,36 @@ describe('getFileIconInfo', () => {
       expect(result.type).toBe('python');
       expect(result.color).toBe('#3776ab');
     });
+
+    it('should return dart icon for .dart files', () => {
+      const result = getFileIconInfo('main.dart');
+      expect(result.type).toBe('dart');
+      expect(result.color).toBe('#00b4ab');
+    });
+
+    it('should return elixir icon for .ex files', () => {
+      const result = getFileIconInfo('lib.ex');
+      expect(result.type).toBe('elixir');
+      expect(result.color).toBe('#6e4a7e');
+    });
+
+    it('should return terraform icon for .tf files', () => {
+      const result = getFileIconInfo('main.tf');
+      expect(result.type).toBe('terraform');
+      expect(result.color).toBe('#7b42bc');
+    });
+
+    it('should return csv icon for .csv files', () => {
+      const result = getFileIconInfo('data.csv');
+      expect(result.type).toBe('csv');
+      expect(result.color).toBe('#89d051');
+    });
+
+    it('should return handlebars icon for .hbs files', () => {
+      const result = getFileIconInfo('template.hbs');
+      expect(result.type).toBe('handlebars');
+      expect(result.color).toBe('#f0772b');
+    });
   });
 
   describe('compound extensions', () => {
