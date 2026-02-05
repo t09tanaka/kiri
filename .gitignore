@@ -46,3 +46,6 @@ coverage/
 
 # Vitest browser test screenshots
 **/__screenshots__/
+
+# Test files for syntax highlighting
+test-syntax-highlight/
