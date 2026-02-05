@@ -4,8 +4,6 @@
 //! All functionality is compiled out in release builds.
 
 use serde::Serialize;
-use std::sync::Mutex;
-use std::time::Instant;
 
 /// Memory usage metrics
 #[derive(Debug, Clone, Serialize, Default)]
@@ -47,6 +45,8 @@ pub struct PerformanceReport {
 #[cfg(debug_assertions)]
 mod debug_impl {
     use super::*;
+    use std::sync::Mutex;
+    use std::time::Instant;
     use sysinfo::{Pid, System};
 
     lazy_static::lazy_static! {

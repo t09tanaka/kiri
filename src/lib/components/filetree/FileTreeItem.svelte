@@ -279,6 +279,8 @@
   <div
     class="tree-item-container"
     role="treeitem"
+    aria-selected={isSelected}
+    tabindex={isSelected ? 0 : -1}
     onmouseenter={handleDragMouseEnter}
     onmouseleave={handleDragMouseLeave}
   >

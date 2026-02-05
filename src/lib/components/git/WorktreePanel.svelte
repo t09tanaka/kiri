@@ -2693,29 +2693,6 @@
     white-space: nowrap;
   }
 
-  .creation-output {
-    padding: var(--space-2) var(--space-3);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    font-size: 11px;
-    font-family: var(--font-mono);
-    max-height: 120px;
-    overflow-y: auto;
-  }
-
-  .output-line {
-    color: var(--text-secondary);
-    padding: 2px 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .output-line:last-child {
-    color: var(--text-primary);
-  }
-
   /* Init Commands Settings */
   .command-item {
     display: flex;
