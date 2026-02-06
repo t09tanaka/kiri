@@ -56,7 +56,10 @@
   }
 
   function truncate(text: string, max: number): string {
-    return text.length > max ? text.slice(0, max) + '...' : text;
+    if (text.length <= max) return text;
+    // Cut at last space before max to avoid mid-word truncation
+    const cut = text.lastIndexOf(' ', max);
+    return (cut > max * 0.5 ? text.slice(0, cut) : text.slice(0, max)) + '...';
   }
 
   // Build parent connections for drawing lines
@@ -170,7 +173,7 @@
 
         <!-- Commit message text -->
         <text x={textStart} y={nodeY - 4} class="commit-message" fill="var(--text-primary)">
-          {truncate(commit.message.split('\n')[0], 28)}
+          {truncate(commit.message.split('\n')[0], 40)}
         </text>
 
         <!-- Date text -->
