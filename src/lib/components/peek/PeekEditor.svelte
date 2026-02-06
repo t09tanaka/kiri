@@ -7,6 +7,8 @@
   import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
   import { tags } from '@lezer/highlight';
   import { getLanguageExtension } from '../editor/languages';
+  import { searchExtension, searchPanelOpen } from '../editor/extensions';
+  import { openSearchPanel } from '@codemirror/search';
   import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { projectStore } from '@/lib/stores/projectStore';
   import { fontSize } from '@/lib/stores/settingsStore';
@@ -256,6 +258,7 @@
       syntaxHighlighting(mistHighlightStyle),
       themeCompartment.of(createMistTheme(currentFontSize)),
       highlightField,
+      ...searchExtension(),
     ];
 
     // Add language extension if available (lazy-loaded)
@@ -285,7 +288,20 @@
   }
 
   function handleKeyDown(e: KeyboardEvent) {
+    // Cmd+F: Open search panel in the editor
+    if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (view) {
+        openSearchPanel(view);
+      }
+      return;
+    }
     if (e.key === 'Escape') {
+      // If search panel is open, let CodeMirror handle Escape to close it first
+      if (view && searchPanelOpen(view.state)) {
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       onClose();
@@ -498,6 +514,10 @@
       </div>
 
       <div class="peek-footer">
+        <span class="footer-item">
+          <kbd>&#8984;F</kbd>
+          <span>search</span>
+        </span>
         <span class="footer-item">
           <kbd>Esc</kbd>
           <span>close</span>

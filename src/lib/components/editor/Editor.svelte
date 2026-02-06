@@ -4,7 +4,7 @@
   import { gitService } from '@/lib/services/gitService';
   import { projectStore } from '@/lib/stores/projectStore';
   import { fontSize } from '@/lib/stores/settingsStore';
-  import { gitDiffExtension, updateGitDiff } from './extensions';
+  import { gitDiffExtension, updateGitDiff, searchExtension } from './extensions';
   import { EditorView, lineNumbers, highlightActiveLine, drawSelection } from '@codemirror/view';
   import { EditorState, Compartment } from '@codemirror/state';
   import { syntaxHighlighting, HighlightStyle, bracketMatching } from '@codemirror/language';
@@ -284,6 +284,7 @@
       syntaxHighlighting(mistHighlightStyle),
       themeCompartment.of(createMistTheme(currentFontSize)),
       ...gitDiffExtension(),
+      ...searchExtension(),
       EditorView.editable.of(false),
     ];
 

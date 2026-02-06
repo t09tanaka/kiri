@@ -2,6 +2,8 @@
   import Editor from './Editor.svelte';
   import { fileService } from '@/lib/services/fileService';
   import { onMount, onDestroy } from 'svelte';
+  import { openSearchPanel } from '@codemirror/search';
+  import { EditorView } from '@codemirror/view';
 
   interface Props {
     filePath: string;
@@ -31,8 +33,25 @@
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-    // Escape to close
+    // Cmd+F: Open search panel in the editor
+    if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
+      e.preventDefault();
+      e.stopPropagation();
+      const cmElement = document.querySelector('.editor-modal .cm-editor');
+      if (cmElement) {
+        const view = EditorView.findFromDOM(cmElement as HTMLElement);
+        if (view) {
+          openSearchPanel(view);
+        }
+      }
+      return;
+    }
+    // Escape to close - but not if search panel is open
     if (e.key === 'Escape') {
+      // If CodeMirror search panel is open, let it handle Escape first
+      if (document.querySelector('.cm-panel.cm-search')) {
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       onClose();
@@ -137,6 +156,10 @@
       </div>
 
       <div class="modal-footer">
+        <span class="footer-item">
+          <kbd>&#8984;F</kbd>
+          <span>search</span>
+        </span>
         <span class="footer-item">
           <kbd>Esc</kbd>
           <span>close</span>
