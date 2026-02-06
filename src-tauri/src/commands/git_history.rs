@@ -160,23 +160,61 @@ pub fn get_commit_log(
         }
     }
 
-    // Detect default branch and compute merge-base
-    let default_branch = detect_default_branch(&repo);
-    let merge_base_oid: Option<Oid> = default_branch.and_then(|default_name| {
-        let default_ref = repo
-            .find_branch(&default_name, git2::BranchType::Local)
-            .ok()?;
-        let default_oid = default_ref.get().target()?;
-        // If HEAD is on the default branch, no merge-base needed
+    // Detect default branch and its OID
+    let default_branch_name = detect_default_branch(&repo);
+    let default_branch_oid: Option<Oid> = default_branch_name.as_ref().and_then(|name| {
+        repo.find_branch(name, git2::BranchType::Local)
+            .ok()
+            .and_then(|b| b.get().target())
+    });
+
+    // Compute merge-base between HEAD and default branch
+    let merge_base_oid: Option<Oid> = default_branch_oid.and_then(|default_oid| {
         if default_oid == head_oid {
             return None;
         }
         repo.merge_base(head_oid, default_oid).ok()
     });
 
-    // Revwalk from HEAD
+    // Build sets of commits exclusive to each branch (between tip and merge-base)
+    let mut head_only_commits = HashSet::new();
+    let mut default_only_commits = HashSet::new();
+
+    if let Some(base_oid) = merge_base_oid {
+        // Commits reachable from HEAD but not from merge-base
+        if let Ok(mut walk) = repo.revwalk() {
+            let _ = walk.push(head_oid);
+            let _ = walk.hide(base_oid);
+            walk.set_sorting(Sort::TOPOLOGICAL).ok();
+            for oid in walk.flatten() {
+                head_only_commits.insert(oid);
+            }
+        }
+
+        // Commits reachable from default branch but not from merge-base
+        if let Some(default_oid) = default_branch_oid {
+            if let Ok(mut walk) = repo.revwalk() {
+                let _ = walk.push(default_oid);
+                let _ = walk.hide(base_oid);
+                walk.set_sorting(Sort::TOPOLOGICAL).ok();
+                for oid in walk.flatten() {
+                    default_only_commits.insert(oid);
+                }
+            }
+        }
+    }
+
+    // Revwalk from HEAD (and default branch if diverged)
     let mut revwalk = repo.revwalk().map_err(|e| e.to_string())?;
     revwalk.push(head_oid).map_err(|e| e.to_string())?;
+
+    // Also include default branch commits in the walk
+    if let (Some(_), Some(default_oid)) = (merge_base_oid, default_branch_oid) {
+        if default_oid != head_oid {
+            let _ = revwalk.push(default_oid);
+        }
+    }
+
     revwalk
         .set_sorting(Sort::TOPOLOGICAL | Sort::TIME)
         .map_err(|e| e.to_string())?;
@@ -197,20 +235,16 @@ pub fn get_commit_log(
 
         let is_pushed = pushed_oids.contains(&oid);
 
-        // Determine branch_type and graph_column
-        let (branch_type, graph_column) = match merge_base_oid {
-            Some(base_oid) if oid == base_oid => ("both".to_string(), 0),
-            Some(base_oid) => {
-                if repo
-                    .graph_descendant_of(oid, base_oid)
-                    .unwrap_or(false)
-                {
-                    ("current".to_string(), 0)
-                } else {
-                    ("base".to_string(), 1)
-                }
-            }
-            None => ("current".to_string(), 0),
+        // Determine branch_type and graph_column using pre-computed sets
+        let (branch_type, graph_column) = if merge_base_oid == Some(oid) {
+            ("both".to_string(), 0)
+        } else if head_only_commits.contains(&oid) {
+            ("current".to_string(), 0)
+        } else if default_only_commits.contains(&oid) {
+            ("base".to_string(), 1)
+        } else {
+            // Shared history (before merge-base) or no divergence
+            ("current".to_string(), 0)
         };
 
         commits.push(build_commit_info(
@@ -731,6 +765,84 @@ mod tests {
             merge_oid.to_string(),
         );
         assert!(diff_result.is_ok());
+    }
+
+    #[test]
+    fn test_get_commit_log_branch_divergence() {
+        let dir = tempdir().unwrap();
+        let repo = create_repo_with_commit(dir.path());
+        let sig = test_signature();
+
+        // Add commits on master (default branch)
+        add_commit(&repo, dir.path(), "file1.txt", "content1", "Master commit 1");
+        let base_oid = add_commit(&repo, dir.path(), "file2.txt", "content2", "Master commit 2");
+
+        // Create feature branch from current HEAD (Master commit 2)
+        let base_commit = repo.find_commit(base_oid).unwrap();
+        repo.branch("feature", &base_commit, false).unwrap();
+
+        // Add another commit on master
+        add_commit(&repo, dir.path(), "file3.txt", "content3", "Master commit 3");
+
+        // Switch to feature branch
+        let feature_branch = repo.find_branch("feature", git2::BranchType::Local).unwrap();
+        let feature_commit = feature_branch.get().peel_to_commit().unwrap();
+        repo.checkout_tree(
+            feature_commit.tree().unwrap().as_object(),
+            Some(git2::build::CheckoutBuilder::new().force()),
+        ).unwrap();
+        repo.set_head("refs/heads/feature").unwrap();
+
+        // Add commits on feature branch
+        fs::write(dir.path().join("feature1.txt"), "feature content 1\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("feature1.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Feature commit 1", &tree, &[&head]).unwrap();
+
+        fs::write(dir.path().join("feature2.txt"), "feature content 2\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("feature2.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Feature commit 2", &tree, &[&head]).unwrap();
+
+        // Get commit log from feature branch perspective
+        let result = get_commit_log(dir.path().to_string_lossy().to_string(), None, None);
+        assert!(result.is_ok());
+
+        let commits = result.unwrap();
+
+        // Feature commits should be column 0, "current"
+        let fc2 = commits.iter().find(|c| c.message == "Feature commit 2").unwrap();
+        assert_eq!(fc2.graph_column, 0);
+        assert_eq!(fc2.branch_type, "current");
+
+        let fc1 = commits.iter().find(|c| c.message == "Feature commit 1").unwrap();
+        assert_eq!(fc1.graph_column, 0);
+        assert_eq!(fc1.branch_type, "current");
+
+        // Master-only commit should be column 1, "base"
+        let mc3 = commits.iter().find(|c| c.message == "Master commit 3").unwrap();
+        assert_eq!(mc3.graph_column, 1);
+        assert_eq!(mc3.branch_type, "base");
+
+        // Merge-base commit should be column 0, "both"
+        let mc2 = commits.iter().find(|c| c.message == "Master commit 2").unwrap();
+        assert_eq!(mc2.graph_column, 0);
+        assert_eq!(mc2.branch_type, "both");
+
+        // Shared history should be column 0
+        let mc1 = commits.iter().find(|c| c.message == "Master commit 1").unwrap();
+        assert_eq!(mc1.graph_column, 0);
+
+        let ic = commits.iter().find(|c| c.message == "Initial commit").unwrap();
+        assert_eq!(ic.graph_column, 0);
     }
 
     #[test]

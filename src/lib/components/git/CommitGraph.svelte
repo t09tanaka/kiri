@@ -35,9 +35,10 @@
   const hashToRow = $derived(new Map(commits.map((c, i) => [c.full_hash, i])));
 
   function getNodeColor(commit: CommitInfo): string {
+    // Gray out non-current branch commits
+    if (commit.branch_type === 'base') return '#6b7280';
     if (!commit.is_pushed) return '#fcd34d';
-    if (commit.branch_type === 'current' || commit.branch_type === 'both') return '#7dd3fc';
-    return '#c4b5fd';
+    return '#7dd3fc';
   }
 
   function getNodeX(commit: CommitInfo): number {
@@ -109,12 +110,14 @@
         const x2 = getNodeX(parent);
         const y2 = getNodeY(parentRow);
 
+        // Gray out connections from/to base branch
+        const isBaseConnection = commit.branch_type === 'base' || parent.branch_type === 'base';
         result.push({
           x1,
           y1,
           x2,
           y2,
-          color,
+          color: isBaseConnection ? '#6b7280' : color,
           dashed: !commit.is_pushed,
         });
       }
@@ -188,17 +191,32 @@
           cy={nodeY}
           r={NODE_RADIUS}
           fill={nodeColor}
-          filter={!commit.is_pushed ? 'url(#glow-filter)' : undefined}
+          filter={!commit.is_pushed && commit.branch_type !== 'base'
+            ? 'url(#glow-filter)'
+            : undefined}
+          opacity={commit.branch_type === 'base' ? 0.5 : 1}
           style="pointer-events: none;"
         />
 
         <!-- Commit message text -->
-        <text x={textStart} y={nodeY - 4} class="commit-message" fill="var(--text-primary)">
+        <text
+          x={textStart}
+          y={nodeY - 4}
+          class="commit-message"
+          fill={commit.branch_type === 'base' ? 'var(--text-muted)' : 'var(--text-primary)'}
+          opacity={commit.branch_type === 'base' ? 0.5 : 1}
+        >
           {truncate(commit.message.split('\n')[0], 40)}
         </text>
 
         <!-- Date text -->
-        <text x={textStart} y={nodeY + 12} class="commit-date" fill="var(--text-muted)">
+        <text
+          x={textStart}
+          y={nodeY + 12}
+          class="commit-date"
+          fill="var(--text-muted)"
+          opacity={commit.branch_type === 'base' ? 0.4 : 1}
+        >
           {formatDate(commit.date)}
         </text>
       {/each}
