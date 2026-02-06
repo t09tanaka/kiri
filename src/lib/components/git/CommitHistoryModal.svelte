@@ -72,7 +72,6 @@
       const result = await gitService.pushCommits(projectPath);
       if (result.success) {
         commitHistoryStore.markAllPushed();
-        toastStore.success('Pushed successfully');
       } else {
         toastStore.error(result.message);
         commitHistoryStore.setPushing(false);
