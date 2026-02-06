@@ -10,6 +10,7 @@
   import KeyboardShortcuts from '@/lib/components/ui/KeyboardShortcuts.svelte';
   import ToastContainer from '@/lib/components/ui/ToastContainer.svelte';
   import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
+  import CommitHistoryModal from '@/lib/components/git/CommitHistoryModal.svelte';
   import WorktreePanel from '@/lib/components/git/WorktreePanel.svelte';
   import EditorModal from '@/lib/components/editor/EditorModal.svelte';
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
@@ -18,6 +19,7 @@
   import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { peekStore } from '@/lib/stores/peekStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
+  import { commitHistoryStore } from '@/lib/stores/commitHistoryStore';
   import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
   import { worktreeStore, isWorktree, isSubdirectoryOfRepo } from '@/lib/stores/worktreeStore';
   import { toastStore } from '@/lib/stores/toastStore';
@@ -280,6 +282,20 @@
           diffViewStore.close();
         } else {
           diffViewStore.open(path);
+        }
+      }
+      return;
+    }
+
+    // Cmd+H: Toggle Commit History (only when project is open)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'h' && $isProjectOpen) {
+      e.preventDefault();
+      const path = projectStore.getCurrentPath();
+      if (path) {
+        if ($commitHistoryStore.isOpen) {
+          commitHistoryStore.close();
+        } else {
+          commitHistoryStore.open(path);
         }
       }
       return;
@@ -668,6 +684,13 @@
 
   {#if $diffViewStore.isOpen && $diffViewStore.projectPath}
     <DiffViewModal projectPath={$diffViewStore.projectPath} onClose={() => diffViewStore.close()} />
+  {/if}
+
+  {#if $commitHistoryStore.isOpen && $commitHistoryStore.projectPath}
+    <CommitHistoryModal
+      projectPath={$commitHistoryStore.projectPath}
+      onClose={() => commitHistoryStore.close()}
+    />
   {/if}
 
   {#if $editorModalStore.isOpen && $editorModalStore.filePath}

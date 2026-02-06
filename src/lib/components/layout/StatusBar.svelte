@@ -3,6 +3,7 @@
   import { gitStore } from '@/lib/stores/gitStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
+  import { commitHistoryStore } from '@/lib/stores/commitHistoryStore';
   import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
   import { isWorktree, worktreeCount, isSubdirectoryOfRepo } from '@/lib/stores/worktreeStore';
   import { toastStore } from '@/lib/stores/toastStore';
@@ -30,6 +31,11 @@
   const changeCount = $derived(
     $gitStore.repoInfo?.statuses.filter((s) => s.status !== 'Ignored').length ?? 0
   );
+
+  function handleBranchClick() {
+    if (!$currentProjectPath) return;
+    commitHistoryStore.open($currentProjectPath);
+  }
 
   function handleChangesClick() {
     if (!$currentProjectPath) {
@@ -143,7 +149,11 @@
   <div class="status-right">
     {#if gitInfo?.branch}
       {#if $isWorktree}
-        <span class="status-item worktree-branch" title="Worktree: {gitInfo.branch}">
+        <button
+          class="status-item worktree-branch"
+          onclick={handleBranchClick}
+          title="Commit History: {gitInfo.branch} (⌘H)"
+        >
           <svg
             width="12"
             height="12"
@@ -161,9 +171,14 @@
           </svg>
           <span class="worktree-label">WT</span>
           <span>{gitInfo.branch}</span>
-        </span>
+          <span class="shortcut-key">⌘H</span>
+        </button>
       {:else}
-        <span class="status-item git-branch" title="Git branch: {gitInfo.branch}">
+        <button
+          class="status-item git-branch"
+          onclick={handleBranchClick}
+          title="Commit History: {gitInfo.branch} (⌘H)"
+        >
           <svg
             width="12"
             height="12"
@@ -180,7 +195,8 @@
             <path d="M18 9a9 9 0 0 1-9 9"></path>
           </svg>
           <span>{gitInfo.branch}</span>
-        </span>
+          <span class="shortcut-key">⌘H</span>
+        </button>
       {/if}
     {/if}
     {#if !$isWorktree}
@@ -467,10 +483,12 @@
   .git-branch {
     padding: 3px var(--space-2);
     background: rgba(74, 222, 128, 0.1);
+    border: none;
     border-radius: var(--radius-sm);
     color: var(--git-added);
     font-weight: 500;
     font-size: 10px;
+    cursor: pointer;
     transition: all var(--transition-fast);
   }
 
@@ -482,10 +500,12 @@
   .worktree-branch {
     padding: 3px var(--space-2);
     background: rgba(251, 191, 36, 0.15);
+    border: none;
     border-radius: var(--radius-sm);
     color: var(--git-modified);
     font-weight: 500;
     font-size: 10px;
+    cursor: pointer;
     transition: all var(--transition-fast);
   }
 
