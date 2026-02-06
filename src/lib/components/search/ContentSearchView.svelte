@@ -9,6 +9,15 @@
   } from '@/lib/stores/contentSearchStore';
   import { fileService } from '@/lib/services/fileService';
   import { Spinner } from '@/lib/components/ui';
+  import {
+    escapeHtml,
+    getLanguageFromPath,
+    getLineLanguage,
+    highlightLine,
+    insertMarksIntoHighlightedHtml,
+    supportsEmbeddedLanguages,
+    type EmbeddedContext,
+  } from '@/lib/utils/syntaxHighlight';
 
   interface Props {
     onOpenFile: (path: string, line?: number) => void;
@@ -35,6 +44,10 @@
   // Reference to main content container for scrolling
   let mainContentRef: HTMLDivElement | null = $state(null);
 
+  // Highlighted line cache (non-reactive, used for rendering only)
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally non-reactive cache
+  const highlightedLineCache = new Map<string, string[]>();
+
   function getFileName(path: string): string {
     return path.split('/').pop() ?? path;
   }
@@ -57,6 +70,24 @@
       const lines = content.split('\n');
       // eslint-disable-next-line svelte/prefer-svelte-reactivity
       fileContentCache = new Map(fileContentCache).set(path, lines);
+
+      // Pre-compute syntax highlighting for all lines
+      const baseLanguage = getLanguageFromPath(path);
+      const hasEmbedded = supportsEmbeddedLanguages(path);
+      const highlighted: string[] = [];
+      let context: EmbeddedContext = 'template';
+
+      for (const line of lines) {
+        let language = baseLanguage;
+        if (hasEmbedded) {
+          const result = getLineLanguage(line, baseLanguage, context);
+          language = result.language;
+          context = result.newContext;
+        }
+        highlighted.push(highlightLine(line, language));
+      }
+
+      highlightedLineCache.set(path, highlighted);
     } catch (error) {
       console.error('Failed to load file:', error);
       // eslint-disable-next-line svelte/prefer-svelte-reactivity
@@ -112,44 +143,22 @@
     onClose();
   }
 
-  function highlightMatches(line: string, lineNumber: number, matches: ContentMatch[]): string {
+  function renderLine(
+    filePath: string,
+    line: string,
+    lineNumber: number,
+    matches: ContentMatch[]
+  ): string {
+    const highlightedLines = highlightedLineCache.get(filePath);
+    const highlightedHtml = highlightedLines?.[lineNumber - 1] ?? escapeHtml(line);
+
     const lineMatches = matches.filter((m) => m.line === lineNumber);
     if (lineMatches.length === 0) {
-      return escapeHtml(line);
+      return highlightedHtml;
     }
 
-    // Sort matches by start position (reverse order for replacement)
-    const sortedMatches = [...lineMatches].sort((a, b) => b.start - a.start);
-
-    let result = line;
-    const markers: { start: number; end: number }[] = [];
-
-    for (const match of sortedMatches) {
-      markers.push({ start: match.start, end: match.end });
-    }
-
-    // Build highlighted string
-    markers.sort((a, b) => a.start - b.start);
-    let highlighted = '';
-    let lastIndex = 0;
-
-    for (const marker of markers) {
-      highlighted += escapeHtml(result.slice(lastIndex, marker.start));
-      highlighted += `<mark>${escapeHtml(result.slice(marker.start, marker.end))}</mark>`;
-      lastIndex = marker.end;
-    }
-    highlighted += escapeHtml(result.slice(lastIndex));
-
-    return highlighted;
-  }
-
-  function escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
+    const marks = lineMatches.map((m) => ({ start: m.start, end: m.end }));
+    return insertMarksIntoHighlightedHtml(highlightedHtml, marks);
   }
 
   // Load file content when selected file changes
@@ -319,7 +328,7 @@
                   <span class="line-number">{lineNumber}</span>
                   <span class="line-content">
                     <!-- eslint-disable-next-line svelte/no-at-html-tags -- escapeHtml sanitizes content -->
-                    {@html highlightMatches(line, lineNumber, selectedFile.matches)}
+                    {@html renderLine(selectedFile.path, line, lineNumber, selectedFile.matches)}
                   </span>
                 </div>
               {/each}
@@ -629,6 +638,85 @@
     padding: 1px 4px;
     border-radius: 3px;
     font-weight: 500;
+  }
+
+  .line-content :global(mark span) {
+    color: inherit;
+  }
+
+  /* Syntax highlighting colors */
+  .line-content :global(.hljs-keyword),
+  .line-content :global(.hljs-selector-tag),
+  .line-content :global(.hljs-built_in),
+  .line-content :global(.hljs-name) {
+    color: #c792ea;
+  }
+
+  .line-content :global(.hljs-string),
+  .line-content :global(.hljs-selector-attr),
+  .line-content :global(.hljs-selector-pseudo),
+  .line-content :global(.hljs-addition) {
+    color: #c3e88d;
+  }
+
+  .line-content :global(.hljs-number),
+  .line-content :global(.hljs-literal) {
+    color: #f78c6c;
+  }
+
+  .line-content :global(.hljs-function),
+  .line-content :global(.hljs-title) {
+    color: #82aaff;
+  }
+
+  .line-content :global(.hljs-comment),
+  .line-content :global(.hljs-quote) {
+    color: #546e7a;
+    font-style: italic;
+  }
+
+  .line-content :global(.hljs-tag) {
+    color: #f07178;
+  }
+
+  .line-content :global(.hljs-attr),
+  .line-content :global(.hljs-attribute) {
+    color: #ffcb6b;
+  }
+
+  .line-content :global(.hljs-variable),
+  .line-content :global(.hljs-template-variable) {
+    color: #f07178;
+  }
+
+  .line-content :global(.hljs-type),
+  .line-content :global(.hljs-class .hljs-title) {
+    color: #ffcb6b;
+  }
+
+  .line-content :global(.hljs-params) {
+    color: #89ddff;
+  }
+
+  .line-content :global(.hljs-regexp) {
+    color: #89ddff;
+  }
+
+  .line-content :global(.hljs-symbol),
+  .line-content :global(.hljs-bullet) {
+    color: #89ddff;
+  }
+
+  .line-content :global(.hljs-meta) {
+    color: #ffcb6b;
+  }
+
+  .line-content :global(.hljs-deletion) {
+    color: #f07178;
+  }
+
+  .line-content :global(.hljs-punctuation) {
+    color: #89ddff;
   }
 
   /* Empty and loading states */
