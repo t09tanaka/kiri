@@ -192,8 +192,8 @@ describe('tabStore', () => {
     it('should add sibling pane when splitting in same direction (vertical)', () => {
       // Initial state: single pane
       // After first split: [pane-1, pane-2] (50%, 50%)
-      // After second split on pane-1: [pane-1, pane-3, pane-2] (33.3%, 33.3%, 33.3%)
-      // NOT: [[pane-1, pane-3], pane-2] (nested with 25%, 25%, 50%)
+      // After second split on pane-1: [pane-1, pane-3, pane-2] (25%, 25%, 50%)
+      // The target pane's size is split in half, other sizes preserved
 
       tabStore.addTerminalTab();
       let state = get(tabStore);
@@ -226,11 +226,10 @@ describe('tabStore', () => {
       expect(rootPane.children[1].type).toBe('terminal');
       expect(rootPane.children[2].type).toBe('terminal');
 
-      // Sizes should be evenly distributed (33.3% each)
-      const expectedSize = 100 / 3;
-      expect(rootPane.sizes[0]).toBeCloseTo(expectedSize, 1);
-      expect(rootPane.sizes[1]).toBeCloseTo(expectedSize, 1);
-      expect(rootPane.sizes[2]).toBeCloseTo(expectedSize, 1);
+      // Target pane (50%) is split in half (25%, 25%), other pane (50%) preserved
+      expect(rootPane.sizes[0]).toBe(25);
+      expect(rootPane.sizes[1]).toBe(25);
+      expect(rootPane.sizes[2]).toBe(50);
     });
 
     it('should add sibling pane when splitting in same direction (horizontal)', () => {
@@ -260,11 +259,83 @@ describe('tabStore', () => {
       expect(rootPane.children).toHaveLength(3);
       expect(rootPane.direction).toBe('horizontal');
 
-      // Sizes should be evenly distributed
-      const expectedSize = 100 / 3;
-      expect(rootPane.sizes[0]).toBeCloseTo(expectedSize, 1);
-      expect(rootPane.sizes[1]).toBeCloseTo(expectedSize, 1);
-      expect(rootPane.sizes[2]).toBeCloseTo(expectedSize, 1);
+      // Target pane (50%) is split in half (25%, 25%), other pane (50%) preserved
+      expect(rootPane.sizes[0]).toBe(25);
+      expect(rootPane.sizes[1]).toBe(25);
+      expect(rootPane.sizes[2]).toBe(50);
+    });
+
+    it('should preserve custom sizes when splitting in same direction', () => {
+      tabStore.addTerminalTab();
+      let state = get(tabStore);
+      const tabId = state.tabs[0].id;
+      const firstPaneId = (state.tabs[0].rootPane as { id: string }).id;
+
+      // First vertical split: [pane-1(50%), pane-2(50%)]
+      tabStore.splitPane(tabId, firstPaneId, 'vertical');
+
+      state = get(tabStore);
+      let rootPane = state.tabs[0].rootPane;
+      if (rootPane.type !== 'split') return;
+
+      // User drags boundary to custom sizes: [30%, 70%]
+      const pane2Id = (rootPane.children[1] as { id: string }).id;
+      tabStore.updatePaneSizes(tabId, firstPaneId, [30, 70]);
+
+      state = get(tabStore);
+      rootPane = state.tabs[0].rootPane;
+      if (rootPane.type !== 'split') return;
+      expect(rootPane.sizes).toEqual([30, 70]);
+
+      // Split pane-2 (70%) in same direction
+      tabStore.splitPane(tabId, pane2Id, 'vertical');
+
+      state = get(tabStore);
+      rootPane = state.tabs[0].rootPane;
+      if (rootPane.type !== 'split') return;
+
+      // pane-1 keeps 30%, pane-2 splits to 35% + 35%
+      expect(rootPane.children).toHaveLength(3);
+      expect(rootPane.sizes[0]).toBe(30);
+      expect(rootPane.sizes[1]).toBe(35);
+      expect(rootPane.sizes[2]).toBe(35);
+    });
+
+    it('should preserve sizes when splitting different direction (nested)', () => {
+      tabStore.addTerminalTab();
+      let state = get(tabStore);
+      const tabId = state.tabs[0].id;
+      const firstPaneId = (state.tabs[0].rootPane as { id: string }).id;
+
+      // First vertical split: [pane-1(50%), pane-2(50%)]
+      tabStore.splitPane(tabId, firstPaneId, 'vertical');
+
+      state = get(tabStore);
+      let rootPane = state.tabs[0].rootPane;
+      if (rootPane.type !== 'split') return;
+
+      const pane2Id = (rootPane.children[1] as { id: string }).id;
+
+      // User drags boundary to custom sizes: [30%, 70%]
+      tabStore.updatePaneSizes(tabId, firstPaneId, [30, 70]);
+
+      // Split pane-2 in DIFFERENT direction (horizontal)
+      tabStore.splitPane(tabId, pane2Id, 'horizontal');
+
+      state = get(tabStore);
+      rootPane = state.tabs[0].rootPane;
+      if (rootPane.type !== 'split') return;
+
+      // Outer split sizes should be preserved: [30%, 70%]
+      expect(rootPane.sizes).toEqual([30, 70]);
+      expect(rootPane.children).toHaveLength(2);
+
+      // Second child should now be a nested horizontal split
+      const nestedSplit = rootPane.children[1];
+      expect(nestedSplit.type).toBe('split');
+      if (nestedSplit.type !== 'split') return;
+      expect(nestedSplit.direction).toBe('horizontal');
+      expect(nestedSplit.sizes).toEqual([50, 50]);
     });
 
     it('should create nested split when splitting in different direction', () => {
@@ -769,6 +840,58 @@ describe('advanced tabStore operations', () => {
       const newTerminalTab = state.tabs[1];
       expect((newTerminalTab.rootPane as { id: string }).id).toMatch(/^pane-\d+$/);
     });
+  });
+});
+
+describe('closePaneInTree size preservation', () => {
+  it('should redistribute sizes proportionally when closing a pane', () => {
+    // 3 panes: [30%, 40%, 30%]
+    const pane: TerminalPane = {
+      type: 'split',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: null },
+        { type: 'terminal', id: 'pane-2', terminalId: null },
+        { type: 'terminal', id: 'pane-3', terminalId: null },
+      ],
+      sizes: [30, 40, 30],
+    };
+
+    // Close pane-2 (40%)
+    const result = closePaneInTree(pane, 'pane-2');
+
+    expect(result).not.toBeNull();
+    if (result === null || result.type !== 'split') return;
+    expect(result.children).toHaveLength(2);
+    // Remaining: pane-1(30) + pane-3(30) = 60 total
+    // pane-1: 30/60 * 100 = 50%, pane-3: 30/60 * 100 = 50%
+    expect(result.sizes[0]).toBe(50);
+    expect(result.sizes[1]).toBe(50);
+  });
+
+  it('should redistribute uneven sizes proportionally', () => {
+    // 3 panes: [20%, 50%, 30%]
+    const pane: TerminalPane = {
+      type: 'split',
+      direction: 'vertical',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: null },
+        { type: 'terminal', id: 'pane-2', terminalId: null },
+        { type: 'terminal', id: 'pane-3', terminalId: null },
+      ],
+      sizes: [20, 50, 30],
+    };
+
+    // Close pane-1 (20%)
+    const result = closePaneInTree(pane, 'pane-1');
+
+    expect(result).not.toBeNull();
+    if (result === null || result.type !== 'split') return;
+    expect(result.children).toHaveLength(2);
+    // Remaining: pane-2(50) + pane-3(30) = 80 total
+    // pane-2: 50/80 * 100 = 62.5%, pane-3: 30/80 * 100 = 37.5%
+    expect(result.sizes[0]).toBe(62.5);
+    expect(result.sizes[1]).toBe(37.5);
   });
 });
 

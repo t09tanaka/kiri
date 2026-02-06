@@ -93,8 +93,12 @@ function splitPaneInTree(
         terminalId: null,
       });
 
-      // Recalculate sizes to be evenly distributed
-      const newSizes = newChildren.map(() => 100 / newChildren.length);
+      // Split only the target pane's size in half, preserving other sizes
+      const targetSize = pane.sizes[targetIndex];
+      const halfSize = targetSize / 2;
+      const newSizes = [...pane.sizes];
+      newSizes[targetIndex] = halfSize;
+      newSizes.splice(targetIndex + 1, 0, halfSize);
 
       return {
         ...pane,
@@ -126,12 +130,14 @@ export function closePaneInTree(pane: TerminalPane, targetPaneId: string): Termi
     return pane;
   }
 
-  // Split pane - recurse into children
+  // Split pane - recurse into children, tracking original sizes
   const newChildren: TerminalPane[] = [];
-  for (const child of pane.children) {
-    const result = closePaneInTree(child, targetPaneId);
+  const keptSizes: number[] = [];
+  for (let i = 0; i < pane.children.length; i++) {
+    const result = closePaneInTree(pane.children[i], targetPaneId);
     if (result !== null) {
       newChildren.push(result);
+      keptSizes.push(pane.sizes[i]);
     }
   }
 
@@ -145,9 +151,9 @@ export function closePaneInTree(pane: TerminalPane, targetPaneId: string): Termi
     return null;
   }
 
-  // Adjust sizes proportionally
-  const remainingTotal = newChildren.length;
-  const newSizes = newChildren.map(() => 100 / remainingTotal);
+  // Adjust sizes proportionally based on original sizes
+  const totalKept = keptSizes.reduce((sum, s) => sum + s, 0);
+  const newSizes = keptSizes.map((s) => (s / totalKept) * 100);
 
   return {
     ...pane,
