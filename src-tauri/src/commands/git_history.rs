@@ -135,19 +135,27 @@ pub fn get_commit_log(
     // Build set of pushed OIDs by walking from the upstream tracking branch
     let mut pushed_oids = HashSet::new();
 
-    // Try to find upstream tracking ref for the current branch
+    // Try to find upstream tracking ref for the current branch,
+    // falling back to origin's default branch (e.g., origin/main)
     let upstream_oid = head
         .shorthand()
         .and_then(|branch_name| {
-            // Skip if HEAD is detached
             if branch_name == "HEAD" {
                 return None;
             }
-            // Try the upstream tracking branch
             let remote_ref = format!("refs/remotes/origin/{}", branch_name);
             repo.find_reference(&remote_ref)
                 .ok()
                 .and_then(|r| r.target())
+        })
+        .or_else(|| {
+            // Fallback: use origin's default branch tracking ref
+            detect_default_branch(&repo).and_then(|name| {
+                let remote_ref = format!("refs/remotes/origin/{}", name);
+                repo.find_reference(&remote_ref)
+                    .ok()
+                    .and_then(|r| r.target())
+            })
         });
 
     if let Some(oid) = upstream_oid {
