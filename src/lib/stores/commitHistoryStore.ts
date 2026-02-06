@@ -8,8 +8,10 @@ export interface CommitHistoryState {
   selectedCommitHash: string | null;
   selectedCommitDiff: CommitDiffResult | null;
   isLoadingLog: boolean;
+  isLoadingMore: boolean;
   isLoadingDiff: boolean;
   isPushing: boolean;
+  hasMore: boolean;
   error: string | null;
 }
 
@@ -20,8 +22,10 @@ const initialState: CommitHistoryState = {
   selectedCommitHash: null,
   selectedCommitDiff: null,
   isLoadingLog: false,
+  isLoadingMore: false,
   isLoadingDiff: false,
   isPushing: false,
+  hasMore: true,
   error: null,
 };
 
@@ -51,12 +55,32 @@ function createCommitHistoryStore() {
     /**
      * Set the commits list after loading
      */
-    setCommits: (commits: CommitInfo[]) => {
+    setCommits: (commits: CommitInfo[], pageSize: number = 50) => {
       update((s) => ({
         ...s,
         commits,
         isLoadingLog: false,
+        hasMore: commits.length >= pageSize,
       }));
+    },
+
+    /**
+     * Append commits for infinite scroll
+     */
+    appendCommits: (newCommits: CommitInfo[], pageSize: number = 50) => {
+      update((s) => ({
+        ...s,
+        commits: [...s.commits, ...newCommits],
+        isLoadingMore: false,
+        hasMore: newCommits.length >= pageSize,
+      }));
+    },
+
+    /**
+     * Set loading state for loading more commits
+     */
+    setLoadingMore: (loading: boolean) => {
+      update((s) => ({ ...s, isLoadingMore: loading }));
     },
 
     /**
@@ -110,6 +134,7 @@ function createCommitHistoryStore() {
         ...s,
         error,
         isLoadingLog: false,
+        isLoadingMore: false,
         isLoadingDiff: false,
         isPushing: false,
       }));

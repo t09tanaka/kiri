@@ -61,8 +61,12 @@ export const gitService = {
   /**
    * Get commit log for a repository
    */
-  getCommitLog: (repoPath: string, maxCount?: number): Promise<CommitInfo[]> =>
-    invoke('get_commit_log', { repoPath, maxCount: maxCount ?? null }),
+  getCommitLog: (repoPath: string, maxCount?: number, skip?: number): Promise<CommitInfo[]> =>
+    invoke('get_commit_log', {
+      repoPath,
+      maxCount: maxCount ?? null,
+      skip: skip ?? null,
+    }),
 
   /**
    * Get diff details for a specific commit

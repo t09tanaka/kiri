@@ -5,9 +5,21 @@
     commits: CommitInfo[];
     selectedHash: string | null;
     onSelectCommit: (commit: CommitInfo) => void;
+    isLoadingMore?: boolean;
+    hasMore?: boolean;
+    onLoadMore?: () => void;
   }
 
-  let { commits, selectedHash, onSelectCommit }: Props = $props();
+  let {
+    commits,
+    selectedHash,
+    onSelectCommit,
+    isLoadingMore = false,
+    hasMore = false,
+    onLoadMore,
+  }: Props = $props();
+
+  let scrollContainer: HTMLDivElement | undefined = $state();
 
   const NODE_RADIUS = 5;
   const ROW_HEIGHT = 40;
@@ -62,6 +74,15 @@
     return (cut > max * 0.5 ? text.slice(0, cut) : text.slice(0, max)) + '...';
   }
 
+  function handleScroll() {
+    if (!scrollContainer || !hasMore || isLoadingMore || !onLoadMore) return;
+    const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
+    // Trigger load more when within 200px of bottom
+    if (scrollHeight - scrollTop - clientHeight < 200) {
+      onLoadMore();
+    }
+  }
+
   // Build parent connections for drawing lines
   interface Connection {
     x1: number;
@@ -103,8 +124,8 @@
 </script>
 
 <div class="commit-graph">
-  <div class="graph-scroll">
-    <svg width="100%" height={commits.length * ROW_HEIGHT}>
+  <div class="graph-scroll" bind:this={scrollContainer} onscroll={handleScroll}>
+    <svg width="100%" height={commits.length * ROW_HEIGHT + (isLoadingMore ? ROW_HEIGHT : 0)}>
       <defs>
         <filter id="glow-filter">
           <feGaussianBlur stdDeviation="2" result="coloredBlur" />
@@ -181,6 +202,18 @@
           {formatDate(commit.date)}
         </text>
       {/each}
+
+      <!-- Loading more indicator -->
+      {#if isLoadingMore}
+        <text
+          x={textStart}
+          y={commits.length * ROW_HEIGHT + ROW_HEIGHT / 2}
+          class="loading-text"
+          fill="var(--text-muted)"
+        >
+          Loading more...
+        </text>
+      {/if}
     </svg>
   </div>
 </div>
@@ -236,5 +269,12 @@
     font-size: 10px;
     font-family: var(--font-mono);
     pointer-events: none;
+  }
+
+  .loading-text {
+    font-size: 11px;
+    font-family: var(--font-body);
+    pointer-events: none;
+    opacity: 0.6;
   }
 </style>

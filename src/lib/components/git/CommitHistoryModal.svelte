@@ -26,14 +26,28 @@
     document.removeEventListener('keydown', handleKeyDown, true);
   });
 
+  const PAGE_SIZE = 50;
+
   async function loadCommitLog() {
     commitHistoryStore.setLoadingLog(true);
     try {
-      const commits = await gitService.getCommitLog(projectPath);
-      commitHistoryStore.setCommits(commits);
+      const commits = await gitService.getCommitLog(projectPath, PAGE_SIZE);
+      commitHistoryStore.setCommits(commits, PAGE_SIZE);
       if (commits.length > 0) {
         await handleSelectCommit(commits[0]);
       }
+    } catch (error) {
+      commitHistoryStore.setError(String(error));
+    }
+  }
+
+  async function handleLoadMore() {
+    if ($commitHistoryStore.isLoadingMore || !$commitHistoryStore.hasMore) return;
+    commitHistoryStore.setLoadingMore(true);
+    try {
+      const skip = $commitHistoryStore.commits.length;
+      const newCommits = await gitService.getCommitLog(projectPath, PAGE_SIZE, skip);
+      commitHistoryStore.appendCommits(newCommits, PAGE_SIZE);
     } catch (error) {
       commitHistoryStore.setError(String(error));
     }
@@ -216,6 +230,9 @@
                 commits={$commitHistoryStore.commits}
                 selectedHash={$commitHistoryStore.selectedCommitHash}
                 onSelectCommit={handleSelectCommit}
+                isLoadingMore={$commitHistoryStore.isLoadingMore}
+                hasMore={$commitHistoryStore.hasMore}
+                onLoadMore={handleLoadMore}
               />
             </div>
             <div class="detail-panel">

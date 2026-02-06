@@ -4,8 +4,9 @@ use super::git_history::{CommitDiffResult, CommitInfo, PushResult};
 pub fn get_commit_log(
     repo_path: String,
     max_count: Option<usize>,
+    skip: Option<usize>,
 ) -> Result<Vec<CommitInfo>, String> {
-    super::git_history::get_commit_log(repo_path, max_count)
+    super::git_history::get_commit_log(repo_path, max_count, skip)
 }
 
 #[tauri::command]

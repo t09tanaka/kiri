@@ -116,9 +116,11 @@ fn detect_default_branch(repo: &Repository) -> Option<String> {
 pub fn get_commit_log(
     repo_path: String,
     max_count: Option<usize>,
+    skip: Option<usize>,
 ) -> Result<Vec<CommitInfo>, String> {
     let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
-    let max_count = max_count.unwrap_or(100);
+    let max_count = max_count.unwrap_or(50);
+    let skip = skip.unwrap_or(0);
 
     // Get HEAD reference
     let head = match repo.head() {
@@ -181,7 +183,12 @@ pub fn get_commit_log(
 
     let mut commits = Vec::new();
     for (count, oid_result) in revwalk.enumerate() {
-        if count >= max_count {
+        if count < skip {
+            // Skip commits for pagination
+            let _ = oid_result.map_err(|e| e.to_string())?;
+            continue;
+        }
+        if count >= skip + max_count {
             break;
         }
 
@@ -422,7 +429,7 @@ mod tests {
         // Add a second commit
         add_commit(&repo, dir.path(), "file1.txt", "hello", "Add file1");
 
-        let result = get_commit_log(dir.path().to_string_lossy().to_string(), None);
+        let result = get_commit_log(dir.path().to_string_lossy().to_string(), None, None);
         assert!(result.is_ok());
 
         let commits = result.unwrap();
@@ -436,7 +443,7 @@ mod tests {
         let dir = tempdir().unwrap();
         Repository::init(dir.path()).unwrap();
 
-        let result = get_commit_log(dir.path().to_string_lossy().to_string(), None);
+        let result = get_commit_log(dir.path().to_string_lossy().to_string(), None, None);
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
@@ -457,11 +464,50 @@ mod tests {
             );
         }
 
-        let result = get_commit_log(dir.path().to_string_lossy().to_string(), Some(3));
+        let result = get_commit_log(dir.path().to_string_lossy().to_string(), Some(3), None);
         assert!(result.is_ok());
 
         let commits = result.unwrap();
         assert_eq!(commits.len(), 3);
+    }
+
+    #[test]
+    fn test_get_commit_log_skip() {
+        let dir = tempdir().unwrap();
+        let repo = create_repo_with_commit(dir.path());
+
+        // Add several commits
+        for i in 0..5 {
+            add_commit(
+                &repo,
+                dir.path(),
+                &format!("file{}.txt", i),
+                &format!("content {}", i),
+                &format!("Commit {}", i),
+            );
+        }
+
+        // Total 6 commits (Initial + 5). Skip first 2, take 3
+        let result = get_commit_log(dir.path().to_string_lossy().to_string(), Some(3), Some(2));
+        assert!(result.is_ok());
+
+        let commits = result.unwrap();
+        assert_eq!(commits.len(), 3);
+        // Commits are in reverse chronological order, so skip 2 means skip "Commit 4" and "Commit 3"
+        assert_eq!(commits[0].message, "Commit 2");
+        assert_eq!(commits[1].message, "Commit 1");
+        assert_eq!(commits[2].message, "Commit 0");
+    }
+
+    #[test]
+    fn test_get_commit_log_skip_beyond_end() {
+        let dir = tempdir().unwrap();
+        let _repo = create_repo_with_commit(dir.path());
+
+        // Only 1 commit, skip 5
+        let result = get_commit_log(dir.path().to_string_lossy().to_string(), Some(10), Some(5));
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
     }
 
     #[test]
@@ -672,7 +718,7 @@ mod tests {
             .unwrap();
 
         // Verify merge commit has two parents in log
-        let result = get_commit_log(dir.path().to_string_lossy().to_string(), Some(1));
+        let result = get_commit_log(dir.path().to_string_lossy().to_string(), Some(1), None);
         assert!(result.is_ok());
 
         let commits = result.unwrap();
@@ -690,7 +736,7 @@ mod tests {
     #[test]
     fn test_get_commit_log_not_a_repo() {
         let dir = tempdir().unwrap();
-        let result = get_commit_log(dir.path().to_string_lossy().to_string(), None);
+        let result = get_commit_log(dir.path().to_string_lossy().to_string(), None, None);
         assert!(result.is_err());
     }
 
@@ -711,7 +757,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let _repo = create_repo_with_commit(dir.path());
 
-        let result = get_commit_log(dir.path().to_string_lossy().to_string(), None);
+        let result = get_commit_log(dir.path().to_string_lossy().to_string(), None, None);
         assert!(result.is_ok());
 
         let commits = result.unwrap();
@@ -725,7 +771,7 @@ mod tests {
         let repo = create_repo_with_commit(dir.path());
         add_commit(&repo, dir.path(), "test.txt", "hello\n", "Test message");
 
-        let result = get_commit_log(dir.path().to_string_lossy().to_string(), None);
+        let result = get_commit_log(dir.path().to_string_lossy().to_string(), None, None);
         assert!(result.is_ok());
 
         let commits = result.unwrap();

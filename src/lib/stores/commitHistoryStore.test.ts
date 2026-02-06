@@ -72,8 +72,14 @@ describe('commitHistoryStore', () => {
     it('should start with all loading states as false', () => {
       const state = get(commitHistoryStore);
       expect(state.isLoadingLog).toBe(false);
+      expect(state.isLoadingMore).toBe(false);
       expect(state.isLoadingDiff).toBe(false);
       expect(state.isPushing).toBe(false);
+    });
+
+    it('should start with hasMore as true', () => {
+      const state = get(commitHistoryStore);
+      expect(state.hasMore).toBe(true);
     });
 
     it('should start with null error', () => {
@@ -120,8 +126,10 @@ describe('commitHistoryStore', () => {
       expect(state.selectedCommitHash).toBe(null);
       expect(state.selectedCommitDiff).toBe(null);
       expect(state.isLoadingLog).toBe(false);
+      expect(state.isLoadingMore).toBe(false);
       expect(state.isLoadingDiff).toBe(false);
       expect(state.isPushing).toBe(false);
+      expect(state.hasMore).toBe(true);
       expect(state.error).toBe(null);
     });
   });
@@ -146,6 +154,70 @@ describe('commitHistoryStore', () => {
       commitHistoryStore.setCommits([]);
       const state = get(commitHistoryStore);
       expect(state.commits).toEqual([]);
+    });
+
+    it('should set hasMore to true when commits.length >= pageSize', () => {
+      const commits = Array.from({ length: 50 }, (_, i) => createMockCommit({ id: `commit-${i}` }));
+      commitHistoryStore.setCommits(commits, 50);
+      expect(get(commitHistoryStore).hasMore).toBe(true);
+    });
+
+    it('should set hasMore to false when commits.length < pageSize', () => {
+      const commits = [createMockCommit({ id: 'a1' }), createMockCommit({ id: 'b2' })];
+      commitHistoryStore.setCommits(commits, 50);
+      expect(get(commitHistoryStore).hasMore).toBe(false);
+    });
+  });
+
+  describe('appendCommits', () => {
+    it('should append new commits to existing list', () => {
+      const initial = [createMockCommit({ id: 'a1' })];
+      commitHistoryStore.setCommits(initial);
+      const more = [createMockCommit({ id: 'b2' }), createMockCommit({ id: 'c3' })];
+      commitHistoryStore.appendCommits(more);
+      const state = get(commitHistoryStore);
+      expect(state.commits).toHaveLength(3);
+      expect(state.commits[0].id).toBe('a1');
+      expect(state.commits[1].id).toBe('b2');
+      expect(state.commits[2].id).toBe('c3');
+    });
+
+    it('should clear isLoadingMore', () => {
+      commitHistoryStore.setLoadingMore(true);
+      commitHistoryStore.appendCommits([]);
+      expect(get(commitHistoryStore).isLoadingMore).toBe(false);
+    });
+
+    it('should set hasMore to false when fewer than pageSize', () => {
+      commitHistoryStore.appendCommits([createMockCommit()], 50);
+      expect(get(commitHistoryStore).hasMore).toBe(false);
+    });
+
+    it('should set hasMore to true when equal to pageSize', () => {
+      const commits = Array.from({ length: 50 }, (_, i) => createMockCommit({ id: `commit-${i}` }));
+      commitHistoryStore.appendCommits(commits, 50);
+      expect(get(commitHistoryStore).hasMore).toBe(true);
+    });
+
+    it('should handle appending empty array', () => {
+      const initial = [createMockCommit({ id: 'a1' })];
+      commitHistoryStore.setCommits(initial);
+      commitHistoryStore.appendCommits([]);
+      expect(get(commitHistoryStore).commits).toHaveLength(1);
+      expect(get(commitHistoryStore).hasMore).toBe(false);
+    });
+  });
+
+  describe('setLoadingMore', () => {
+    it('should set isLoadingMore to true', () => {
+      commitHistoryStore.setLoadingMore(true);
+      expect(get(commitHistoryStore).isLoadingMore).toBe(true);
+    });
+
+    it('should set isLoadingMore to false', () => {
+      commitHistoryStore.setLoadingMore(true);
+      commitHistoryStore.setLoadingMore(false);
+      expect(get(commitHistoryStore).isLoadingMore).toBe(false);
     });
   });
 
@@ -242,11 +314,13 @@ describe('commitHistoryStore', () => {
 
     it('should clear all loading states when setting error', () => {
       commitHistoryStore.setLoadingLog(true);
+      commitHistoryStore.setLoadingMore(true);
       commitHistoryStore.setLoadingDiff(true);
       commitHistoryStore.setPushing(true);
       commitHistoryStore.setError('error');
       const state = get(commitHistoryStore);
       expect(state.isLoadingLog).toBe(false);
+      expect(state.isLoadingMore).toBe(false);
       expect(state.isLoadingDiff).toBe(false);
       expect(state.isPushing).toBe(false);
     });
