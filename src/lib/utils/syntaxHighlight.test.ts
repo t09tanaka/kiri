@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  detectEmbeddedContext,
   escapeHtml,
   getLanguageFromPath,
   getLineLanguage,
@@ -190,6 +191,88 @@ describe('getLineLanguage', () => {
     const result = getLineLanguage('<div>Hello</div>', 'svelte', 'template');
     expect(result.language).toBe('svelte');
     expect(result.newContext).toBe('template');
+  });
+});
+
+describe('detectEmbeddedContext', () => {
+  it('detects script context from TypeScript keywords', () => {
+    expect(detectEmbeddedContext(['const x = 5;', 'let y = 10;'])).toBe('script');
+    expect(detectEmbeddedContext(['import { foo } from "bar";'])).toBe('script');
+    expect(detectEmbeddedContext(['export function hello() {}'])).toBe('script');
+    expect(detectEmbeddedContext(['function handleClick() {'])).toBe('script');
+    expect(detectEmbeddedContext(['class MyComponent {'])).toBe('script');
+    expect(detectEmbeddedContext(['interface Props {'])).toBe('script');
+    expect(detectEmbeddedContext(['type Foo = string;'])).toBe('script');
+    expect(detectEmbeddedContext(['async function load() {'])).toBe('script');
+    expect(detectEmbeddedContext(['return result;'])).toBe('script');
+    expect(detectEmbeddedContext(['throw new Error("fail");'])).toBe('script');
+    expect(detectEmbeddedContext(['await fetch(url);'])).toBe('script');
+  });
+
+  it('detects script context from Svelte runes and reactive declarations', () => {
+    expect(detectEmbeddedContext(['$: count = items.length;'])).toBe('script');
+    expect(detectEmbeddedContext(['$state(0)'])).toBe('script');
+    expect(detectEmbeddedContext(['$derived(getTotal())'])).toBe('script');
+    expect(detectEmbeddedContext(['$effect(() => {'])).toBe('script');
+    expect(detectEmbeddedContext(['$props()'])).toBe('script');
+  });
+
+  it('detects template context from HTML elements', () => {
+    expect(detectEmbeddedContext(['<div class="container">'])).toBe('template');
+    expect(detectEmbeddedContext(['<span>text</span>'])).toBe('template');
+    expect(detectEmbeddedContext(['</button>'])).toBe('template');
+    expect(detectEmbeddedContext(['<svg width="24">'])).toBe('template');
+  });
+
+  it('detects template context from Svelte template blocks', () => {
+    expect(detectEmbeddedContext(['{#if condition}'])).toBe('template');
+    expect(detectEmbeddedContext(['{:else}'])).toBe('template');
+    expect(detectEmbeddedContext(['{/each}'])).toBe('template');
+  });
+
+  it('detects script context from explicit script tag', () => {
+    expect(detectEmbeddedContext(['<script lang="ts">'])).toBe('script');
+  });
+
+  it('detects template context from closing script tag', () => {
+    expect(detectEmbeddedContext(['</script>'])).toBe('template');
+  });
+
+  it('detects style context from explicit style tag', () => {
+    expect(detectEmbeddedContext(['<style>'])).toBe('style');
+  });
+
+  it('detects template context from closing style tag', () => {
+    expect(detectEmbeddedContext(['</style>'])).toBe('template');
+  });
+
+  it('detects style context from CSS patterns', () => {
+    expect(detectEmbeddedContext(['color: red;'])).toBe('style');
+    expect(detectEmbeddedContext(['.container {'])).toBe('style');
+    expect(detectEmbeddedContext(['#main {'])).toBe('style');
+    expect(detectEmbeddedContext(['div {'])).toBe('style');
+  });
+
+  it('skips empty lines when detecting context', () => {
+    expect(detectEmbeddedContext(['', '  ', 'const x = 5;'])).toBe('script');
+    expect(detectEmbeddedContext(['', '<div>'])).toBe('template');
+  });
+
+  it('returns template as default for empty input', () => {
+    expect(detectEmbeddedContext([])).toBe('template');
+    expect(detectEmbeddedContext(['', '  '])).toBe('template');
+  });
+
+  it('does not confuse arrow functions with CSS', () => {
+    // "=>" contains ":" patterns but should not be detected as CSS
+    expect(detectEmbeddedContext(['const fn = (x) => x + 1;'])).toBe('script');
+  });
+
+  it('uses first non-empty line for detection', () => {
+    // First meaningful line is HTML, even if later lines look like TS
+    expect(detectEmbeddedContext(['<div>', 'const x = 5;'])).toBe('template');
+    // First meaningful line is TS, even if later lines look like HTML
+    expect(detectEmbeddedContext(['const x = 5;', '<div>'])).toBe('script');
   });
 });
 

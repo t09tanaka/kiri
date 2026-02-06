@@ -279,6 +279,57 @@ export function getLineLanguage(
   }
 }
 
+/**
+ * Detect the embedded language context by analyzing content lines.
+ * Used for diff hunks where the section boundary (<script>, <style>) may not be visible.
+ * Examines up to the first non-empty lines to determine whether the code is
+ * TypeScript (script), HTML (template), or CSS (style).
+ */
+export function detectEmbeddedContext(contentLines: string[]): EmbeddedContext {
+  for (const line of contentLines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Explicit section boundaries
+    if (trimmed.includes(SCRIPT_OPEN)) return 'script';
+    if (trimmed.includes(SCRIPT_CLOSE)) return 'template';
+    if (trimmed.includes(STYLE_OPEN)) return 'style';
+    if (trimmed.includes(STYLE_CLOSE)) return 'template';
+
+    // TypeScript/JavaScript patterns
+    if (
+      /^(import|export|const|let|var|function|class|interface|type|async|return|throw|await)\b/.test(
+        trimmed
+      )
+    ) {
+      return 'script';
+    }
+    // Svelte reactive declarations ($:) and rune calls ($state, $derived, $effect, $props)
+    if (/^\$[:(\w]/.test(trimmed)) {
+      return 'script';
+    }
+
+    // HTML/Template patterns
+    if (/^<[a-zA-Z]/.test(trimmed) || /^<\/[a-zA-Z]/.test(trimmed)) {
+      return 'template';
+    }
+    // Svelte template blocks: {#if}, {:else}, {/each}, etc.
+    if (/^\{[#:/]/.test(trimmed)) {
+      return 'template';
+    }
+
+    // CSS patterns: property declarations like "color: red;" or selectors like ".class {"
+    if (/^[a-z][\w-]*\s*:\s*[^=]/.test(trimmed) && !trimmed.includes('=>')) {
+      return 'style';
+    }
+    if (/^[.#&@][\w-]/.test(trimmed) || /^\w[\w-]*\s*\{/.test(trimmed)) {
+      return 'style';
+    }
+  }
+
+  return 'template';
+}
+
 export interface SearchMark {
   start: number;
   end: number;

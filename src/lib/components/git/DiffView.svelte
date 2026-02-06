@@ -3,6 +3,7 @@
   import { getFileIconInfo } from '@/lib/utils/fileIcons';
   import { onDestroy } from 'svelte';
   import {
+    detectEmbeddedContext,
     escapeHtml,
     getLanguageFromPath,
     getLineLanguage,
@@ -53,7 +54,10 @@
     let lineNum = 0;
     let context: EmbeddedContext = 'template';
 
-    for (const line of diffContent.split('\n')) {
+    const rawLines = diffContent.split('\n');
+
+    for (let i = 0; i < rawLines.length; i++) {
+      const line = rawLines[i];
       let content: string;
       let type: DiffLine['type'];
       let lineNumber: number | null;
@@ -77,6 +81,22 @@
         if (match) {
           lineNum = parseInt(match[1], 10) - 1;
         }
+
+        // For embedded language files, detect the context for this hunk
+        // by peeking at upcoming content lines
+        if (hasEmbedded) {
+          const upcomingContent: string[] = [];
+          for (let j = i + 1; j < rawLines.length; j++) {
+            const next = rawLines[j];
+            if (next.startsWith('@@')) break;
+            if (next.startsWith('+ ') || next.startsWith('- ') || next.startsWith('  ')) {
+              upcomingContent.push(next.slice(2));
+            }
+            if (upcomingContent.length >= 10) break;
+          }
+          context = detectEmbeddedContext(upcomingContent);
+        }
+
         lines.push({
           type: 'header',
           content: line,
