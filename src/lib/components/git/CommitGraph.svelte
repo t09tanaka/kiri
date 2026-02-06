@@ -12,8 +12,12 @@
   const NODE_RADIUS = 5;
   const ROW_HEIGHT = 40;
   const COL_WIDTH = 24;
-  const GRAPH_WIDTH = 60;
-  const TEXT_START = GRAPH_WIDTH + 8;
+  const GRAPH_PADDING = 16;
+
+  // Compute graph width dynamically based on actual column count
+  const maxColumn = $derived(Math.max(0, ...commits.map((c) => c.graph_column)));
+  const graphWidth = $derived(GRAPH_PADDING + (maxColumn + 1) * COL_WIDTH);
+  const textStart = $derived(graphWidth + 8);
 
   // Build hash -> row index map for drawing connections
   const hashToRow = $derived(new Map(commits.map((c, i) => [c.full_hash, i])));
@@ -25,7 +29,7 @@
   }
 
   function getNodeX(commit: CommitInfo): number {
-    return GRAPH_WIDTH / 2 + commit.graph_column * COL_WIDTH;
+    return GRAPH_PADDING / 2 + commit.graph_column * COL_WIDTH + COL_WIDTH / 2;
   }
 
   function getNodeY(index: number): number {
@@ -165,12 +169,12 @@
         />
 
         <!-- Commit message text -->
-        <text x={TEXT_START} y={nodeY - 4} class="commit-message" fill="var(--text-primary)">
+        <text x={textStart} y={nodeY - 4} class="commit-message" fill="var(--text-primary)">
           {truncate(commit.message.split('\n')[0], 28)}
         </text>
 
         <!-- Date text -->
-        <text x={TEXT_START} y={nodeY + 12} class="commit-date" fill="var(--text-muted)">
+        <text x={textStart} y={nodeY + 12} class="commit-date" fill="var(--text-muted)">
           {formatDate(commit.date)}
         </text>
       {/each}
