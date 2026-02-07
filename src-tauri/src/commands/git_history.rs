@@ -263,8 +263,14 @@ pub fn get_commit_log(
 
         // Determine branch_type and graph_column using pre-computed sets
         let has_divergence = !head_only_commits.is_empty() || !default_only_commits.is_empty();
-        let (branch_type, graph_column) = if merge_base_oid == Some(oid) {
+        let is_merge_base = merge_base_oid == Some(oid);
+        let main_has_advanced = !default_only_commits.is_empty();
+        let (branch_type, graph_column) = if is_merge_base && main_has_advanced {
+            // True fork point: both branches have diverged
             ("both".to_string(), 0)
+        } else if is_merge_base {
+            // merge-base == main HEAD: main hasn't advanced, this is just a main commit
+            ("shared".to_string(), 0)
         } else if head_only_commits.contains(&oid) {
             // Current branch exclusive commits branch off to the right
             ("current".to_string(), 1)
@@ -990,6 +996,61 @@ mod tests {
         let ic = commits.iter().find(|c| c.message == "Initial commit").unwrap();
         assert_eq!(ic.graph_column, 0);
         assert_eq!(ic.branch_type, "shared");
+    }
+
+    #[test]
+    fn test_get_commit_log_branch_no_divergence_on_main() {
+        // When feature branch is created from main and main hasn't advanced,
+        // the merge-base (= main HEAD) should be "shared", not "both"
+        let dir = tempdir().unwrap();
+        let repo = create_repo_with_commit(dir.path());
+        let sig = test_signature();
+
+        // Add commits on master (default branch)
+        add_commit(&repo, dir.path(), "file1.txt", "content1", "Master commit 1");
+        let base_oid = add_commit(&repo, dir.path(), "file2.txt", "content2", "Master commit 2");
+
+        // Create feature branch from current HEAD (Master commit 2)
+        let base_commit = repo.find_commit(base_oid).unwrap();
+        repo.branch("feature", &base_commit, false).unwrap();
+
+        // Do NOT add more commits on master (main hasn't advanced)
+
+        // Switch to feature branch
+        let feature_branch = repo.find_branch("feature", git2::BranchType::Local).unwrap();
+        let feature_commit = feature_branch.get().peel_to_commit().unwrap();
+        repo.checkout_tree(
+            feature_commit.tree().unwrap().as_object(),
+            Some(git2::build::CheckoutBuilder::new().force()),
+        ).unwrap();
+        repo.set_head("refs/heads/feature").unwrap();
+
+        // Add commits on feature branch
+        fs::write(dir.path().join("feature1.txt"), "feature content 1\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("feature1.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Feature commit 1", &tree, &[&head]).unwrap();
+
+        let result = get_commit_log(dir.path().to_string_lossy().to_string(), None, None);
+        assert!(result.is_ok());
+
+        let commits = result.unwrap();
+
+        // Feature commit should be "current"
+        let fc1 = commits.iter().find(|c| c.message == "Feature commit 1").unwrap();
+        assert_eq!(fc1.branch_type, "current");
+
+        // Merge-base (= main HEAD) should be "shared" since main hasn't advanced
+        let mc2 = commits.iter().find(|c| c.message == "Master commit 2").unwrap();
+        assert_eq!(mc2.branch_type, "shared");
+
+        // Earlier commits should also be "shared"
+        let mc1 = commits.iter().find(|c| c.message == "Master commit 1").unwrap();
+        assert_eq!(mc1.branch_type, "shared");
     }
 
     #[test]
