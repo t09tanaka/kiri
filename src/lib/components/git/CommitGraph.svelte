@@ -274,8 +274,8 @@
         <!-- Unread indicator dot (4px right of date text) -->
         {#if unreadHashes.has(commit.full_hash) && !grayed}
           <circle
-            cx={textStart + formatDate(commit.date).length * 6 + 6.5}
-            cy={nodeY + 12}
+            cx={textStart + formatDate(commit.date).length * 6 + 9.5}
+            cy={nodeY + 13}
             r="2.5"
             fill="#7dd3fc"
             style="pointer-events: none;"
