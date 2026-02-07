@@ -35,6 +35,21 @@ export interface PushResult {
   message: string;
 }
 
+export interface FetchResult {
+  success: boolean;
+  message: string;
+}
+
+export interface BehindAheadCount {
+  behind: number;
+  ahead: number;
+}
+
+export interface PullResult {
+  success: boolean;
+  message: string;
+}
+
 /**
  * Git operations service
  * Wraps Tauri git commands for testability
@@ -79,4 +94,22 @@ export const gitService = {
    */
   pushCommits: (repoPath: string, remote?: string, branch?: string): Promise<PushResult> =>
     invoke('push_commits', { repoPath, remote: remote ?? null, branch: branch ?? null }),
+
+  /**
+   * Fetch from remote
+   */
+  fetchRemote: (repoPath: string, remote?: string): Promise<FetchResult> =>
+    invoke('fetch_remote', { repoPath, remote: remote ?? null }),
+
+  /**
+   * Get behind/ahead count relative to upstream
+   */
+  getBehindAheadCount: (repoPath: string): Promise<BehindAheadCount> =>
+    invoke('get_behind_ahead_count', { repoPath }),
+
+  /**
+   * Pull commits from remote
+   */
+  pullCommits: (repoPath: string, remote?: string, branch?: string): Promise<PullResult> =>
+    invoke('pull_commits', { repoPath, remote: remote ?? null, branch: branch ?? null }),
 };

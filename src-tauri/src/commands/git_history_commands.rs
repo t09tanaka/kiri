@@ -1,4 +1,6 @@
-use super::git_history::{CommitDiffResult, CommitInfo, PushResult};
+use super::git_history::{
+    BehindAheadCount, CommitDiffResult, CommitInfo, FetchResult, PullResult, PushResult,
+};
 
 #[tauri::command]
 pub fn get_commit_log(
@@ -24,4 +26,26 @@ pub fn push_commits(
     branch: Option<String>,
 ) -> Result<PushResult, String> {
     super::git_history::push_commits(repo_path, remote, branch)
+}
+
+#[tauri::command]
+pub fn fetch_remote(
+    repo_path: String,
+    remote: Option<String>,
+) -> Result<FetchResult, String> {
+    super::git_history::fetch_remote(repo_path, remote)
+}
+
+#[tauri::command]
+pub fn get_behind_ahead_count(repo_path: String) -> Result<BehindAheadCount, String> {
+    super::git_history::get_behind_ahead_count(repo_path)
+}
+
+#[tauri::command]
+pub fn pull_commits(
+    repo_path: String,
+    remote: Option<String>,
+    branch: Option<String>,
+) -> Result<PullResult, String> {
+    super::git_history::pull_commits(repo_path, remote, branch)
 }

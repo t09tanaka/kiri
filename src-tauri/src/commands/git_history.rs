@@ -40,6 +40,24 @@ pub struct PushResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct FetchResult {
+    pub success: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BehindAheadCount {
+    pub behind: usize,
+    pub ahead: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PullResult {
+    pub success: bool,
+    pub message: String,
+}
+
 /// Build a CommitInfo from a git2::Commit
 fn build_commit_info(
     commit: &git2::Commit,
@@ -369,6 +387,120 @@ pub fn get_commit_diff(
         total_additions,
         total_deletions,
     })
+}
+
+/// Fetch from remote using git command
+pub fn fetch_remote(repo_path: String, remote: Option<String>) -> Result<FetchResult, String> {
+    let remote_name = remote.unwrap_or_else(|| "origin".to_string());
+
+    let output = std::process::Command::new("git")
+        .args(["fetch", &remote_name])
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to execute git fetch: {}", e))?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    Ok(FetchResult {
+        success: output.status.success(),
+        message: stderr,
+    })
+}
+
+/// Get behind/ahead count relative to upstream tracking branch
+pub fn get_behind_ahead_count(repo_path: String) -> Result<BehindAheadCount, String> {
+    let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
+
+    let head = match repo.head() {
+        Ok(h) => h,
+        Err(_) => {
+            return Ok(BehindAheadCount {
+                behind: 0,
+                ahead: 0,
+            })
+        }
+    };
+
+    let head_oid = match head.target() {
+        Some(oid) => oid,
+        None => {
+            return Ok(BehindAheadCount {
+                behind: 0,
+                ahead: 0,
+            })
+        }
+    };
+
+    // Find upstream tracking ref for the current branch
+    let upstream_oid = head.shorthand().and_then(|branch_name| {
+        if branch_name == "HEAD" {
+            return None;
+        }
+        let remote_ref = format!("refs/remotes/origin/{}", branch_name);
+        repo.find_reference(&remote_ref)
+            .ok()
+            .and_then(|r| r.target())
+    });
+
+    match upstream_oid {
+        Some(upstream) => {
+            let (ahead, behind) = repo
+                .graph_ahead_behind(head_oid, upstream)
+                .map_err(|e| e.to_string())?;
+            Ok(BehindAheadCount { behind, ahead })
+        }
+        None => Ok(BehindAheadCount {
+            behind: 0,
+            ahead: 0,
+        }),
+    }
+}
+
+/// Pull commits from remote using git command
+pub fn pull_commits(
+    repo_path: String,
+    remote: Option<String>,
+    branch: Option<String>,
+) -> Result<PullResult, String> {
+    let remote_name = remote.unwrap_or_else(|| "origin".to_string());
+
+    let branch_name = match branch {
+        Some(b) => b,
+        None => {
+            let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
+            let head = repo.head().map_err(|e| e.to_string())?;
+            head.shorthand().unwrap_or("HEAD").to_string()
+        }
+    };
+
+    let output = std::process::Command::new("git")
+        .args(["pull", &remote_name, &branch_name])
+        .current_dir(&repo_path)
+        .output()
+        .map_err(|e| format!("Failed to execute git pull: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    if output.status.success() {
+        Ok(PullResult {
+            success: true,
+            message: if stderr.is_empty() {
+                stdout
+            } else {
+                format!("{}{}", stdout, stderr)
+            },
+        })
+    } else {
+        Ok(PullResult {
+            success: false,
+            message: if stderr.is_empty() {
+                stdout
+            } else {
+                stderr
+            },
+        })
+    }
 }
 
 /// Push commits to remote using git command
@@ -931,5 +1063,135 @@ mod tests {
         let diff_result = result.unwrap();
         assert_eq!(diff_result.total_additions, 3);
         assert_eq!(diff_result.total_deletions, 0);
+    }
+
+    #[test]
+    fn test_get_behind_ahead_count_no_remote() {
+        let dir = tempdir().unwrap();
+        let _repo = create_repo_with_commit(dir.path());
+
+        let result = get_behind_ahead_count(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let counts = result.unwrap();
+        // No remote configured, should return 0/0
+        assert_eq!(counts.behind, 0);
+        assert_eq!(counts.ahead, 0);
+    }
+
+    #[test]
+    fn test_get_behind_ahead_count_empty_repo() {
+        let dir = tempdir().unwrap();
+        Repository::init(dir.path()).unwrap();
+
+        let result = get_behind_ahead_count(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let counts = result.unwrap();
+        assert_eq!(counts.behind, 0);
+        assert_eq!(counts.ahead, 0);
+    }
+
+    #[test]
+    fn test_get_behind_ahead_count_not_a_repo() {
+        let dir = tempdir().unwrap();
+        let result = get_behind_ahead_count(dir.path().to_string_lossy().to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fetch_result_serialization() {
+        let result = FetchResult {
+            success: true,
+            message: "".to_string(),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"success\":true"));
+    }
+
+    #[test]
+    fn test_behind_ahead_count_serialization() {
+        let counts = BehindAheadCount {
+            behind: 3,
+            ahead: 2,
+        };
+        let json = serde_json::to_string(&counts).unwrap();
+        assert!(json.contains("\"behind\":3"));
+        assert!(json.contains("\"ahead\":2"));
+    }
+
+    #[test]
+    fn test_pull_result_serialization() {
+        let result = PullResult {
+            success: true,
+            message: "Already up to date.".to_string(),
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("\"success\":true"));
+        assert!(json.contains("Already up to date."));
+    }
+
+    #[test]
+    fn test_fetch_remote_not_a_repo() {
+        let dir = tempdir().unwrap();
+        // fetch_remote uses git CLI, so it will fail on a non-repo directory
+        let result = fetch_remote(dir.path().to_string_lossy().to_string(), None);
+        assert!(result.is_ok());
+        // git fetch will fail but the function returns FetchResult with success: false
+        assert!(!result.unwrap().success);
+    }
+
+    #[test]
+    fn test_fetch_remote_no_remote() {
+        let dir = tempdir().unwrap();
+        let _repo = create_repo_with_commit(dir.path());
+
+        let result = fetch_remote(dir.path().to_string_lossy().to_string(), None);
+        assert!(result.is_ok());
+        // No remote configured, git fetch will fail
+        assert!(!result.unwrap().success);
+    }
+
+    #[test]
+    fn test_get_behind_ahead_count_with_remote() {
+        // Create a "remote" repo with an initial commit so it has a branch
+        let remote_dir = tempdir().unwrap();
+        let remote_repo = Repository::init(remote_dir.path()).unwrap();
+        let sig = test_signature();
+
+        // Create initial commit in remote
+        fs::write(remote_dir.path().join("README.md"), "# Remote").unwrap();
+        let mut index = remote_repo.index().unwrap();
+        index.add_path(Path::new("README.md")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = remote_repo.find_tree(tree_id).unwrap();
+        remote_repo
+            .commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+            .unwrap();
+
+        // Clone it
+        let local_dir = tempdir().unwrap();
+        let local_repo = Repository::clone(
+            remote_dir.path().to_str().unwrap(),
+            local_dir.path(),
+        )
+        .unwrap();
+
+        // Add a commit locally
+        add_commit(
+            &local_repo,
+            local_dir.path(),
+            "file.txt",
+            "content",
+            "Local commit",
+        );
+
+        let result = get_behind_ahead_count(local_dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let counts = result.unwrap();
+        assert_eq!(counts.ahead, 1);
+        assert_eq!(counts.behind, 0);
     }
 }

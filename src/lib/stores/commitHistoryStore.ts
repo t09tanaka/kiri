@@ -11,6 +11,9 @@ export interface CommitHistoryState {
   isLoadingMore: boolean;
   isLoadingDiff: boolean;
   isPushing: boolean;
+  isPulling: boolean;
+  isFetching: boolean;
+  behindCount: number;
   hasMore: boolean;
   error: string | null;
 }
@@ -25,6 +28,9 @@ const initialState: CommitHistoryState = {
   isLoadingMore: false,
   isLoadingDiff: false,
   isPushing: false,
+  isPulling: false,
+  isFetching: false,
+  behindCount: 0,
   hasMore: true,
   error: null,
 };
@@ -150,6 +156,27 @@ function createCommitHistoryStore() {
         isPushing: false,
       }));
     },
+
+    /**
+     * Set pulling state
+     */
+    setPulling: (pulling: boolean) => {
+      update((s) => ({ ...s, isPulling: pulling }));
+    },
+
+    /**
+     * Set fetching state
+     */
+    setFetching: (fetching: boolean) => {
+      update((s) => ({ ...s, isFetching: fetching }));
+    },
+
+    /**
+     * Set behind count (commits that need to be pulled)
+     */
+    setBehindCount: (count: number) => {
+      update((s) => ({ ...s, behindCount: count }));
+    },
   };
 }
 
@@ -163,3 +190,6 @@ export const unpushedCount = derived(
   commitHistoryStore,
   ($store) => $store.commits.filter((c) => !c.is_pushed).length
 );
+
+// Derived store for behind count (commits to pull)
+export const behindCount = derived(commitHistoryStore, ($store) => $store.behindCount);

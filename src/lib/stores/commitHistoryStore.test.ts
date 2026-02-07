@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
-import { commitHistoryStore, isCommitHistoryOpen, unpushedCount } from './commitHistoryStore';
+import {
+  commitHistoryStore,
+  isCommitHistoryOpen,
+  unpushedCount,
+  behindCount,
+} from './commitHistoryStore';
 import type { CommitInfo, CommitDiffResult } from '@/lib/services/gitService';
 
 function createMockCommit(overrides: Partial<CommitInfo> = {}): CommitInfo {
@@ -75,6 +80,13 @@ describe('commitHistoryStore', () => {
       expect(state.isLoadingMore).toBe(false);
       expect(state.isLoadingDiff).toBe(false);
       expect(state.isPushing).toBe(false);
+      expect(state.isPulling).toBe(false);
+      expect(state.isFetching).toBe(false);
+    });
+
+    it('should start with behindCount as 0', () => {
+      const state = get(commitHistoryStore);
+      expect(state.behindCount).toBe(0);
     });
 
     it('should start with hasMore as true', () => {
@@ -129,6 +141,9 @@ describe('commitHistoryStore', () => {
       expect(state.isLoadingMore).toBe(false);
       expect(state.isLoadingDiff).toBe(false);
       expect(state.isPushing).toBe(false);
+      expect(state.isPulling).toBe(false);
+      expect(state.isFetching).toBe(false);
+      expect(state.behindCount).toBe(0);
       expect(state.hasMore).toBe(true);
       expect(state.error).toBe(null);
     });
@@ -426,6 +441,62 @@ describe('commitHistoryStore', () => {
       expect(get(unpushedCount)).toBe(1);
       commitHistoryStore.close();
       expect(get(unpushedCount)).toBe(0);
+    });
+  });
+
+  describe('setPulling', () => {
+    it('should set isPulling to true', () => {
+      commitHistoryStore.setPulling(true);
+      expect(get(commitHistoryStore).isPulling).toBe(true);
+    });
+
+    it('should set isPulling to false', () => {
+      commitHistoryStore.setPulling(true);
+      commitHistoryStore.setPulling(false);
+      expect(get(commitHistoryStore).isPulling).toBe(false);
+    });
+  });
+
+  describe('setFetching', () => {
+    it('should set isFetching to true', () => {
+      commitHistoryStore.setFetching(true);
+      expect(get(commitHistoryStore).isFetching).toBe(true);
+    });
+
+    it('should set isFetching to false', () => {
+      commitHistoryStore.setFetching(true);
+      commitHistoryStore.setFetching(false);
+      expect(get(commitHistoryStore).isFetching).toBe(false);
+    });
+  });
+
+  describe('setBehindCount', () => {
+    it('should set behindCount', () => {
+      commitHistoryStore.setBehindCount(5);
+      expect(get(commitHistoryStore).behindCount).toBe(5);
+    });
+
+    it('should set behindCount to 0', () => {
+      commitHistoryStore.setBehindCount(5);
+      commitHistoryStore.setBehindCount(0);
+      expect(get(commitHistoryStore).behindCount).toBe(0);
+    });
+  });
+
+  describe('behindCount derived store', () => {
+    it('should be 0 initially', () => {
+      expect(get(behindCount)).toBe(0);
+    });
+
+    it('should reflect setBehindCount changes', () => {
+      commitHistoryStore.setBehindCount(3);
+      expect(get(behindCount)).toBe(3);
+    });
+
+    it('should reset to 0 after close', () => {
+      commitHistoryStore.setBehindCount(5);
+      commitHistoryStore.close();
+      expect(get(behindCount)).toBe(0);
     });
   });
 
