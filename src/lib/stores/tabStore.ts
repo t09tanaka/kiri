@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { PersistedTab } from '@/lib/services/persistenceService';
+import type { PersistedTab, PersistedPane } from '@/lib/services/persistenceService';
 
 // Terminal pane types for split support
 export interface TerminalPaneLeaf {
@@ -213,6 +213,38 @@ function updatePaneSizesInTree(
   };
 }
 
+/**
+ * Convert a runtime TerminalPane to a PersistedPane (strip terminalId)
+ * @internal Exported for testing purposes
+ */
+export function paneToPersistedPane(pane: TerminalPane): PersistedPane {
+  if (pane.type === 'terminal') {
+    return { type: 'terminal', id: pane.id };
+  }
+  return {
+    type: 'split',
+    direction: pane.direction,
+    children: pane.children.map(paneToPersistedPane),
+    sizes: [...pane.sizes],
+  };
+}
+
+/**
+ * Convert a PersistedPane back to a runtime TerminalPane (set terminalId to null)
+ * @internal Exported for testing purposes
+ */
+export function persistedPaneToPane(persisted: PersistedPane): TerminalPane {
+  if (persisted.type === 'terminal') {
+    return { type: 'terminal', id: persisted.id, terminalId: null };
+  }
+  return {
+    type: 'split',
+    direction: persisted.direction,
+    children: persisted.children.map(persistedPaneToPane),
+    sizes: [...persisted.sizes],
+  };
+}
+
 export interface TabState {
   tabs: Tab[];
   activeTabId: string | null;
@@ -369,6 +401,7 @@ function createTabStore() {
         id: tab.id,
         type: 'terminal' as const,
         title: tab.title,
+        rootPane: paneToPersistedPane(tab.rootPane),
       }));
       return {
         tabs: persistedTabs,
@@ -386,15 +419,15 @@ function createTabStore() {
       for (const pTab of persistedTabs) {
         if (pTab.type === 'terminal') {
           terminalCount++;
+          // Restore pane tree if available, otherwise create a single pane (backwards compatibility)
+          const rootPane = pTab.rootPane
+            ? persistedPaneToPane(pTab.rootPane)
+            : { type: 'terminal' as const, id: generatePaneId(), terminalId: null };
           tabs.push({
             id: pTab.id,
             type: 'terminal',
             title: pTab.title || `Terminal ${terminalCount}`,
-            rootPane: {
-              type: 'terminal',
-              id: generatePaneId(),
-              terminalId: null,
-            },
+            rootPane,
           });
         }
       }

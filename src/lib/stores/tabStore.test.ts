@@ -6,8 +6,11 @@ import {
   getAllPaneIds,
   getAllTerminalIds,
   closePaneInTree,
+  paneToPersistedPane,
+  persistedPaneToPane,
   type TerminalPane,
 } from './tabStore';
+import type { PersistedPane } from '@/lib/services/persistenceService';
 
 describe('tabStore', () => {
   beforeEach(() => {
@@ -1027,5 +1030,411 @@ describe('tabStore terminal methods with non-matching tab ID', () => {
     // First tab's sizes should be unchanged
     const updatedState = get(tabStore);
     expect((updatedState.tabs[0].rootPane as { sizes: number[] }).sizes).toEqual([50, 50]);
+  });
+});
+
+describe('paneToPersistedPane', () => {
+  it('should convert a leaf pane, stripping terminalId', () => {
+    const pane: TerminalPane = { type: 'terminal', id: 'pane-1', terminalId: 42 };
+    const persisted = paneToPersistedPane(pane);
+
+    expect(persisted).toEqual({ type: 'terminal', id: 'pane-1' });
+    expect('terminalId' in persisted).toBe(false);
+  });
+
+  it('should convert a split pane recursively', () => {
+    const pane: TerminalPane = {
+      type: 'split',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: 1 },
+        { type: 'terminal', id: 'pane-2', terminalId: 2 },
+      ],
+      sizes: [30, 70],
+    };
+    const persisted = paneToPersistedPane(pane);
+
+    expect(persisted).toEqual({
+      type: 'split',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1' },
+        { type: 'terminal', id: 'pane-2' },
+      ],
+      sizes: [30, 70],
+    });
+  });
+
+  it('should convert nested splits', () => {
+    const pane: TerminalPane = {
+      type: 'split',
+      direction: 'vertical',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: 1 },
+        {
+          type: 'split',
+          direction: 'horizontal',
+          children: [
+            { type: 'terminal', id: 'pane-2', terminalId: 2 },
+            { type: 'terminal', id: 'pane-3', terminalId: 3 },
+          ],
+          sizes: [40, 60],
+        },
+      ],
+      sizes: [50, 50],
+    };
+    const persisted = paneToPersistedPane(pane);
+
+    expect(persisted).toEqual({
+      type: 'split',
+      direction: 'vertical',
+      children: [
+        { type: 'terminal', id: 'pane-1' },
+        {
+          type: 'split',
+          direction: 'horizontal',
+          children: [
+            { type: 'terminal', id: 'pane-2' },
+            { type: 'terminal', id: 'pane-3' },
+          ],
+          sizes: [40, 60],
+        },
+      ],
+      sizes: [50, 50],
+    });
+  });
+});
+
+describe('persistedPaneToPane', () => {
+  it('should convert a persisted leaf pane with terminalId set to null', () => {
+    const persisted: PersistedPane = { type: 'terminal', id: 'pane-1' };
+    const pane = persistedPaneToPane(persisted);
+
+    expect(pane).toEqual({ type: 'terminal', id: 'pane-1', terminalId: null });
+  });
+
+  it('should convert a persisted split pane recursively', () => {
+    const persisted: PersistedPane = {
+      type: 'split',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1' },
+        { type: 'terminal', id: 'pane-2' },
+      ],
+      sizes: [30, 70],
+    };
+    const pane = persistedPaneToPane(persisted);
+
+    expect(pane).toEqual({
+      type: 'split',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: null },
+        { type: 'terminal', id: 'pane-2', terminalId: null },
+      ],
+      sizes: [30, 70],
+    });
+  });
+
+  it('should convert nested persisted splits', () => {
+    const persisted: PersistedPane = {
+      type: 'split',
+      direction: 'vertical',
+      children: [
+        { type: 'terminal', id: 'pane-1' },
+        {
+          type: 'split',
+          direction: 'horizontal',
+          children: [
+            { type: 'terminal', id: 'pane-2' },
+            { type: 'terminal', id: 'pane-3' },
+          ],
+          sizes: [40, 60],
+        },
+      ],
+      sizes: [50, 50],
+    };
+    const pane = persistedPaneToPane(persisted);
+
+    expect(pane).toEqual({
+      type: 'split',
+      direction: 'vertical',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: null },
+        {
+          type: 'split',
+          direction: 'horizontal',
+          children: [
+            { type: 'terminal', id: 'pane-2', terminalId: null },
+            { type: 'terminal', id: 'pane-3', terminalId: null },
+          ],
+          sizes: [40, 60],
+        },
+      ],
+      sizes: [50, 50],
+    });
+  });
+});
+
+describe('pane persistence round-trip', () => {
+  it('should preserve pane structure through persist and restore', () => {
+    const original: TerminalPane = {
+      type: 'split',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: 10 },
+        {
+          type: 'split',
+          direction: 'vertical',
+          children: [
+            { type: 'terminal', id: 'pane-2', terminalId: 20 },
+            { type: 'terminal', id: 'pane-3', terminalId: 30 },
+          ],
+          sizes: [40, 60],
+        },
+      ],
+      sizes: [35, 65],
+    };
+
+    const persisted = paneToPersistedPane(original);
+    const restored = persistedPaneToPane(persisted);
+
+    // Structure should match, but terminalIds should all be null
+    expect(restored.type).toBe('split');
+    if (restored.type !== 'split') return;
+    expect(restored.direction).toBe('horizontal');
+    expect(restored.sizes).toEqual([35, 65]);
+    expect(restored.children).toHaveLength(2);
+
+    const firstChild = restored.children[0];
+    expect(firstChild.type).toBe('terminal');
+    if (firstChild.type === 'terminal') {
+      expect(firstChild.id).toBe('pane-1');
+      expect(firstChild.terminalId).toBeNull();
+    }
+
+    const secondChild = restored.children[1];
+    expect(secondChild.type).toBe('split');
+    if (secondChild.type === 'split') {
+      expect(secondChild.direction).toBe('vertical');
+      expect(secondChild.sizes).toEqual([40, 60]);
+      expect(secondChild.children[0].type).toBe('terminal');
+      if (secondChild.children[0].type === 'terminal') {
+        expect(secondChild.children[0].id).toBe('pane-2');
+        expect(secondChild.children[0].terminalId).toBeNull();
+      }
+    }
+  });
+});
+
+describe('getStateForPersistence with pane structure', () => {
+  beforeEach(() => {
+    tabStore.reset();
+  });
+
+  it('should include rootPane in persisted tabs', () => {
+    tabStore.addTerminalTab();
+    const { tabs } = tabStore.getStateForPersistence();
+
+    expect(tabs[0].rootPane).toBeDefined();
+    expect(tabs[0].rootPane!.type).toBe('terminal');
+  });
+
+  it('should persist split pane structure', () => {
+    tabStore.addTerminalTab();
+    const state = get(tabStore);
+    const tabId = state.tabs[0].id;
+    const paneId = (state.tabs[0].rootPane as { id: string }).id;
+
+    tabStore.splitPane(tabId, paneId, 'horizontal');
+
+    const { tabs } = tabStore.getStateForPersistence();
+    expect(tabs[0].rootPane!.type).toBe('split');
+    if (tabs[0].rootPane!.type === 'split') {
+      expect(tabs[0].rootPane!.children).toHaveLength(2);
+      expect(tabs[0].rootPane!.sizes).toEqual([50, 50]);
+    }
+  });
+
+  it('should strip terminalId from persisted panes', () => {
+    tabStore.addTerminalTab();
+    const state = get(tabStore);
+    const tabId = state.tabs[0].id;
+    const paneId = (state.tabs[0].rootPane as { id: string }).id;
+
+    tabStore.setTerminalId(tabId, paneId, 123);
+
+    const { tabs } = tabStore.getStateForPersistence();
+    const persistedPane = tabs[0].rootPane!;
+    expect(persistedPane.type).toBe('terminal');
+    expect('terminalId' in persistedPane).toBe(false);
+  });
+
+  it('should persist custom pane sizes', () => {
+    tabStore.addTerminalTab();
+    let state = get(tabStore);
+    const tabId = state.tabs[0].id;
+    const paneId = (state.tabs[0].rootPane as { id: string }).id;
+
+    tabStore.splitPane(tabId, paneId, 'vertical');
+
+    state = get(tabStore);
+    const rootPane = state.tabs[0].rootPane;
+    if (rootPane.type !== 'split') return;
+    const firstChildId = (rootPane.children[0] as { id: string }).id;
+
+    tabStore.updatePaneSizes(tabId, firstChildId, [30, 70]);
+
+    const { tabs } = tabStore.getStateForPersistence();
+    if (tabs[0].rootPane!.type === 'split') {
+      expect(tabs[0].rootPane!.sizes).toEqual([30, 70]);
+    }
+  });
+});
+
+describe('restoreState with pane structure', () => {
+  beforeEach(() => {
+    tabStore.reset();
+  });
+
+  it('should restore split pane structure from persisted data', () => {
+    const persistedTabs = [
+      {
+        id: 'tab-1',
+        type: 'terminal' as const,
+        title: 'Terminal 1',
+        rootPane: {
+          type: 'split' as const,
+          direction: 'horizontal' as const,
+          children: [
+            { type: 'terminal' as const, id: 'pane-1' },
+            { type: 'terminal' as const, id: 'pane-2' },
+          ],
+          sizes: [40, 60],
+        },
+      },
+    ];
+
+    tabStore.restoreState(persistedTabs, 'tab-1');
+
+    const state = get(tabStore);
+    expect(state.tabs).toHaveLength(1);
+    const rootPane = state.tabs[0].rootPane;
+    expect(rootPane.type).toBe('split');
+    if (rootPane.type === 'split') {
+      expect(rootPane.direction).toBe('horizontal');
+      expect(rootPane.children).toHaveLength(2);
+      expect(rootPane.sizes).toEqual([40, 60]);
+      // terminalIds should be null
+      expect((rootPane.children[0] as { terminalId: number | null }).terminalId).toBeNull();
+      expect((rootPane.children[1] as { terminalId: number | null }).terminalId).toBeNull();
+    }
+  });
+
+  it('should restore nested split pane structure', () => {
+    const persistedTabs = [
+      {
+        id: 'tab-1',
+        type: 'terminal' as const,
+        title: 'Terminal 1',
+        rootPane: {
+          type: 'split' as const,
+          direction: 'vertical' as const,
+          children: [
+            { type: 'terminal' as const, id: 'pane-1' },
+            {
+              type: 'split' as const,
+              direction: 'horizontal' as const,
+              children: [
+                { type: 'terminal' as const, id: 'pane-2' },
+                { type: 'terminal' as const, id: 'pane-3' },
+              ],
+              sizes: [30, 70],
+            },
+          ],
+          sizes: [50, 50],
+        },
+      },
+    ];
+
+    tabStore.restoreState(persistedTabs, 'tab-1');
+
+    const state = get(tabStore);
+    const rootPane = state.tabs[0].rootPane;
+    expect(rootPane.type).toBe('split');
+    if (rootPane.type !== 'split') return;
+    expect(rootPane.children[1].type).toBe('split');
+    if (rootPane.children[1].type === 'split') {
+      expect(rootPane.children[1].direction).toBe('horizontal');
+      expect(rootPane.children[1].sizes).toEqual([30, 70]);
+    }
+  });
+
+  it('should fall back to single pane when rootPane is not present (backwards compat)', () => {
+    const persistedTabs = [{ id: 'tab-1', type: 'terminal' as const, title: 'Terminal 1' }];
+
+    tabStore.restoreState(persistedTabs, 'tab-1');
+
+    const state = get(tabStore);
+    expect(state.tabs[0].rootPane.type).toBe('terminal');
+  });
+
+  it('should correctly update nextPaneId from restored pane tree', () => {
+    const persistedTabs = [
+      {
+        id: 'tab-1',
+        type: 'terminal' as const,
+        title: 'Terminal 1',
+        rootPane: {
+          type: 'split' as const,
+          direction: 'horizontal' as const,
+          children: [
+            { type: 'terminal' as const, id: 'pane-50' },
+            { type: 'terminal' as const, id: 'pane-100' },
+          ],
+          sizes: [50, 50],
+        },
+      },
+    ];
+
+    tabStore.restoreState(persistedTabs, 'tab-1');
+
+    // Add a new tab - its pane ID should be > 100
+    tabStore.addTerminalTab();
+    const state = get(tabStore);
+    const newPaneId = (state.tabs[1].rootPane as { id: string }).id;
+    const numericPart = parseInt(newPaneId.replace('pane-', ''), 10);
+    expect(numericPart).toBeGreaterThan(100);
+  });
+
+  it('should allow further splits after restoring pane structure', () => {
+    const persistedTabs = [
+      {
+        id: 'tab-1',
+        type: 'terminal' as const,
+        title: 'Terminal 1',
+        rootPane: {
+          type: 'split' as const,
+          direction: 'horizontal' as const,
+          children: [
+            { type: 'terminal' as const, id: 'pane-1' },
+            { type: 'terminal' as const, id: 'pane-2' },
+          ],
+          sizes: [50, 50],
+        },
+      },
+    ];
+
+    tabStore.restoreState(persistedTabs, 'tab-1');
+
+    // Split one of the restored panes
+    tabStore.splitPane('tab-1', 'pane-1', 'vertical');
+
+    const state = get(tabStore);
+    const rootPane = state.tabs[0].rootPane;
+    expect(rootPane.type).toBe('split');
+    if (rootPane.type !== 'split') return;
+    // First child should now be a nested split
+    expect(rootPane.children[0].type).toBe('split');
   });
 });

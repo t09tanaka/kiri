@@ -12,11 +12,27 @@ const DEFAULT_SETTINGS: PersistedSettings = {
   fontSize: 13,
 };
 
+// Persisted terminal pane structure (terminalId is excluded as PTYs are recreated)
+export interface PersistedPaneLeaf {
+  type: 'terminal';
+  id: string;
+}
+
+export interface PersistedPaneSplit {
+  type: 'split';
+  direction: 'horizontal' | 'vertical';
+  children: PersistedPane[];
+  sizes: number[];
+}
+
+export type PersistedPane = PersistedPaneLeaf | PersistedPaneSplit;
+
 // Persisted tab structure (minimal data needed for restoration)
 export interface PersistedTab {
   id: string;
   type: 'terminal';
   title?: string;
+  rootPane?: PersistedPane; // Optional for backwards compatibility with old data
 }
 
 // UI state to persist
