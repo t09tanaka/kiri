@@ -227,64 +227,24 @@
           </svg>
           <span class="title">Commit History</span>
         </div>
-        <div class="header-actions">
-          {#if $behindCount > 0}
-            <button
-              class="action-btn pull-btn"
-              onclick={handlePull}
-              disabled={$commitHistoryStore.isPulling}
-              title="Pull {$behindCount} commit{$behindCount > 1 ? 's' : ''}"
-            >
-              {#if $commitHistoryStore.isPulling}
-                <Spinner size="sm" />
-              {:else}
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <line x1="12" y1="5" x2="12" y2="19"></line>
-                  <polyline points="19 12 12 19 5 12"></polyline>
-                </svg>
-              {/if}
-              <span>Pull</span>
-              <span class="pull-count">{$behindCount}</span>
-            </button>
-          {/if}
-          {#if $unpushedCount > 0}
-            <button
-              class="action-btn push-btn"
-              onclick={handlePush}
-              disabled={$commitHistoryStore.isPushing}
-              title="Push {$unpushedCount} commit{$unpushedCount > 1 ? 's' : ''}"
-            >
-              {#if $commitHistoryStore.isPushing}
-                <Spinner size="sm" />
-              {:else}
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <line x1="12" y1="19" x2="12" y2="5"></line>
-                  <polyline points="5 12 12 5 19 12"></polyline>
-                </svg>
-              {/if}
-              <span>Push</span>
-              <span class="push-count">{$unpushedCount}</span>
-            </button>
-          {/if}
-          <button class="action-btn close-btn" onclick={onClose} title="Close (Esc)">
+        <button class="close-btn" onclick={onClose} title="Close (Esc)">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+
+      {#if $behindCount > 0}
+        <div class="sync-alert pull-alert">
+          <span class="sync-message">
             <svg
               width="14"
               height="14"
@@ -292,13 +252,59 @@
               fill="none"
               stroke="currentColor"
               stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
             >
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <polyline points="19 12 12 19 5 12"></polyline>
             </svg>
+            {$behindCount} commit{$behindCount > 1 ? 's' : ''} to pull from remote
+          </span>
+          <button
+            class="sync-btn pull-btn"
+            onclick={handlePull}
+            disabled={$commitHistoryStore.isPulling}
+          >
+            {#if $commitHistoryStore.isPulling}
+              <Spinner size="sm" />
+            {:else}
+              Pull
+            {/if}
           </button>
         </div>
-      </div>
+      {/if}
+
+      {#if $unpushedCount > 0 && $behindCount === 0}
+        <div class="sync-alert push-alert">
+          <span class="sync-message">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <line x1="12" y1="19" x2="12" y2="5"></line>
+              <polyline points="5 12 12 5 19 12"></polyline>
+            </svg>
+            {$unpushedCount} commit{$unpushedCount > 1 ? 's' : ''} to push to remote
+          </span>
+          <button
+            class="sync-btn push-btn"
+            onclick={handlePush}
+            disabled={$commitHistoryStore.isPushing}
+          >
+            {#if $commitHistoryStore.isPushing}
+              <Spinner size="sm" />
+            {:else}
+              Push
+            {/if}
+          </button>
+        </div>
+      {/if}
 
       <div class="modal-body">
         {#if $commitHistoryStore.isLoadingLog && $commitHistoryStore.commits.length === 0}
@@ -474,84 +480,93 @@
     letter-spacing: 0.02em;
   }
 
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .action-btn {
+  .close-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 4px;
+    width: 28px;
     height: 28px;
-    padding: 0 var(--space-2);
+    padding: 0;
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
     color: var(--text-muted);
     cursor: pointer;
     transition: all var(--transition-fast);
-    font-size: 12px;
   }
 
-  .action-btn:hover:not(:disabled) {
-    background: rgba(125, 211, 252, 0.1);
-    color: var(--accent-color);
-  }
-
-  .action-btn:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
-
-  .action-btn.close-btn {
-    width: 28px;
-    padding: 0;
-  }
-
-  .action-btn.close-btn:hover {
+  .close-btn:hover {
     background: rgba(248, 113, 113, 0.1);
     color: #f87171;
   }
 
-  .pull-btn {
+  .sync-alert {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-2) var(--space-4);
+    font-size: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .sync-message {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--text-secondary);
+  }
+
+  .pull-alert {
+    background: rgba(125, 211, 252, 0.04);
+  }
+
+  .pull-alert .sync-message {
+    color: var(--accent-color);
+  }
+
+  .push-alert {
+    background: rgba(252, 211, 77, 0.04);
+  }
+
+  .push-alert .sync-message {
+    color: var(--accent3-color);
+  }
+
+  .sync-btn {
+    padding: var(--space-1) var(--space-3);
+    font-size: 11px;
+    font-weight: 500;
+    font-family: var(--font-sans);
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    background: transparent;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .sync-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .sync-btn.pull-btn {
+    color: var(--accent-color);
+    border-color: rgba(125, 211, 252, 0.25);
+  }
+
+  .sync-btn.pull-btn:hover:not(:disabled) {
     background: rgba(125, 211, 252, 0.1);
-    color: var(--accent-color);
-    font-weight: 500;
+    border-color: rgba(125, 211, 252, 0.4);
   }
 
-  .pull-btn:hover:not(:disabled) {
-    background: rgba(125, 211, 252, 0.2);
-    color: var(--accent-color);
+  .sync-btn.push-btn {
+    color: var(--accent3-color);
+    border-color: rgba(252, 211, 77, 0.25);
   }
 
-  .pull-count {
-    font-size: 10px;
-    font-weight: 700;
-    padding: 1px 5px;
-    background: rgba(125, 211, 252, 0.25);
-    border-radius: 3px;
-  }
-
-  .push-btn {
+  .sync-btn.push-btn:hover:not(:disabled) {
     background: rgba(252, 211, 77, 0.1);
-    color: var(--accent3-color);
-    font-weight: 500;
-  }
-
-  .push-btn:hover:not(:disabled) {
-    background: rgba(252, 211, 77, 0.2);
-    color: var(--accent3-color);
-  }
-
-  .push-count {
-    font-size: 10px;
-    font-weight: 700;
-    padding: 1px 5px;
-    background: rgba(252, 211, 77, 0.25);
-    border-radius: 3px;
+    border-color: rgba(252, 211, 77, 0.4);
   }
 
   .modal-body {
