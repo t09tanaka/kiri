@@ -13,6 +13,7 @@
   import { notificationService } from '@/lib/services/notificationService';
   import { createFilePathLinkProvider } from '@/lib/services/filePathLinkProvider';
   import { getTerminalSequence, isMacOS } from '@/lib/utils/terminalKeys';
+  import { formatBytes } from '@/lib/utils/formatBytes';
 
   // Lazy-loaded xterm modules (loaded on first terminal creation)
   let xtermLoaded = false;
@@ -51,6 +52,7 @@
   let unlisten: UnlistenFn | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let isFocused = $state(false);
+  let memoryDisplay = $state('');
 
   // Reserve 1 row for PTY to prevent Ink full-height flickering issue
   // See: https://github.com/vadimdemedes/ink/issues/450
@@ -711,11 +713,30 @@
     }
   }
 
+  // Poll memory usage for this terminal pane
+  let memoryPollInterval: ReturnType<typeof setInterval> | null = null;
+
+  async function updateMemoryDisplay() {
+    if (terminalId === null) return;
+    try {
+      const info = await terminalService.getProcessInfo(terminalId);
+      memoryDisplay = info.memory_bytes > 0 ? formatBytes(info.memory_bytes) : '';
+    } catch {
+      // Terminal may have been closed
+    }
+  }
+
   onMount(() => {
     initTerminal();
 
     // Initialize notification service for OSC 9/777 notifications
     notificationService.init();
+
+    // Start memory polling after terminal initializes
+    setTimeout(() => {
+      updateMemoryDisplay();
+      memoryPollInterval = setInterval(updateMemoryDisplay, 2000);
+    }, 1500);
 
     // Subscribe to font size changes and update terminal
     const unsubscribeFontSize = fontSize.subscribe((size) => {
@@ -762,6 +783,10 @@
   });
 
   onDestroy(() => {
+    if (memoryPollInterval) {
+      clearInterval(memoryPollInterval);
+    }
+
     if (resizeTimeout) {
       clearTimeout(resizeTimeout);
     }
@@ -849,6 +874,9 @@
           <line x1="3" y1="12" x2="21" y2="12" />
         </svg>
       </button>
+      {#if memoryDisplay}
+        <span class="memory-indicator">{memoryDisplay}</span>
+      {/if}
       {#if onClose}
         <button
           class="control-btn close-btn"
@@ -932,8 +960,22 @@
     color: var(--accent-color);
   }
 
-  .control-btn.close-btn {
+  .memory-indicator {
     margin-left: auto;
+    font-size: 10px;
+    background: linear-gradient(90deg, var(--accent-color), var(--accent2-color));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    opacity: 0.7;
+    white-space: nowrap;
+    font-family: 'IBM Plex Mono', monospace;
+    letter-spacing: 0.02em;
+    padding: 0 6px;
+  }
+
+  .control-btn.close-btn {
+    margin-left: 0;
   }
 
   .control-btn.close-btn:hover {

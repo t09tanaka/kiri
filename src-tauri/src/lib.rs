@@ -2,6 +2,7 @@ mod commands;
 
 use commands::{
     allocate_worktree_ports, clear_performance_timings, close_terminal, get_foreground_process_name,
+    get_terminal_process_info,
     copy_files_to_worktree, copy_files_with_ports, copy_paths_to_directory, create_directory,
     create_terminal, create_window, create_worktree, delete_path, detect_package_manager,
     detect_ports, fetch_remote, focus_or_create_window, get_all_git_diffs, get_behind_ahead_count, get_branch_ahead_count,
@@ -51,6 +52,7 @@ pub fn run() {
             close_terminal,
             is_terminal_alive,
             get_foreground_process_name,
+            get_terminal_process_info,
             read_file,
             get_git_status,
             get_git_file_status,

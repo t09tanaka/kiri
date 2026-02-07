@@ -5,6 +5,7 @@ use super::terminal::{
     create_pty_size, find_utf8_boundary, open_pty_with_shell, resolve_cwd, resolve_terminal_size,
     PtyInstance, TerminalOutput, TerminalState,
 };
+use serde::Serialize;
 use std::io::{Read, Write};
 use std::str;
 use std::thread;
@@ -168,22 +169,33 @@ pub fn close_terminal(state: tauri::State<'_, TerminalState>, id: u32) -> Result
     }
 }
 
-/// Get the name of the foreground process running in a terminal
-/// Returns the child process name if a command is running (e.g., "vim", "cargo"),
-/// the shell name if idle (e.g., "zsh"), or "Terminal" if unavailable
+/// Process info returned by get_terminal_process_info
+#[derive(Debug, Clone, Serialize)]
+pub struct TerminalProcessInfo {
+    pub name: String,
+    pub memory_bytes: u64,
+}
+
+/// Get the foreground process name and total memory usage for a terminal
+/// Returns the process name and combined memory of shell + all child processes
 #[tauri::command]
-pub fn get_foreground_process_name(
+pub fn get_terminal_process_info(
     state: tauri::State<'_, TerminalState>,
     id: u32,
-) -> Result<String, String> {
+) -> Result<TerminalProcessInfo, String> {
+    let default_info = TerminalProcessInfo {
+        name: "Terminal".to_string(),
+        memory_bytes: 0,
+    };
+
     let mut manager = state.lock().map_err(|e| e.to_string())?;
 
     if let Some(instance) = manager.instances.get_mut(&id) {
         // Check if shell has exited
         match instance.child.try_wait() {
-            Ok(Some(_)) => return Ok("Terminal".to_string()),
+            Ok(Some(_)) => return Ok(default_info),
             Ok(None) => {}
-            Err(_) => return Ok("Terminal".to_string()),
+            Err(_) => return Ok(default_info),
         }
 
         if let Some(shell_pid) = instance.shell_pid {
@@ -192,29 +204,61 @@ pub fn get_foreground_process_name(
             let mut sys = System::new();
             sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
 
-            // Look for direct child process of the shell (foreground process)
-            let child_process = sys.processes().values().find(|proc| {
-                proc.parent()
-                    .map(|parent_pid| parent_pid.as_u32() == shell_pid)
-                    .unwrap_or(false)
-            });
+            // Collect memory from shell + all descendants
+            let mut total_memory: u64 = 0;
 
-            if let Some(child) = child_process {
-                return Ok(child.name().to_string_lossy().to_string());
-            }
-
-            // No child process, return the shell name
+            // Add shell process memory
             if let Some(shell_proc) = sys.process(sysinfo::Pid::from_u32(shell_pid)) {
-                return Ok(shell_proc.name().to_string_lossy().to_string());
+                total_memory += shell_proc.memory();
             }
 
-            Ok("Terminal".to_string())
+            // Find child processes and sum their memory
+            let child_processes: Vec<_> = sys
+                .processes()
+                .values()
+                .filter(|proc| {
+                    proc.parent()
+                        .map(|parent_pid| parent_pid.as_u32() == shell_pid)
+                        .unwrap_or(false)
+                })
+                .collect();
+
+            for child in &child_processes {
+                total_memory += child.memory();
+            }
+
+            // Determine the display name
+            let name = if let Some(child) = child_processes.first() {
+                child.name().to_string_lossy().to_string()
+            } else if let Some(shell_proc) = sys.process(sysinfo::Pid::from_u32(shell_pid)) {
+                shell_proc.name().to_string_lossy().to_string()
+            } else {
+                "Terminal".to_string()
+            };
+
+            Ok(TerminalProcessInfo {
+                name,
+                memory_bytes: total_memory,
+            })
         } else {
-            Ok("Terminal".to_string())
+            Ok(default_info)
         }
     } else {
-        Ok("Terminal".to_string())
+        Ok(default_info)
     }
+}
+
+/// Get the name of the foreground process running in a terminal
+/// Returns the child process name if a command is running (e.g., "vim", "cargo"),
+/// the shell name if idle (e.g., "zsh"), or "Terminal" if unavailable
+#[tauri::command]
+pub fn get_foreground_process_name(
+    state: tauri::State<'_, TerminalState>,
+    id: u32,
+) -> Result<String, String> {
+    // Delegate to get_terminal_process_info for consistency
+    let info = get_terminal_process_info(state, id)?;
+    Ok(info.name)
 }
 
 /// Check if a terminal has a foreground process running (command in execution)
