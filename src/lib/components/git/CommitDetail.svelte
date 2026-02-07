@@ -245,12 +245,14 @@
           </svg>
           {diff.commit.author}
           <span class="meta-email">&lt;{diff.commit.author_email}&gt;</span>
-          {#each coAuthors as coAuthor}
+          {#each coAuthors as coAuthor (coAuthor)}
             <span class="meta-coauthor">· {coAuthor}</span>
           {/each}
         </span>
         <span class="meta-date">{formatDate(diff.commit.date)}</span>
-        <span class="meta-hash" class:unpushed={!diff.commit.is_pushed}>{diff.commit.full_hash.slice(0, 8)}</span>
+        <span class="meta-hash" class:unpushed={!diff.commit.is_pushed}
+          >{diff.commit.full_hash.slice(0, 8)}</span
+        >
       </div>
     </div>
 
@@ -326,6 +328,7 @@
   .commit-detail {
     height: 100%;
     overflow-y: auto;
+    overflow-x: hidden;
     scrollbar-width: thin;
     scrollbar-color: rgba(125, 211, 252, 0.2) transparent;
   }
@@ -626,7 +629,8 @@
   .line-content {
     flex: 1;
     padding: 0 var(--space-2);
-    white-space: pre;
+    white-space: pre-wrap;
+    word-break: break-all;
     color: var(--text-primary);
   }
 
