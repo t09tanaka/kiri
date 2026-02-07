@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { CommitInfo } from '@/lib/services/gitService';
+  import { formatRelativeTime } from '@/lib/utils/dateFormat';
 
   interface Props {
     commits: CommitInfo[];
@@ -100,22 +101,7 @@
   }
 
   function formatDate(timestamp: number): string {
-    const now = new Date();
-    const date = new Date(timestamp * 1000);
-    const diffMs = now.getTime() - date.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-    if (diffDays === 0) return 'today';
-    if (diffDays === 1) return 'yesterday';
-    if (diffDays < 7) return `${diffDays}d ago`;
-    if (diffDays < 365) {
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    }
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-    });
+    return formatRelativeTime(timestamp);
   }
 
   function truncate(text: string, max: number): string {
