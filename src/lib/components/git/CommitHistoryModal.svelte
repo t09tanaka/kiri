@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { commitHistoryStore, unpushedCount } from '@/lib/stores/commitHistoryStore';
+  import { commitHistoryStore, unpushedCount, behindCount } from '@/lib/stores/commitHistoryStore';
   import { gitService } from '@/lib/services/gitService';
   import { eventService, type UnlistenFn } from '@/lib/services/eventService';
   import { toastStore } from '@/lib/stores/toastStore';
@@ -19,11 +19,20 @@
   let unreadHashes: Set<string> = $state(new Set());
   let unlistenGitStatus: UnlistenFn | undefined;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+  let fetchInterval: ReturnType<typeof setInterval> | undefined;
+
+  const FETCH_INTERVAL_MS = 30_000;
 
   onMount(async () => {
     mounted = true;
     document.addEventListener('keydown', handleKeyDown, true);
     await loadCommitLog();
+
+    // Initial fetch and behind/ahead check
+    await fetchAndCheckRemote();
+
+    // Periodic fetch while modal is open
+    fetchInterval = setInterval(() => fetchAndCheckRemote(), FETCH_INTERVAL_MS);
 
     // Listen for git status changes (real-time updates)
     unlistenGitStatus = await eventService.listen<{ repo_root: string }>(
@@ -40,6 +49,7 @@
     document.removeEventListener('keydown', handleKeyDown, true);
     unlistenGitStatus?.();
     if (refreshTimer) clearTimeout(refreshTimer);
+    if (fetchInterval) clearInterval(fetchInterval);
   });
 
   const PAGE_SIZE = 50;
@@ -67,9 +77,7 @@
     const oldHashes = new Set($commitHistoryStore.commits.map((c) => c.full_hash));
     try {
       const commits = await gitService.getCommitLog(projectPath, PAGE_SIZE);
-      const newHashes = commits
-        .filter((c) => !oldHashes.has(c.full_hash))
-        .map((c) => c.full_hash);
+      const newHashes = commits.filter((c) => !oldHashes.has(c.full_hash)).map((c) => c.full_hash);
       if (newHashes.length > 0) {
         unreadHashes = new Set([...unreadHashes, ...newHashes]);
       }
@@ -102,7 +110,7 @@
 
   async function handleSelectCommit(commit: CommitInfo) {
     if (unreadHashes.has(commit.full_hash)) {
-      const next = new Set(unreadHashes);
+      const next = new Set(unreadHashes); // eslint-disable-line svelte/prefer-svelte-reactivity
       next.delete(commit.full_hash);
       unreadHashes = next;
     }
@@ -118,9 +126,51 @@
     }
   }
 
+  async function fetchAndCheckRemote() {
+    if ($commitHistoryStore.isFetching) return;
+    commitHistoryStore.setFetching(true);
+    try {
+      await gitService.fetchRemote(projectPath);
+      const counts = await gitService.getBehindAheadCount(projectPath);
+      commitHistoryStore.setBehindCount(counts.behind);
+    } catch {
+      // Silently ignore fetch errors (no remote, network issues, etc.)
+    } finally {
+      commitHistoryStore.setFetching(false);
+    }
+  }
+
+  async function handlePull() {
+    commitHistoryStore.setPulling(true);
+    try {
+      const result = await gitService.pullCommits(projectPath);
+      if (result.success) {
+        commitHistoryStore.setBehindCount(0);
+        commitHistoryStore.setPulling(false);
+        await refreshCommitLog();
+      } else {
+        toastStore.error(result.message);
+        commitHistoryStore.setPulling(false);
+      }
+    } catch (error) {
+      toastStore.error(String(error));
+      commitHistoryStore.setPulling(false);
+    }
+  }
+
   async function handlePush() {
     commitHistoryStore.setPushing(true);
     try {
+      // Fetch before push to ensure we have latest remote state
+      await gitService.fetchRemote(projectPath);
+      const counts = await gitService.getBehindAheadCount(projectPath);
+      if (counts.behind > 0) {
+        commitHistoryStore.setBehindCount(counts.behind);
+        toastStore.error(`Pull ${counts.behind} commit${counts.behind > 1 ? 's' : ''} first`);
+        commitHistoryStore.setPushing(false);
+        return;
+      }
+
       const result = await gitService.pushCommits(projectPath);
       if (result.success) {
         commitHistoryStore.markAllPushed();
@@ -144,10 +194,6 @@
 
   function handleBackdropClick(e: MouseEvent) {
     if (e.target === e.currentTarget) onClose();
-  }
-
-  function getProjectName(path: string): string {
-    return path.split('/').pop() || path;
   }
 </script>
 
@@ -174,33 +220,42 @@
             stroke-linecap="round"
             stroke-linejoin="round"
           >
-            <circle cx="12" cy="12" r="4"></circle>
-            <line x1="1.05" y1="12" x2="7" y2="12"></line>
-            <line x1="17.01" y1="12" x2="22.96" y2="12"></line>
+            <line x1="6" y1="3" x2="6" y2="15"></line>
+            <circle cx="18" cy="6" r="3"></circle>
+            <circle cx="6" cy="18" r="3"></circle>
+            <path d="M18 9a9 9 0 0 1-9 9"></path>
           </svg>
           <span class="title">Commit History</span>
-          <span class="project-path">{getProjectName(projectPath)}</span>
-          {#if $commitHistoryStore.commits.length > 0 && $commitHistoryStore.commits[0]?.branch_type}
-            <span class="branch-badge">
-              <svg
-                width="10"
-                height="10"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <line x1="6" y1="3" x2="6" y2="15"></line>
-                <circle cx="18" cy="6" r="3"></circle>
-                <circle cx="6" cy="18" r="3"></circle>
-                <path d="M18 9a9 9 0 0 1-9 9"></path>
-              </svg>
-            </span>
-          {/if}
         </div>
         <div class="header-actions">
+          {#if $behindCount > 0}
+            <button
+              class="action-btn pull-btn"
+              onclick={handlePull}
+              disabled={$commitHistoryStore.isPulling}
+              title="Pull {$behindCount} commit{$behindCount > 1 ? 's' : ''}"
+            >
+              {#if $commitHistoryStore.isPulling}
+                <Spinner size="sm" />
+              {:else}
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <polyline points="19 12 12 19 5 12"></polyline>
+                </svg>
+              {/if}
+              <span>Pull</span>
+              <span class="pull-count">{$behindCount}</span>
+            </button>
+          {/if}
           {#if $unpushedCount > 0}
             <button
               class="action-btn push-btn"
@@ -419,27 +474,6 @@
     letter-spacing: 0.02em;
   }
 
-  .project-path {
-    font-size: 11px;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    padding: 2px 6px;
-    background: var(--bg-elevated);
-    border-radius: var(--radius-sm);
-    margin-left: var(--space-2);
-  }
-
-  .branch-badge {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    color: var(--git-added);
-    padding: 2px 6px;
-    background: rgba(74, 222, 128, 0.1);
-    border-radius: var(--radius-sm);
-  }
-
   .header-actions {
     display: flex;
     align-items: center;
@@ -480,6 +514,25 @@
   .action-btn.close-btn:hover {
     background: rgba(248, 113, 113, 0.1);
     color: #f87171;
+  }
+
+  .pull-btn {
+    background: rgba(125, 211, 252, 0.1);
+    color: var(--accent-color);
+    font-weight: 500;
+  }
+
+  .pull-btn:hover:not(:disabled) {
+    background: rgba(125, 211, 252, 0.2);
+    color: var(--accent-color);
+  }
+
+  .pull-count {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 5px;
+    background: rgba(125, 211, 252, 0.25);
+    border-radius: 3px;
   }
 
   .push-btn {
