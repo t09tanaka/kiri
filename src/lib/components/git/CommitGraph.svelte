@@ -8,6 +8,7 @@
     isLoadingMore?: boolean;
     hasMore?: boolean;
     onLoadMore?: () => void;
+    unreadHashes?: Set<string>;
   }
 
   let {
@@ -17,6 +18,7 @@
     isLoadingMore = false,
     hasMore = false,
     onLoadMore,
+    unreadHashes = new Set(),
   }: Props = $props();
 
   let scrollContainer: HTMLDivElement | undefined = $state();
@@ -218,6 +220,17 @@
         <text x={textStart} y={nodeY + 12} class="commit-date" fill={getDateColor(commit)}>
           {formatDate(commit.date)}
         </text>
+
+        <!-- Unread indicator dot (4px right of date text) -->
+        {#if unreadHashes.has(commit.full_hash) && !grayed}
+          <circle
+            cx={textStart + formatDate(commit.date).length * 6 + 6.5}
+            cy={nodeY + 8}
+            r="2.5"
+            fill="#7dd3fc"
+            style="pointer-events: none;"
+          />
+        {/if}
       {/each}
 
       <!-- Loading more indicator -->

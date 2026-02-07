@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { commitHistoryStore, unpushedCount } from '@/lib/stores/commitHistoryStore';
   import { gitService } from '@/lib/services/gitService';
+  import { eventService, type UnlistenFn } from '@/lib/services/eventService';
   import { toastStore } from '@/lib/stores/toastStore';
   import CommitGraph from './CommitGraph.svelte';
   import CommitDetail from './CommitDetail.svelte';
@@ -15,15 +16,30 @@
 
   let { projectPath, onClose }: Props = $props();
   let mounted = $state(false);
+  let unreadHashes: Set<string> = $state(new Set());
+  let unlistenGitStatus: UnlistenFn | undefined;
+  let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   onMount(async () => {
     mounted = true;
     document.addEventListener('keydown', handleKeyDown, true);
     await loadCommitLog();
+
+    // Listen for git status changes (real-time updates)
+    unlistenGitStatus = await eventService.listen<{ repo_root: string }>(
+      'git-status-changed',
+      (event) => {
+        if (projectPath.startsWith(event.payload.repo_root)) {
+          scheduleRefresh();
+        }
+      }
+    );
   });
 
   onDestroy(() => {
     document.removeEventListener('keydown', handleKeyDown, true);
+    unlistenGitStatus?.();
+    if (refreshTimer) clearTimeout(refreshTimer);
   });
 
   const PAGE_SIZE = 50;
@@ -34,6 +50,37 @@
       const commits = await gitService.getCommitLog(projectPath, PAGE_SIZE);
       commitHistoryStore.setCommits(commits, PAGE_SIZE);
       if (commits.length > 0) {
+        await handleSelectCommit(commits[0]);
+      }
+    } catch (error) {
+      commitHistoryStore.setError(String(error));
+    }
+  }
+
+  function scheduleRefresh() {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => refreshCommitLog(), 300);
+  }
+
+  async function refreshCommitLog() {
+    const previousHash = $commitHistoryStore.selectedCommitHash;
+    const oldHashes = new Set($commitHistoryStore.commits.map((c) => c.full_hash));
+    try {
+      const commits = await gitService.getCommitLog(projectPath, PAGE_SIZE);
+      const newHashes = commits
+        .filter((c) => !oldHashes.has(c.full_hash))
+        .map((c) => c.full_hash);
+      if (newHashes.length > 0) {
+        unreadHashes = new Set([...unreadHashes, ...newHashes]);
+      }
+      commitHistoryStore.setCommits(commits, PAGE_SIZE);
+      // Preserve previously selected commit if it still exists
+      const selected = previousHash
+        ? commits.find((c) => c.full_hash === previousHash)
+        : commits[0];
+      if (selected) {
+        await handleSelectCommit(selected);
+      } else if (commits.length > 0) {
         await handleSelectCommit(commits[0]);
       }
     } catch (error) {
@@ -54,6 +101,11 @@
   }
 
   async function handleSelectCommit(commit: CommitInfo) {
+    if (unreadHashes.has(commit.full_hash)) {
+      const next = new Set(unreadHashes);
+      next.delete(commit.full_hash);
+      unreadHashes = next;
+    }
     commitHistoryStore.selectCommit(commit.full_hash);
     commitHistoryStore.setLoadingDiff(true);
     try {
@@ -232,6 +284,7 @@
                 isLoadingMore={$commitHistoryStore.isLoadingMore}
                 hasMore={$commitHistoryStore.hasMore}
                 onLoadMore={handleLoadMore}
+                {unreadHashes}
               />
             </div>
             <div class="detail-panel">
