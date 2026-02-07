@@ -28,6 +28,11 @@
   const ROW_HEIGHT = 48;
   const COL_WIDTH = 24;
   const GRAPH_PADDING = 16;
+  const BRANCH_GAP = 16;
+
+  // Index where current branch ends and base/shared begins (-1 if no boundary)
+  const branchBoundaryIndex = $derived(commits.findIndex((c) => isGrayedOut(c)));
+  const hasBranchGap = $derived(branchBoundaryIndex > 0);
 
   // Compute graph width dynamically based on actual column count
   const maxColumn = $derived(Math.max(0, ...commits.map((c) => c.graph_column)));
@@ -86,8 +91,12 @@
     return GRAPH_PADDING / 2 + commit.graph_column * COL_WIDTH + COL_WIDTH / 2;
   }
 
+  function getGapOffset(index: number): number {
+    return hasBranchGap && index >= branchBoundaryIndex ? BRANCH_GAP : 0;
+  }
+
   function getNodeY(index: number): number {
-    return index * ROW_HEIGHT + ROW_HEIGHT / 2;
+    return index * ROW_HEIGHT + ROW_HEIGHT / 2 + getGapOffset(index);
   }
 
   function formatDate(timestamp: number): string {
@@ -194,14 +203,29 @@
             stroke-width="1.5"
           />
         {:else}
-          <!-- From child down to parent's y-level, then horizontal to parent -->
-          <path
-            d="M {conn.x1},{conn.y1} L {conn.x1},{conn.y2} L {conn.x2},{conn.y2}"
-            fill="none"
-            stroke={conn.color}
-            stroke-width="1.5"
-            stroke-linejoin="round"
-          />
+          <!-- From child straight down, then diagonal to parent -->
+          {@const dx = Math.abs(conn.x2 - conn.x1)}
+          {@const dy = conn.y2 - conn.y1}
+          {#if dy > dx}
+            <!-- Enough vertical space: straight down then 45° diagonal -->
+            <path
+              d="M {conn.x1},{conn.y1} L {conn.x1},{conn.y2 - dx} L {conn.x2},{conn.y2}"
+              fill="none"
+              stroke={conn.color}
+              stroke-width="1.5"
+              stroke-linejoin="round"
+            />
+          {:else}
+            <!-- Not enough vertical space: direct diagonal -->
+            <line
+              x1={conn.x1}
+              y1={conn.y1}
+              x2={conn.x2}
+              y2={conn.y2}
+              stroke={conn.color}
+              stroke-width="1.5"
+            />
+          {/if}
         {/if}
       {/each}
 
@@ -217,7 +241,7 @@
         <!-- Row background (hover/selection) -->
         <rect
           x="0"
-          y={i * ROW_HEIGHT}
+          y={i * ROW_HEIGHT + getGapOffset(i)}
           width="100%"
           height={ROW_HEIGHT}
           fill={isSelected ? COLORS.selectedBg : 'transparent'}
