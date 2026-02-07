@@ -573,6 +573,7 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+    padding: 0;
   }
 
   .split-container {
