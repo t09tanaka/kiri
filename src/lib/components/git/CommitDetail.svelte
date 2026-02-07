@@ -215,8 +215,10 @@
     <!-- Commit header -->
     <div class="commit-header">
       <div class="commit-message-primary">{diff.commit.message.split('\n')[0]}</div>
-      {#if diff.commit.message_body}
-        <div class="commit-message-body">{diff.commit.message_body}</div>
+      {#if diff.commit.message_body.includes('\n')}
+        <div class="commit-message-body">
+          {diff.commit.message_body.split('\n').slice(1).join('\n').trim()}
+        </div>
       {/if}
       <div class="commit-meta">
         <span class="meta-author">
