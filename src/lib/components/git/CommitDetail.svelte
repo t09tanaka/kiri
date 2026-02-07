@@ -237,12 +237,7 @@
           <span class="meta-email">&lt;{diff.commit.author_email}&gt;</span>
         </span>
         <span class="meta-date">{formatDate(diff.commit.date)}</span>
-        <span class="meta-hash">{diff.commit.full_hash.slice(0, 8)}</span>
-        {#if diff.commit.is_pushed}
-          <span class="meta-badge pushed">Pushed</span>
-        {:else}
-          <span class="meta-badge unpushed">Not pushed</span>
-        {/if}
+        <span class="meta-hash" class:unpushed={!diff.commit.is_pushed}>{diff.commit.full_hash.slice(0, 8)}</span>
       </div>
     </div>
 
@@ -429,23 +424,9 @@
     border-radius: var(--radius-sm);
   }
 
-  .meta-badge {
-    font-size: 10px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border-radius: var(--radius-sm);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-
-  .meta-badge.pushed {
-    background: rgba(74, 222, 128, 0.1);
-    color: #4ade80;
-  }
-
-  .meta-badge.unpushed {
-    background: rgba(252, 211, 77, 0.1);
+  .meta-hash.unpushed {
     color: #fcd34d;
+    background: rgba(252, 211, 77, 0.08);
   }
 
   /* Summary bar */
