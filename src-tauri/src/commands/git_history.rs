@@ -244,14 +244,19 @@ pub fn get_commit_log(
         let is_pushed = pushed_oids.contains(&oid);
 
         // Determine branch_type and graph_column using pre-computed sets
+        let has_divergence = !head_only_commits.is_empty() || !default_only_commits.is_empty();
         let (branch_type, graph_column) = if merge_base_oid == Some(oid) {
             ("both".to_string(), 0)
         } else if head_only_commits.contains(&oid) {
-            ("current".to_string(), 0)
+            // Current branch exclusive commits branch off to the right
+            ("current".to_string(), 1)
         } else if default_only_commits.contains(&oid) {
             ("base".to_string(), 1)
+        } else if has_divergence {
+            // Shared history before merge-base (on a diverged branch)
+            ("shared".to_string(), 0)
         } else {
-            // Shared history (before merge-base) or no divergence
+            // No divergence (e.g., on main) - all commits are current
             ("current".to_string(), 0)
         };
 
@@ -826,13 +831,13 @@ mod tests {
 
         let commits = result.unwrap();
 
-        // Feature commits should be column 0, "current"
+        // Feature commits should be column 1, "current" (branched off to the right)
         let fc2 = commits.iter().find(|c| c.message == "Feature commit 2").unwrap();
-        assert_eq!(fc2.graph_column, 0);
+        assert_eq!(fc2.graph_column, 1);
         assert_eq!(fc2.branch_type, "current");
 
         let fc1 = commits.iter().find(|c| c.message == "Feature commit 1").unwrap();
-        assert_eq!(fc1.graph_column, 0);
+        assert_eq!(fc1.graph_column, 1);
         assert_eq!(fc1.branch_type, "current");
 
         // Master-only commit should be column 1, "base"
@@ -845,12 +850,14 @@ mod tests {
         assert_eq!(mc2.graph_column, 0);
         assert_eq!(mc2.branch_type, "both");
 
-        // Shared history should be column 0
+        // Shared history should be column 0, "shared"
         let mc1 = commits.iter().find(|c| c.message == "Master commit 1").unwrap();
         assert_eq!(mc1.graph_column, 0);
+        assert_eq!(mc1.branch_type, "shared");
 
         let ic = commits.iter().find(|c| c.message == "Initial commit").unwrap();
         assert_eq!(ic.graph_column, 0);
+        assert_eq!(ic.branch_type, "shared");
     }
 
     #[test]
