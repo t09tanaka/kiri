@@ -47,6 +47,10 @@
     type PersistedWindowGeometry,
   } from '@/lib/services/persistenceService';
   import { portIsolationService } from '@/lib/services/portIsolationService';
+  import { terminalService } from '@/lib/services/terminalService';
+  import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
+  import { getAllTerminalIds } from '@/lib/stores/tabStore';
+  import { get } from 'svelte/store';
 
   let showShortcuts = $state(false);
   let windowLabel = $state('');
@@ -541,6 +545,28 @@
 
     // Save state before window closes
     const unlistenCloseRequested = await currentWindow.onCloseRequested(async (event) => {
+      // Check for running terminal commands before closing
+      const state = get(tabStore);
+      const allTerminalIds = state.tabs.flatMap((tab) => getAllTerminalIds(tab.rootPane));
+      if (allTerminalIds.length > 0) {
+        const aliveChecks = await Promise.all(
+          allTerminalIds.map((id) => terminalService.isTerminalAlive(id))
+        );
+        const hasRunningCommands = aliveChecks.some((alive) => alive);
+
+        if (hasRunningCommands) {
+          event.preventDefault();
+          const confirmed = await confirmDialogStore.confirm({
+            title: 'Close Window?',
+            message: 'There are running commands in the terminal. Are you sure you want to close?',
+            confirmLabel: 'Close',
+            cancelLabel: 'Cancel',
+            kind: 'warning',
+          });
+          if (!confirmed) return;
+        }
+      }
+
       event.preventDefault();
 
       // For worktree windows, automatically delete the worktree
