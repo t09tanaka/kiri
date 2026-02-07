@@ -25,7 +25,7 @@
 
   const NODE_RADIUS = 4;
   const NODE_RADIUS_ACTIVE = 5;
-  const ROW_HEIGHT = 40;
+  const ROW_HEIGHT = 48;
   const COL_WIDTH = 24;
   const GRAPH_PADDING = 16;
 
@@ -113,6 +113,23 @@
     if (text.length <= max) return text;
     const cut = text.lastIndexOf(' ', max);
     return (cut > max * 0.5 ? text.slice(0, cut) : text.slice(0, max)) + '...';
+  }
+
+  function parseCommitMessage(message: string): { prefix: string | null; subject: string } {
+    const firstLine = message.split('\n')[0];
+    const colonIndex = firstLine.indexOf(':');
+    if (colonIndex > 0 && colonIndex < 20) {
+      return {
+        prefix: firstLine.slice(0, colonIndex + 1),
+        subject: firstLine.slice(colonIndex + 1).trim(),
+      };
+    }
+    return { prefix: null, subject: firstLine };
+  }
+
+  function getPrefixColor(commit: CommitInfo): string {
+    if (isGrayedOut(commit)) return COLORS.fadedDate;
+    return '#8b949e';
   }
 
   function handleScroll() {
@@ -211,13 +228,22 @@
         <!-- Node circle -->
         <circle cx={nodeX} cy={nodeY} r={radius} fill={nodeColor} style="pointer-events: none;" />
 
-        <!-- Commit message text -->
-        <text x={textStart} y={nodeY - 4} class="commit-message" fill={getMessageColor(commit)}>
-          {truncate(commit.message.split('\n')[0], 40)}
+        {@const parsed = parseCommitMessage(commit.message)}
+
+        <!-- Commit type prefix (e.g., "feat(git):") -->
+        {#if parsed.prefix}
+          <text x={textStart} y={nodeY - 10} class="commit-prefix" fill={getPrefixColor(commit)}>
+            {parsed.prefix}
+          </text>
+        {/if}
+
+        <!-- Commit subject text -->
+        <text x={textStart} y={nodeY + 4} class="commit-message" fill={getMessageColor(commit)}>
+          {truncate(parsed.subject || parsed.prefix || '', 35)}
         </text>
 
         <!-- Date text -->
-        <text x={textStart} y={nodeY + 12} class="commit-date" fill={getDateColor(commit)}>
+        <text x={textStart} y={nodeY + 16} class="commit-date" fill={getDateColor(commit)}>
           {formatDate(commit.date)}
         </text>
 
@@ -225,7 +251,7 @@
         {#if unreadHashes.has(commit.full_hash) && !grayed}
           <circle
             cx={textStart + formatDate(commit.date).length * 6 + 6.5}
-            cy={nodeY + 8}
+            cy={nodeY + 12}
             r="2.5"
             fill="#7dd3fc"
             style="pointer-events: none;"
@@ -287,6 +313,12 @@
 
   .row-bg:hover {
     fill: rgba(125, 211, 252, 0.04);
+  }
+
+  .commit-prefix {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    pointer-events: none;
   }
 
   .commit-message {
