@@ -195,8 +195,8 @@ describe('tabStore', () => {
     it('should add sibling pane when splitting in same direction (vertical)', () => {
       // Initial state: single pane
       // After first split: [pane-1, pane-2] (50%, 50%)
-      // After second split on pane-1: [pane-1, pane-3, pane-2] (25%, 25%, 50%)
-      // The target pane's size is split in half, other sizes preserved
+      // After second split on pane-1: [pane-1, pane-3, pane-2] (33.3%, 33.3%, 33.3%)
+      // All panes are distributed equally
 
       tabStore.addTerminalTab();
       let state = get(tabStore);
@@ -229,10 +229,11 @@ describe('tabStore', () => {
       expect(rootPane.children[1].type).toBe('terminal');
       expect(rootPane.children[2].type).toBe('terminal');
 
-      // Target pane (50%) is split in half (25%, 25%), other pane (50%) preserved
-      expect(rootPane.sizes[0]).toBe(25);
-      expect(rootPane.sizes[1]).toBe(25);
-      expect(rootPane.sizes[2]).toBe(50);
+      // All panes distributed equally
+      const expectedSize = 100 / 3;
+      expect(rootPane.sizes[0]).toBeCloseTo(expectedSize);
+      expect(rootPane.sizes[1]).toBeCloseTo(expectedSize);
+      expect(rootPane.sizes[2]).toBeCloseTo(expectedSize);
     });
 
     it('should add sibling pane when splitting in same direction (horizontal)', () => {
@@ -262,10 +263,11 @@ describe('tabStore', () => {
       expect(rootPane.children).toHaveLength(3);
       expect(rootPane.direction).toBe('horizontal');
 
-      // Target pane (50%) is split in half (25%, 25%), other pane (50%) preserved
-      expect(rootPane.sizes[0]).toBe(25);
-      expect(rootPane.sizes[1]).toBe(25);
-      expect(rootPane.sizes[2]).toBe(50);
+      // All panes distributed equally
+      const expectedSize = 100 / 3;
+      expect(rootPane.sizes[0]).toBeCloseTo(expectedSize);
+      expect(rootPane.sizes[1]).toBeCloseTo(expectedSize);
+      expect(rootPane.sizes[2]).toBeCloseTo(expectedSize);
     });
 
     it('should preserve custom sizes when splitting in same direction', () => {
@@ -297,11 +299,12 @@ describe('tabStore', () => {
       rootPane = state.tabs[0].rootPane;
       if (rootPane.type !== 'split') return;
 
-      // pane-1 keeps 30%, pane-2 splits to 35% + 35%
+      // All panes distributed equally regardless of previous custom sizes
       expect(rootPane.children).toHaveLength(3);
-      expect(rootPane.sizes[0]).toBe(30);
-      expect(rootPane.sizes[1]).toBe(35);
-      expect(rootPane.sizes[2]).toBe(35);
+      const expectedSize = 100 / 3;
+      expect(rootPane.sizes[0]).toBeCloseTo(expectedSize);
+      expect(rootPane.sizes[1]).toBeCloseTo(expectedSize);
+      expect(rootPane.sizes[2]).toBeCloseTo(expectedSize);
     });
 
     it('should preserve sizes when splitting different direction (nested)', () => {

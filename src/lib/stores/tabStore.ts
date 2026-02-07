@@ -93,12 +93,9 @@ function splitPaneInTree(
         terminalId: null,
       });
 
-      // Split only the target pane's size in half, preserving other sizes
-      const targetSize = pane.sizes[targetIndex];
-      const halfSize = targetSize / 2;
-      const newSizes = [...pane.sizes];
-      newSizes[targetIndex] = halfSize;
-      newSizes.splice(targetIndex + 1, 0, halfSize);
+      // Distribute sizes equally among all children
+      const equalSize = 100 / newChildren.length;
+      const newSizes = newChildren.map(() => equalSize);
 
       return {
         ...pane,
