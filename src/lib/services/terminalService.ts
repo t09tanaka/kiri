@@ -37,4 +37,10 @@ export const terminalService = {
    * Returns true if the process is alive, false if it has exited
    */
   isTerminalAlive: (id: number): Promise<boolean> => invoke('is_terminal_alive', { id }),
+
+  /**
+   * Get the foreground process name for a terminal
+   * Returns the running command name (e.g., "vim"), shell name (e.g., "zsh"), or "Terminal"
+   */
+  getProcessName: (id: number): Promise<string> => invoke('get_foreground_process_name', { id }),
 };

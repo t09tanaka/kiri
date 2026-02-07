@@ -170,6 +170,20 @@ export function getAllPaneIds(pane: TerminalPane): string[] {
 }
 
 /**
+ * Helper: Get the first terminal ID from a pane tree (depth-first)
+ */
+export function getFirstTerminalId(pane: TerminalPane): number | null {
+  if (pane.type === 'terminal') {
+    return pane.terminalId;
+  }
+  for (const child of pane.children) {
+    const id = getFirstTerminalId(child);
+    if (id !== null) return id;
+  }
+  return null;
+}
+
+/**
  * Helper: Get all terminal IDs from a pane tree
  */
 export function getAllTerminalIds(pane: TerminalPane): number[] {
@@ -266,11 +280,10 @@ function createTabStore() {
 
     addTerminalTab: () => {
       update((state) => {
-        const terminalCount = state.tabs.length;
         const newTab: TerminalTab = {
           id: generateId(),
           type: 'terminal',
-          title: `Terminal ${terminalCount + 1}`,
+          title: 'Terminal',
           rootPane: {
             type: 'terminal',
             id: generatePaneId(),
@@ -384,6 +397,13 @@ function createTabStore() {
       }));
     },
 
+    updateTabTitle: (tabId: string, title: string) => {
+      update((state) => ({
+        ...state,
+        tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, title } : t)),
+      }));
+    },
+
     getActiveTab: () => {
       const state = get({ subscribe });
       return state.tabs.find((t) => t.id === state.activeTabId) || null;
@@ -411,11 +431,9 @@ function createTabStore() {
      */
     restoreState: (persistedTabs: PersistedTab[], activeTabId: string | null) => {
       const tabs: Tab[] = [];
-      let terminalCount = 0;
 
       for (const pTab of persistedTabs) {
         if (pTab.type === 'terminal') {
-          terminalCount++;
           // Restore pane tree if available, otherwise create a single pane (backwards compatibility)
           const rootPane = pTab.rootPane
             ? persistedPaneToPane(pTab.rootPane)
@@ -423,7 +441,7 @@ function createTabStore() {
           tabs.push({
             id: pTab.id,
             type: 'terminal',
-            title: pTab.title || `Terminal ${terminalCount}`,
+            title: pTab.title || 'Terminal',
             rootPane,
           });
         }

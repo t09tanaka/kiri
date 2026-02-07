@@ -5,6 +5,7 @@ import {
   activeTab,
   getAllPaneIds,
   getAllTerminalIds,
+  getFirstTerminalId,
   closePaneInTree,
   paneToPersistedPane,
   persistedPaneToPane,
@@ -26,24 +27,24 @@ describe('tabStore', () => {
   });
 
   describe('addTerminalTab', () => {
-    it('should add a terminal tab', () => {
+    it('should add a terminal tab with default title', () => {
       tabStore.addTerminalTab();
 
       const state = get(tabStore);
       expect(state.tabs).toHaveLength(1);
       expect(state.tabs[0].type).toBe('terminal');
-      expect(state.tabs[0].title).toBe('Terminal 1');
+      expect(state.tabs[0].title).toBe('Terminal');
     });
 
-    it('should increment terminal count in title', () => {
+    it('should use same default title for all tabs', () => {
       tabStore.addTerminalTab();
       tabStore.addTerminalTab();
       tabStore.addTerminalTab();
 
       const state = get(tabStore);
-      expect(state.tabs[0].title).toBe('Terminal 1');
-      expect(state.tabs[1].title).toBe('Terminal 2');
-      expect(state.tabs[2].title).toBe('Terminal 3');
+      expect(state.tabs[0].title).toBe('Terminal');
+      expect(state.tabs[1].title).toBe('Terminal');
+      expect(state.tabs[2].title).toBe('Terminal');
     });
   });
 
@@ -127,6 +128,37 @@ describe('tabStore', () => {
       expect(newState.activeTabId).toBe(thirdTabId);
       // First tab should be the old second tab
       expect(newState.tabs[0].id).toBe(secondTabId);
+    });
+  });
+
+  describe('updateTabTitle', () => {
+    it('should update tab title', () => {
+      tabStore.addTerminalTab();
+      const tabId = get(tabStore).tabs[0].id;
+
+      tabStore.updateTabTitle(tabId, 'zsh');
+
+      expect(get(tabStore).tabs[0].title).toBe('zsh');
+    });
+
+    it('should only update matching tab', () => {
+      tabStore.addTerminalTab();
+      tabStore.addTerminalTab();
+      const state = get(tabStore);
+
+      tabStore.updateTabTitle(state.tabs[0].id, 'vim');
+
+      const updated = get(tabStore);
+      expect(updated.tabs[0].title).toBe('vim');
+      expect(updated.tabs[1].title).toBe('Terminal');
+    });
+
+    it('should not change anything for non-existent tab', () => {
+      tabStore.addTerminalTab();
+
+      tabStore.updateTabTitle('non-existent', 'vim');
+
+      expect(get(tabStore).tabs[0].title).toBe('Terminal');
     });
   });
 
@@ -449,9 +481,9 @@ describe('tabStore', () => {
 
       expect(tabs).toHaveLength(2);
       expect(tabs[0].type).toBe('terminal');
-      expect(tabs[0].title).toBe('Terminal 1');
+      expect(tabs[0].title).toBe('Terminal');
       expect(tabs[1].type).toBe('terminal');
-      expect(tabs[1].title).toBe('Terminal 2');
+      expect(tabs[1].title).toBe('Terminal');
       expect(activeTabId).not.toBeNull();
     });
   });
@@ -552,6 +584,84 @@ describe('getAllPaneIds', () => {
     };
 
     expect(getAllPaneIds(pane)).toEqual(['pane-1', 'pane-2', 'pane-3']);
+  });
+});
+
+describe('getFirstTerminalId', () => {
+  it('should return null for leaf with null terminalId', () => {
+    const pane: TerminalPane = { type: 'terminal', id: 'pane-1', terminalId: null };
+
+    expect(getFirstTerminalId(pane)).toBeNull();
+  });
+
+  it('should return terminal ID for leaf with terminalId', () => {
+    const pane: TerminalPane = { type: 'terminal', id: 'pane-1', terminalId: 42 };
+
+    expect(getFirstTerminalId(pane)).toBe(42);
+  });
+
+  it('should return first terminal ID in split (depth-first)', () => {
+    const pane: TerminalPane = {
+      type: 'split',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: 10 },
+        { type: 'terminal', id: 'pane-2', terminalId: 20 },
+      ],
+      sizes: [50, 50],
+    };
+
+    expect(getFirstTerminalId(pane)).toBe(10);
+  });
+
+  it('should skip null terminalIds and return first non-null', () => {
+    const pane: TerminalPane = {
+      type: 'split',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: null },
+        { type: 'terminal', id: 'pane-2', terminalId: 20 },
+      ],
+      sizes: [50, 50],
+    };
+
+    expect(getFirstTerminalId(pane)).toBe(20);
+  });
+
+  it('should return null when all terminalIds are null', () => {
+    const pane: TerminalPane = {
+      type: 'split',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: null },
+        { type: 'terminal', id: 'pane-2', terminalId: null },
+      ],
+      sizes: [50, 50],
+    };
+
+    expect(getFirstTerminalId(pane)).toBeNull();
+  });
+
+  it('should traverse nested splits depth-first', () => {
+    const pane: TerminalPane = {
+      type: 'split',
+      direction: 'horizontal',
+      children: [
+        {
+          type: 'split',
+          direction: 'vertical',
+          children: [
+            { type: 'terminal', id: 'pane-1', terminalId: null },
+            { type: 'terminal', id: 'pane-2', terminalId: 5 },
+          ],
+          sizes: [50, 50],
+        },
+        { type: 'terminal', id: 'pane-3', terminalId: 30 },
+      ],
+      sizes: [50, 50],
+    };
+
+    expect(getFirstTerminalId(pane)).toBe(5);
   });
 });
 
@@ -799,7 +909,7 @@ describe('advanced tabStore operations', () => {
       const state = get(tabStore);
       expect(state.tabs).toHaveLength(1);
       const tab = state.tabs[0];
-      expect(tab.title).toBe('Terminal 1');
+      expect(tab.title).toBe('Terminal');
     });
 
     it('should update nextId based on existing tab IDs', () => {

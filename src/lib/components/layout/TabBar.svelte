@@ -1,5 +1,12 @@
 <script lang="ts">
-  import { tabStore, getAllTerminalIds, type Tab, type TerminalTab } from '@/lib/stores/tabStore';
+  import { onMount, onDestroy } from 'svelte';
+  import {
+    tabStore,
+    getAllTerminalIds,
+    getFirstTerminalId,
+    type Tab,
+    type TerminalTab,
+  } from '@/lib/stores/tabStore';
   import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
   import { terminalService } from '@/lib/services/terminalService';
 
@@ -9,6 +16,40 @@
   }
 
   let { tabs, activeTabId }: Props = $props();
+
+  // Poll for foreground process names and update tab titles
+  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  const POLL_INTERVAL_MS = 2000;
+
+  async function updateTabTitles() {
+    for (const tab of tabs) {
+      if (tab.type !== 'terminal') continue;
+      const terminalTab = tab as TerminalTab;
+      const firstTerminalId = getFirstTerminalId(terminalTab.rootPane);
+      if (firstTerminalId === null) continue;
+
+      try {
+        const processName = await terminalService.getProcessName(firstTerminalId);
+        if (processName && processName !== tab.title) {
+          tabStore.updateTabTitle(tab.id, processName);
+        }
+      } catch {
+        // Terminal may have been closed, ignore
+      }
+    }
+  }
+
+  onMount(() => {
+    // Initial update after a short delay to let terminals initialize
+    setTimeout(updateTabTitles, 1000);
+    pollInterval = setInterval(updateTabTitles, POLL_INTERVAL_MS);
+  });
+
+  onDestroy(() => {
+    if (pollInterval) {
+      clearInterval(pollInterval);
+    }
+  });
 
   function handleTabClick(tab: Tab) {
     tabStore.setActiveTab(tab.id);

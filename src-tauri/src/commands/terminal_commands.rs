@@ -168,6 +168,55 @@ pub fn close_terminal(state: tauri::State<'_, TerminalState>, id: u32) -> Result
     }
 }
 
+/// Get the name of the foreground process running in a terminal
+/// Returns the child process name if a command is running (e.g., "vim", "cargo"),
+/// the shell name if idle (e.g., "zsh"), or "Terminal" if unavailable
+#[tauri::command]
+pub fn get_foreground_process_name(
+    state: tauri::State<'_, TerminalState>,
+    id: u32,
+) -> Result<String, String> {
+    let mut manager = state.lock().map_err(|e| e.to_string())?;
+
+    if let Some(instance) = manager.instances.get_mut(&id) {
+        // Check if shell has exited
+        match instance.child.try_wait() {
+            Ok(Some(_)) => return Ok("Terminal".to_string()),
+            Ok(None) => {}
+            Err(_) => return Ok("Terminal".to_string()),
+        }
+
+        if let Some(shell_pid) = instance.shell_pid {
+            use sysinfo::System;
+
+            let mut sys = System::new();
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+
+            // Look for direct child process of the shell (foreground process)
+            let child_process = sys.processes().values().find(|proc| {
+                proc.parent()
+                    .map(|parent_pid| parent_pid.as_u32() == shell_pid)
+                    .unwrap_or(false)
+            });
+
+            if let Some(child) = child_process {
+                return Ok(child.name().to_string_lossy().to_string());
+            }
+
+            // No child process, return the shell name
+            if let Some(shell_proc) = sys.process(sysinfo::Pid::from_u32(shell_pid)) {
+                return Ok(shell_proc.name().to_string_lossy().to_string());
+            }
+
+            Ok("Terminal".to_string())
+        } else {
+            Ok("Terminal".to_string())
+        }
+    } else {
+        Ok("Terminal".to_string())
+    }
+}
+
 /// Check if a terminal has a foreground process running (command in execution)
 /// Returns true if there's a child process of the shell (command running),
 /// false if the shell is idle (waiting at prompt)
