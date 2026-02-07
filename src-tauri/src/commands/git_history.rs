@@ -395,6 +395,55 @@ pub fn get_commit_diff(
     })
 }
 
+/// Get the number of commits on the current branch ahead of the default branch (main/master).
+/// Returns 0 if on the default branch itself or if no default branch is found.
+pub fn get_branch_ahead_count(repo_path: String) -> Result<usize, String> {
+    let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
+
+    let head = repo.head().map_err(|e| e.to_string())?;
+    let head_oid = head
+        .target()
+        .ok_or_else(|| "HEAD has no target".to_string())?;
+
+    let default_branch_name = match detect_default_branch(&repo) {
+        Some(name) => name,
+        None => return Ok(0),
+    };
+
+    // If currently on the default branch, return 0
+    if let Some(branch_name) = head.shorthand() {
+        if branch_name == default_branch_name {
+            return Ok(0);
+        }
+    }
+
+    let default_oid = repo
+        .find_branch(&default_branch_name, git2::BranchType::Local)
+        .map_err(|e| e.to_string())?
+        .get()
+        .target()
+        .ok_or_else(|| "Default branch has no target".to_string())?;
+
+    if head_oid == default_oid {
+        return Ok(0);
+    }
+
+    let merge_base = repo
+        .merge_base(head_oid, default_oid)
+        .map_err(|e| e.to_string())?;
+
+    // Count commits from merge-base to HEAD
+    let mut revwalk = repo.revwalk().map_err(|e| e.to_string())?;
+    revwalk.push(head_oid).map_err(|e| e.to_string())?;
+    revwalk.hide(merge_base).map_err(|e| e.to_string())?;
+    revwalk
+        .set_sorting(Sort::TOPOLOGICAL)
+        .map_err(|e| e.to_string())?;
+
+    let count = revwalk.count();
+    Ok(count)
+}
+
 /// Fetch from remote using git command
 pub fn fetch_remote(repo_path: String, remote: Option<String>) -> Result<FetchResult, String> {
     let remote_name = remote.unwrap_or_else(|| "origin".to_string());
@@ -1051,6 +1100,49 @@ mod tests {
         // Earlier commits should also be "shared"
         let mc1 = commits.iter().find(|c| c.message == "Master commit 1").unwrap();
         assert_eq!(mc1.branch_type, "shared");
+    }
+
+    #[test]
+    fn test_get_branch_ahead_count_on_feature() {
+        let dir = tempdir().unwrap();
+        let repo = create_repo_with_commit(dir.path());
+        let sig = test_signature();
+
+        add_commit(&repo, dir.path(), "file1.txt", "c1", "Master commit 1");
+        let base_oid = add_commit(&repo, dir.path(), "file2.txt", "c2", "Master commit 2");
+
+        // Create and switch to feature branch
+        let base_commit = repo.find_commit(base_oid).unwrap();
+        repo.branch("feature", &base_commit, false).unwrap();
+        let fb = repo.find_branch("feature", git2::BranchType::Local).unwrap();
+        let fc = fb.get().peel_to_commit().unwrap();
+        repo.checkout_tree(fc.tree().unwrap().as_object(), Some(git2::build::CheckoutBuilder::new().force())).unwrap();
+        repo.set_head("refs/heads/feature").unwrap();
+
+        // Add 3 commits on feature
+        for i in 1..=3 {
+            fs::write(dir.path().join(format!("f{}.txt", i)), format!("fc{}", i)).unwrap();
+            let mut idx = repo.index().unwrap();
+            idx.add_path(Path::new(&format!("f{}.txt", i))).unwrap();
+            idx.write().unwrap();
+            let tid = idx.write_tree().unwrap();
+            let tree = repo.find_tree(tid).unwrap();
+            let head = repo.head().unwrap().peel_to_commit().unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, &format!("Feature {}", i), &tree, &[&head]).unwrap();
+        }
+
+        let count = get_branch_ahead_count(dir.path().to_string_lossy().to_string()).unwrap();
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_get_branch_ahead_count_on_main() {
+        let dir = tempdir().unwrap();
+        let _repo = create_repo_with_commit(dir.path());
+
+        // On master (default branch), ahead count should be 0
+        let count = get_branch_ahead_count(dir.path().to_string_lossy().to_string()).unwrap();
+        assert_eq!(count, 0);
     }
 
     #[test]

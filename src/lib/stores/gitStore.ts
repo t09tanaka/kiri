@@ -36,6 +36,7 @@ export interface GitRepoInfo {
 
 interface GitStoreState {
   repoInfo: GitRepoInfo | null;
+  branchAheadCount: number;
   isLoading: boolean;
   error: string | null;
   allDiffs: GitFileDiff[];
@@ -46,6 +47,7 @@ interface GitStoreState {
 function createGitStore() {
   const { subscribe, set, update } = writable<GitStoreState>({
     repoInfo: null,
+    branchAheadCount: 0,
     isLoading: false,
     error: null,
     allDiffs: [],
@@ -61,9 +63,16 @@ function createGitStore() {
 
       try {
         const repoInfo = await invoke<GitRepoInfo>('get_git_status', { path });
+        let branchAheadCount = 0;
+        try {
+          branchAheadCount = await invoke<number>('get_branch_ahead_count', { repoPath: path });
+        } catch {
+          // Ignore errors (e.g., not a git repo or no default branch)
+        }
         update((state) => ({
           ...state,
           repoInfo,
+          branchAheadCount,
           isLoading: false,
         }));
       } catch (error) {
@@ -115,6 +124,7 @@ function createGitStore() {
     clear() {
       set({
         repoInfo: null,
+        branchAheadCount: 0,
         isLoading: false,
         error: null,
         allDiffs: [],
@@ -155,6 +165,8 @@ export const gitStatusMap = derived(gitStore, ($gitStore) => {
 });
 
 export const currentBranch = derived(gitStore, ($gitStore) => $gitStore.repoInfo?.branch ?? null);
+
+export const branchAheadCount = derived(gitStore, ($gitStore) => $gitStore.branchAheadCount);
 
 export function getStatusIcon(status: GitFileStatus): string {
   switch (status) {

@@ -42,6 +42,11 @@ pub fn get_behind_ahead_count(repo_path: String) -> Result<BehindAheadCount, Str
 }
 
 #[tauri::command]
+pub fn get_branch_ahead_count(repo_path: String) -> Result<usize, String> {
+    super::git_history::get_branch_ahead_count(repo_path)
+}
+
+#[tauri::command]
 pub fn pull_commits(
     repo_path: String,
     remote: Option<String>,

@@ -108,6 +108,13 @@ export const gitService = {
     invoke('get_behind_ahead_count', { repoPath }),
 
   /**
+   * Get count of commits ahead of the default branch (main/master).
+   * Returns 0 if on the default branch itself.
+   */
+  getBranchAheadCount: (repoPath: string): Promise<number> =>
+    invoke('get_branch_ahead_count', { repoPath }),
+
+  /**
    * Pull commits from remote
    */
   pullCommits: (repoPath: string, remote?: string, branch?: string): Promise<PullResult> =>

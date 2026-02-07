@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tabStore, activeTab } from '@/lib/stores/tabStore';
-  import { gitStore } from '@/lib/stores/gitStore';
+  import { gitStore, branchAheadCount } from '@/lib/stores/gitStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
   import { commitHistoryStore } from '@/lib/stores/commitHistoryStore';
@@ -171,6 +171,9 @@
           </svg>
           <span class="worktree-label">WT</span>
           <span>{gitInfo.branch}</span>
+          {#if $branchAheadCount > 0}
+            <span class="branch-ahead-count">{$branchAheadCount}</span>
+          {/if}
           <span class="shortcut-key">⌘H</span>
         </button>
       {:else}
@@ -195,6 +198,9 @@
             <path d="M18 9a9 9 0 0 1-9 9"></path>
           </svg>
           <span>{gitInfo.branch}</span>
+          {#if $branchAheadCount > 0}
+            <span class="branch-ahead-count">{$branchAheadCount}</span>
+          {/if}
           <span class="shortcut-key">⌘H</span>
         </button>
       {/if}
@@ -464,6 +470,14 @@
 
   .worktrees-count {
     font-weight: 700;
+  }
+
+  .branch-ahead-count {
+    font-size: 9px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    position: relative;
+    top: 2px;
   }
 
   .shortcut-key {
