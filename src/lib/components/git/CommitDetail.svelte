@@ -212,12 +212,22 @@
       <span>Select a commit to view details</span>
     </div>
   {:else}
+    {@const coAuthors = [
+      ...(diff.commit.message_body?.matchAll(/^Co-Authored-By:\s*(.+?)(?:\s*<[^>]+>)?\s*$/gim) ??
+        []),
+    ].map((m) => m[1].trim())}
+    {@const bodyWithoutCoAuthors = diff.commit.message_body
+      ?.split('\n')
+      .slice(1)
+      .filter((line) => !/^Co-Authored-By:\s*/i.test(line))
+      .join('\n')
+      .trim()}
     <!-- Commit header -->
     <div class="commit-header">
       <div class="commit-message-primary">{diff.commit.message.split('\n')[0]}</div>
-      {#if diff.commit.message_body.includes('\n')}
+      {#if bodyWithoutCoAuthors}
         <div class="commit-message-body">
-          {diff.commit.message_body.split('\n').slice(1).join('\n').trim()}
+          {bodyWithoutCoAuthors}
         </div>
       {/if}
       <div class="commit-meta">
@@ -235,6 +245,9 @@
           </svg>
           {diff.commit.author}
           <span class="meta-email">&lt;{diff.commit.author_email}&gt;</span>
+          {#each coAuthors as coAuthor}
+            <span class="meta-coauthor">· {coAuthor}</span>
+          {/each}
         </span>
         <span class="meta-date">{formatDate(diff.commit.date)}</span>
         <span class="meta-hash" class:unpushed={!diff.commit.is_pushed}>{diff.commit.full_hash.slice(0, 8)}</span>
@@ -406,6 +419,11 @@
   }
 
   .meta-email {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .meta-coauthor {
     color: var(--text-muted);
     font-size: 11px;
   }

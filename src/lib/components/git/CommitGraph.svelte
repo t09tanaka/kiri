@@ -118,7 +118,7 @@
   function parseCommitMessage(message: string): { prefix: string | null; subject: string } {
     const firstLine = message.split('\n')[0];
     const colonIndex = firstLine.indexOf(':');
-    if (colonIndex > 0 && colonIndex < 20) {
+    if (colonIndex > 0 && colonIndex < 30) {
       return {
         prefix: firstLine.slice(0, colonIndex + 1),
         subject: firstLine.slice(colonIndex + 1).trim(),
