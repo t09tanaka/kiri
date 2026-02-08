@@ -91,6 +91,12 @@ export const worktreeService = {
     invoke('detect_package_manager', { projectPath }),
 
   /**
+   * Detect all package managers from lock files in the project directory
+   */
+  detectPackageManagers: (projectPath: string): Promise<PackageManager[]> =>
+    invoke('detect_package_managers', { projectPath }),
+
+  /**
    * Run an initialization command in the specified directory
    */
   runInitCommand: (cwd: string, command: string): Promise<CommandOutput> =>

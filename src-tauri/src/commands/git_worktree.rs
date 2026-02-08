@@ -559,43 +559,179 @@ pub fn copy_files_to_worktree(
     })
 }
 
-/// Detect package manager by checking for lock files in the project directory.
-/// Priority order: pnpm > yarn > bun > npm (to prefer faster package managers)
-pub fn detect_package_manager(project_path: String) -> Result<Option<PackageManager>, String> {
-    let path = Path::new(&project_path);
+/// Directories to exclude when scanning subdirectories for package managers.
+const EXCLUDED_DIRS: &[&str] = &[
+    "node_modules",
+    ".git",
+    "target",
+    "dist",
+    "build",
+    "vendor",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".tox",
+    ".next",
+    ".nuxt",
+    "out",
+    "coverage",
+];
 
-    if !path.exists() {
-        return Err(format!("Path does not exist: {}", project_path));
-    }
+/// Detect package managers in a single directory and return results.
+/// The `command_prefix` is prepended to commands (e.g., "cd subdir && " for subdirectories).
+fn detect_package_managers_in_dir(dir: &Path, command_prefix: &str) -> Vec<PackageManager> {
+    let mut results = Vec::new();
 
-    // Check for lock files in priority order
-    let lock_files = [
+    // Node.js ecosystem (priority: pnpm > yarn > bun > npm)
+    let nodejs_lock_files = [
         ("pnpm-lock.yaml", "pnpm", "pnpm install"),
         ("yarn.lock", "yarn", "yarn install"),
         ("bun.lockb", "bun", "bun install"),
         ("package-lock.json", "npm", "npm install"),
     ];
 
-    for (lock_file, name, command) in lock_files {
-        if path.join(lock_file).exists() {
-            return Ok(Some(PackageManager {
+    let mut nodejs_found = false;
+    for (lock_file, name, command) in nodejs_lock_files {
+        if dir.join(lock_file).exists() {
+            results.push(PackageManager {
                 name: name.to_string(),
                 lock_file: lock_file.to_string(),
-                command: command.to_string(),
-            }));
+                command: format!("{}{}", command_prefix, command),
+            });
+            nodejs_found = true;
+            break;
         }
     }
 
-    // No lock file found, but check if package.json exists (default to npm)
-    if path.join("package.json").exists() {
-        return Ok(Some(PackageManager {
+    if !nodejs_found && dir.join("package.json").exists() {
+        results.push(PackageManager {
             name: "npm".to_string(),
             lock_file: "".to_string(),
-            command: "npm install".to_string(),
-        }));
+            command: format!("{}npm install", command_prefix),
+        });
     }
 
-    Ok(None)
+    // Python ecosystem (priority: uv > poetry > pipenv > pip)
+    let python_candidates: &[(&[&str], &str, &str)] = &[
+        (&["uv.lock"], "uv", "uv sync"),
+        (&["poetry.lock"], "poetry", "poetry install"),
+        (&["Pipfile.lock", "Pipfile"], "pipenv", "pipenv install"),
+        (
+            &["requirements.txt"],
+            "pip",
+            "pip install -r requirements.txt",
+        ),
+    ];
+
+    for (files, name, command) in python_candidates {
+        if let Some(found_file) = files.iter().find(|f| dir.join(f).exists()) {
+            results.push(PackageManager {
+                name: name.to_string(),
+                lock_file: found_file.to_string(),
+                command: format!("{}{}", command_prefix, command),
+            });
+            break;
+        }
+    }
+
+    // Rust ecosystem
+    if dir.join("Cargo.toml").exists() {
+        results.push(PackageManager {
+            name: "cargo".to_string(),
+            lock_file: "Cargo.toml".to_string(),
+            command: format!("{}cargo build", command_prefix),
+        });
+    }
+
+    // Go ecosystem
+    if dir.join("go.mod").exists() {
+        results.push(PackageManager {
+            name: "go".to_string(),
+            lock_file: "go.mod".to_string(),
+            command: format!("{}go mod download", command_prefix),
+        });
+    }
+
+    // Ruby ecosystem
+    let ruby_files = ["Gemfile.lock", "Gemfile"];
+    if let Some(found_file) = ruby_files.iter().find(|f| dir.join(f).exists()) {
+        results.push(PackageManager {
+            name: "bundler".to_string(),
+            lock_file: found_file.to_string(),
+            command: format!("{}bundle install", command_prefix),
+        });
+    }
+
+    // PHP ecosystem
+    let php_files = ["composer.lock", "composer.json"];
+    if let Some(found_file) = php_files.iter().find(|f| dir.join(f).exists()) {
+        results.push(PackageManager {
+            name: "composer".to_string(),
+            lock_file: found_file.to_string(),
+            command: format!("{}composer install", command_prefix),
+        });
+    }
+
+    results
+}
+
+/// Detect all package managers by checking for lock files across multiple language ecosystems.
+/// Searches both the root directory and immediate subdirectories (1 level deep).
+/// Returns at most one result per language ecosystem per directory.
+///
+/// Supported ecosystems:
+/// - Node.js: pnpm > yarn > bun > npm
+/// - Python: uv > poetry > pipenv > pip
+/// - Rust: cargo
+/// - Go: go
+/// - Ruby: bundler
+/// - PHP: composer
+pub fn detect_package_managers(project_path: String) -> Result<Vec<PackageManager>, String> {
+    let path = Path::new(&project_path);
+
+    if !path.exists() {
+        return Err(format!("Path does not exist: {}", project_path));
+    }
+
+    // Detect in root directory (no command prefix)
+    let mut results = detect_package_managers_in_dir(path, "");
+
+    // Scan immediate subdirectories (1 level deep)
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if !entry_path.is_dir() {
+                continue;
+            }
+
+            // Skip excluded directories
+            let dir_name = match entry_path.file_name().and_then(|n| n.to_str()) {
+                Some(name) => name.to_string(),
+                None => continue,
+            };
+
+            if dir_name.starts_with('.') && EXCLUDED_DIRS.contains(&dir_name.as_str()) {
+                continue;
+            }
+            if EXCLUDED_DIRS.contains(&dir_name.as_str()) {
+                continue;
+            }
+
+            let prefix = format!("cd {} && ", dir_name);
+            let subdir_results = detect_package_managers_in_dir(&entry_path, &prefix);
+            results.extend(subdir_results);
+        }
+    }
+
+    Ok(results)
+}
+
+/// Detect package manager by checking for lock files in the project directory.
+/// Returns the first detected package manager (backward compatible wrapper).
+/// Priority order: pnpm > yarn > bun > npm
+pub fn detect_package_manager(project_path: String) -> Result<Option<PackageManager>, String> {
+    let results = detect_package_managers(project_path)?;
+    Ok(results.into_iter().next())
 }
 
 /// Run an initialization command in the specified directory.
@@ -1436,5 +1572,269 @@ mod tests {
         assert!(output.success);
         assert_eq!(output.stdout, "output");
         assert_eq!(output.exit_code, 0);
+    }
+
+    #[test]
+    fn test_detect_package_managers_python_uv() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("uv.lock"), "").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        assert_eq!(pms.len(), 1);
+        assert_eq!(pms[0].name, "uv");
+        assert_eq!(pms[0].lock_file, "uv.lock");
+        assert_eq!(pms[0].command, "uv sync");
+    }
+
+    #[test]
+    fn test_detect_package_managers_python_poetry() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("poetry.lock"), "").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        assert_eq!(pms.len(), 1);
+        assert_eq!(pms[0].name, "poetry");
+        assert_eq!(pms[0].lock_file, "poetry.lock");
+        assert_eq!(pms[0].command, "poetry install");
+    }
+
+    #[test]
+    fn test_detect_package_managers_python_pipenv() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("Pipfile"), "").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        assert_eq!(pms.len(), 1);
+        assert_eq!(pms[0].name, "pipenv");
+        assert_eq!(pms[0].lock_file, "Pipfile");
+        assert_eq!(pms[0].command, "pipenv install");
+    }
+
+    #[test]
+    fn test_detect_package_managers_python_pip() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("requirements.txt"), "flask==2.0").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        assert_eq!(pms.len(), 1);
+        assert_eq!(pms[0].name, "pip");
+        assert_eq!(pms[0].lock_file, "requirements.txt");
+        assert_eq!(pms[0].command, "pip install -r requirements.txt");
+    }
+
+    #[test]
+    fn test_detect_package_managers_rust() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        assert_eq!(pms.len(), 1);
+        assert_eq!(pms[0].name, "cargo");
+        assert_eq!(pms[0].lock_file, "Cargo.toml");
+        assert_eq!(pms[0].command, "cargo build");
+    }
+
+    #[test]
+    fn test_detect_package_managers_go() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("go.mod"), "module example.com/app").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        assert_eq!(pms.len(), 1);
+        assert_eq!(pms[0].name, "go");
+        assert_eq!(pms[0].lock_file, "go.mod");
+        assert_eq!(pms[0].command, "go mod download");
+    }
+
+    #[test]
+    fn test_detect_package_managers_ruby() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("Gemfile"), "source 'https://rubygems.org'").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        assert_eq!(pms.len(), 1);
+        assert_eq!(pms[0].name, "bundler");
+        assert_eq!(pms[0].lock_file, "Gemfile");
+        assert_eq!(pms[0].command, "bundle install");
+    }
+
+    #[test]
+    fn test_detect_package_managers_php() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("composer.json"), "{}").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        assert_eq!(pms.len(), 1);
+        assert_eq!(pms[0].name, "composer");
+        assert_eq!(pms[0].lock_file, "composer.json");
+        assert_eq!(pms[0].command, "composer install");
+    }
+
+    #[test]
+    fn test_detect_package_managers_multi_language() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), "{}").unwrap();
+        fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+        fs::write(dir.path().join("requirements.txt"), "flask==2.0").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        assert_eq!(pms.len(), 3);
+
+        let names: Vec<&str> = pms.iter().map(|pm| pm.name.as_str()).collect();
+        assert!(names.contains(&"npm"));
+        assert!(names.contains(&"cargo"));
+        assert!(names.contains(&"pip"));
+    }
+
+    #[test]
+    fn test_detect_package_managers_python_priority() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("uv.lock"), "").unwrap();
+        fs::write(dir.path().join("requirements.txt"), "flask==2.0").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        // Should only return uv, not pip (uv has higher priority)
+        assert_eq!(pms.len(), 1);
+        assert_eq!(pms[0].name, "uv");
+    }
+
+    #[test]
+    fn test_detect_package_managers_subdirectory_rust() {
+        let dir = tempdir().unwrap();
+        // Rust project in a subdirectory (like Tauri's src-tauri/)
+        let subdir = dir.path().join("src-tauri");
+        fs::create_dir_all(&subdir).unwrap();
+        fs::write(subdir.join("Cargo.toml"), "[package]").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        assert_eq!(pms.len(), 1);
+        assert_eq!(pms[0].name, "cargo");
+        assert_eq!(pms[0].command, "cd src-tauri && cargo build");
+    }
+
+    #[test]
+    fn test_detect_package_managers_root_and_subdirectory() {
+        let dir = tempdir().unwrap();
+        // Node.js at root
+        fs::write(dir.path().join("package.json"), "{}").unwrap();
+        fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
+        // Rust in subdirectory
+        let subdir = dir.path().join("src-tauri");
+        fs::create_dir_all(&subdir).unwrap();
+        fs::write(subdir.join("Cargo.toml"), "[package]").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        assert!(pms.len() >= 2, "Expected at least 2 PMs, got {}", pms.len());
+
+        // Root npm
+        let npm = pms.iter().find(|p| p.name == "npm");
+        assert!(npm.is_some());
+        assert_eq!(npm.unwrap().command, "npm install");
+
+        // Subdirectory cargo
+        let cargo = pms.iter().find(|p| p.name == "cargo");
+        assert!(cargo.is_some());
+        assert_eq!(cargo.unwrap().command, "cd src-tauri && cargo build");
+    }
+
+    #[test]
+    fn test_detect_package_managers_excludes_node_modules() {
+        let dir = tempdir().unwrap();
+        // Create node_modules with a package.json (should be ignored)
+        let nm_dir = dir.path().join("node_modules");
+        fs::create_dir_all(&nm_dir).unwrap();
+        fs::write(nm_dir.join("package.json"), "{}").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_detect_package_managers_excludes_target() {
+        let dir = tempdir().unwrap();
+        // Create target dir with Cargo.toml (should be ignored)
+        let target_dir = dir.path().join("target");
+        fs::create_dir_all(&target_dir).unwrap();
+        fs::write(target_dir.join("Cargo.toml"), "[package]").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_detect_package_managers_subdirectory_python() {
+        let dir = tempdir().unwrap();
+        let subdir = dir.path().join("backend");
+        fs::create_dir_all(&subdir).unwrap();
+        fs::write(subdir.join("requirements.txt"), "flask==2.0").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        assert_eq!(pms.len(), 1);
+        assert_eq!(pms[0].name, "pip");
+        assert_eq!(pms[0].command, "cd backend && pip install -r requirements.txt");
+    }
+
+    #[test]
+    fn test_detect_package_managers_same_lang_root_and_subdir() {
+        let dir = tempdir().unwrap();
+        // npm at root
+        fs::write(dir.path().join("package.json"), "{}").unwrap();
+        fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
+        // Also npm in a subdirectory
+        let subdir = dir.path().join("frontend");
+        fs::create_dir_all(&subdir).unwrap();
+        fs::write(subdir.join("package.json"), "{}").unwrap();
+        fs::write(subdir.join("yarn.lock"), "").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let pms = result.unwrap();
+        // Should return both: root npm + subdirectory yarn
+        let root_npm = pms.iter().find(|p| p.command == "npm install");
+        assert!(root_npm.is_some());
+        let subdir_yarn = pms.iter().find(|p| p.command == "cd frontend && yarn install");
+        assert!(subdir_yarn.is_some());
     }
 }

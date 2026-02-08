@@ -59,7 +59,7 @@
 
   // Init commands state
   let initCommands = $state<WorktreeInitCommand[]>([]);
-  let detectedPackageManager = $state<PackageManager | null>(null);
+  let detectedPackageManagers = $state<PackageManager[]>([]);
   let newInitCommandName = $state('');
   let newInitCommandValue = $state('');
 
@@ -176,7 +176,7 @@
     await loadContext();
     await loadCopySettings();
     await loadInitCommands();
-    await detectPackageManager();
+    await detectPackageManagers();
     await loadPortConfig();
     await detectPortsForWorktree();
   });
@@ -248,11 +248,11 @@
     }
   }
 
-  async function detectPackageManager() {
+  async function detectPackageManagers() {
     try {
-      detectedPackageManager = await worktreeService.detectPackageManager(projectPath);
+      detectedPackageManagers = await worktreeService.detectPackageManagers(projectPath);
     } catch {
-      detectedPackageManager = null;
+      detectedPackageManagers = [];
     }
   }
 
@@ -389,15 +389,12 @@
   }
 
   function getEnabledCommandCount(): number {
-    // Enabled init commands (auto-detected + user-added)
     let count = 0;
-    // Check if package manager command is enabled
-    if (detectedPackageManager) {
-      const hasUserOverride = initCommands.some(
-        (c) => c.name === 'Install dependencies' && !c.auto
-      );
+    // Check auto-detected package managers
+    for (const pm of detectedPackageManagers) {
+      const hasUserOverride = initCommands.some((c) => c.command === pm.command);
       if (!hasUserOverride) {
-        count++; // Auto-detected package manager
+        count++;
       }
     }
     // Count enabled user commands
@@ -430,13 +427,11 @@
 
   function getCommandsTooltip(): string {
     const commands: string[] = [];
-    // Auto-detected package manager
-    if (detectedPackageManager) {
-      const hasUserOverride = initCommands.some(
-        (c) => c.name === 'Install dependencies' && !c.auto
-      );
+    // Auto-detected package managers
+    for (const pm of detectedPackageManagers) {
+      const hasUserOverride = initCommands.some((c) => c.command === pm.command);
       if (!hasUserOverride) {
-        commands.push(detectedPackageManager.command);
+        commands.push(pm.command);
       }
     }
     // User commands
@@ -582,15 +577,16 @@
     // Combine auto-detected and user-configured commands
     const commands: WorktreeInitCommand[] = [];
 
-    // Add detected package manager if not already configured
-    if (detectedPackageManager) {
-      const hasPackageManagerCommand = initCommands.some(
-        (c) => c.command === detectedPackageManager!.command
-      );
+    // Add detected package managers if not already configured
+    for (const pm of detectedPackageManagers) {
+      const hasPackageManagerCommand = initCommands.some((c) => c.command === pm.command);
       if (!hasPackageManagerCommand) {
+        // Extract subdirectory from "cd subdir && " prefix if present
+        const cdMatch = pm.command.match(/^cd (.+?) && /);
+        const label = cdMatch ? `${pm.name} in ${cdMatch[1]}` : pm.name;
         commands.push({
-          name: 'Install dependencies',
-          command: detectedPackageManager.command,
+          name: `Install dependencies (${label})`,
+          command: pm.command,
           enabled: true,
           auto: true,
         });
@@ -1435,22 +1431,22 @@
             These commands will run in the new worktree after creation.
           </p>
 
-          <!-- Auto-detected package manager -->
-          {#if detectedPackageManager}
-            {@const hasUserOverride = initCommands.some(
-              (c) => c.command === detectedPackageManager!.command
-            )}
+          <!-- Auto-detected package managers -->
+          {#each detectedPackageManagers as pm (pm.command)}
+            {@const hasUserOverride = initCommands.some((c) => c.command === pm.command)}
+            {@const cdMatch = pm.command.match(/^cd (.+?) && /)}
+            {@const label = cdMatch ? `${pm.name} in ${cdMatch[1]}` : pm.name}
             {#if !hasUserOverride}
               <div class="command-item command-auto">
                 <input type="checkbox" class="command-checkbox" checked disabled />
                 <div class="command-info">
-                  <span class="command-name">Install dependencies</span>
-                  <span class="command-value">{detectedPackageManager.command}</span>
+                  <span class="command-name">Install dependencies ({label})</span>
+                  <span class="command-value">{pm.command}</span>
                 </div>
                 <span class="pattern-badge">auto</span>
               </div>
             {/if}
-          {/if}
+          {/each}
 
           <!-- User-configured commands -->
           {#each initCommands as cmd (cmd.command)}
