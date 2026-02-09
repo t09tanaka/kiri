@@ -12,6 +12,28 @@
   import { getLanguageExtension } from './languages';
   import { Spinner } from '@/lib/components/ui';
 
+  const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp']);
+
+  const MIME_TYPES: Record<string, string> = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    ico: 'image/x-icon',
+    bmp: 'image/bmp',
+  };
+
+  function isImageFile(path: string): boolean {
+    const ext = path.split('.').pop()?.toLowerCase() ?? '';
+    return IMAGE_EXTENSIONS.has(ext);
+  }
+
+  function getMimeType(path: string): string {
+    const ext = path.split('.').pop()?.toLowerCase() ?? '';
+    return MIME_TYPES[ext] ?? 'application/octet-stream';
+  }
+
   interface Props {
     filePath: string | null;
   }
@@ -23,6 +45,7 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   let isFocused = $state(false);
+  let imageDataUrl = $state<string | null>(null);
 
   // Compartment for dynamic theme updates (font size)
   const themeCompartment = new Compartment();
@@ -225,16 +248,24 @@
 
     loading = true;
     error = null;
+    imageDataUrl = null;
 
     try {
-      const content = await fileService.readFile(filePath);
-      // Set loading to false BEFORE creating editor so the container is rendered
-      loading = false;
-      // Wait for DOM to update (editor-container to be rendered)
-      await tick();
-      await createEditor(content);
-      // Load git diff after editor is created (fire-and-forget to avoid blocking)
-      loadGitDiff();
+      if (isImageFile(filePath)) {
+        const base64 = await fileService.readFileAsBase64(filePath);
+        const mime = getMimeType(filePath);
+        imageDataUrl = `data:${mime};base64,${base64}`;
+        loading = false;
+      } else {
+        const content = await fileService.readFile(filePath);
+        // Set loading to false BEFORE creating editor so the container is rendered
+        loading = false;
+        // Wait for DOM to update (editor-container to be rendered)
+        await tick();
+        await createEditor(content);
+        // Load git diff after editor is created (fire-and-forget to avoid blocking)
+        loadGitDiff();
+      }
     } catch (e) {
       error = String(e);
       console.error('Failed to read file:', e);
@@ -374,6 +405,10 @@
         </svg>
       </div>
       <span class="error-text">{error}</span>
+    </div>
+  {:else if imageDataUrl}
+    <div class="image-preview">
+      <img src={imageDataUrl} alt={filePath?.split('/').pop() ?? ''} />
     </div>
   {:else if !filePath}
     <div class="no-file">
@@ -655,6 +690,27 @@
     border-color: var(--accent-color);
     box-shadow: 0 3px 0 var(--bg-primary);
     transform: translateY(-1px);
+  }
+
+  /* Image preview */
+  .image-preview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    padding: var(--space-6);
+    z-index: 1;
+    position: relative;
+  }
+
+  .image-preview img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: var(--radius-md);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
   }
 
   /* Scanline overlay effect */

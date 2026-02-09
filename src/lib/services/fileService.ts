@@ -7,9 +7,14 @@ import type { FileEntry } from '@/lib/components/filetree/types';
  */
 export const fileService = {
   /**
-   * Read file contents
+   * Read file contents as UTF-8 text
    */
   readFile: (path: string): Promise<string> => invoke('read_file', { path }),
+
+  /**
+   * Read file contents as base64-encoded string (for binary files like images)
+   */
+  readFileAsBase64: (path: string): Promise<string> => invoke('read_file_as_base64', { path }),
 
   /**
    * Read directory entries
