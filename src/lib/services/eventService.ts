@@ -1,4 +1,5 @@
 import { listen, emit, type UnlistenFn, type EventCallback } from '@tauri-apps/api/event';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 /**
  * Tauri event service
@@ -6,10 +7,16 @@ import { listen, emit, type UnlistenFn, type EventCallback } from '@tauri-apps/a
  */
 export const eventService = {
   /**
-   * Listen for a Tauri event
+   * Listen for a Tauri event (global - receives from all windows)
    */
   listen: <T>(event: string, handler: EventCallback<T>): Promise<UnlistenFn> =>
     listen(event, handler),
+
+  /**
+   * Listen for a Tauri event scoped to the current window only
+   */
+  listenCurrentWindow: <T>(event: string, handler: EventCallback<T>): Promise<UnlistenFn> =>
+    getCurrentWindow().listen(event, handler),
 
   /**
    * Emit a Tauri event

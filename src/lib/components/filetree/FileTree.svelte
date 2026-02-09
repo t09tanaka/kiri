@@ -207,13 +207,15 @@
   }
 
   async function setupDragDropListeners() {
-    // Listen for drag enter
-    unlistenDragEnter = await eventService.listen<DragPayload>('tauri://drag-enter', (event) => {
-      dragDropStore.startDrag(event.payload.paths);
-    });
+    // Use window-scoped listeners to only handle drag events for THIS window
+    unlistenDragEnter = await eventService.listenCurrentWindow<DragPayload>(
+      'tauri://drag-enter',
+      (event) => {
+        dragDropStore.startDrag(event.payload.paths);
+      }
+    );
 
-    // Listen for drag drop
-    unlistenDragDrop = await eventService.listen<DragPayload>(
+    unlistenDragDrop = await eventService.listenCurrentWindow<DragPayload>(
       'tauri://drag-drop',
       async (event) => {
         const targetDir = $dropTargetPath || rootPath;
@@ -224,8 +226,7 @@
       }
     );
 
-    // Listen for drag leave
-    unlistenDragLeave = await eventService.listen('tauri://drag-leave', () => {
+    unlistenDragLeave = await eventService.listenCurrentWindow('tauri://drag-leave', () => {
       dragDropStore.endDrag();
     });
   }
