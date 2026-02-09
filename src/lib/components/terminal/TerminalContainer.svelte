@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { TerminalPane, TerminalPaneSplit } from '@/lib/stores/tabStore';
-  import { tabStore, getAllPaneIds } from '@/lib/stores/tabStore';
+  import type { TerminalPane } from '@/lib/stores/tabStore';
+  import { tabStore } from '@/lib/stores/tabStore';
   import Terminal from './Terminal.svelte';
   import TerminalContainer from './TerminalContainer.svelte';
 
@@ -40,11 +40,6 @@
     requestAnimationFrame(() => {
       window.dispatchEvent(new Event('terminal-resize'));
     });
-  }
-
-  function getFirstChildId(splitPane: TerminalPaneSplit): string {
-    const firstChild = splitPane.children[0];
-    return firstChild.type === 'terminal' ? firstChild.id : getAllPaneIds(firstChild)[0];
   }
 
   function handleDividerMouseDown(event: MouseEvent, index: number) {
@@ -100,7 +95,7 @@
         }
       }
 
-      tabStore.updatePaneSizes(tabId, getFirstChildId(pane), newSizes);
+      tabStore.updatePaneSizes(tabId, pane.id, newSizes);
 
       // Throttled resize event dispatch during drag
       if (!resizeThrottleTimeout) {

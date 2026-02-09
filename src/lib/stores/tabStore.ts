@@ -10,6 +10,7 @@ export interface TerminalPaneLeaf {
 
 export interface TerminalPaneSplit {
   type: 'split';
+  id: string; // unique split ID (e.g., "split-1")
   direction: 'horizontal' | 'vertical';
   children: TerminalPane[];
   sizes: number[]; // percentages for each child
@@ -27,9 +28,14 @@ export interface TerminalTab {
 export type Tab = TerminalTab;
 
 let nextPaneId = 1;
+let nextSplitId = 1;
 
 function generatePaneId(): string {
   return `pane-${nextPaneId++}`;
+}
+
+function generateSplitId(): string {
+  return `split-${nextSplitId++}`;
 }
 
 /**
@@ -69,6 +75,7 @@ function splitPaneInTree(
       // Found the target pane, create a split
       return {
         type: 'split',
+        id: generateSplitId(),
         direction,
         children: [pane, { type: 'terminal', id: newPaneId, terminalId: null }],
         sizes: [50, 50],
@@ -170,6 +177,16 @@ export function getAllPaneIds(pane: TerminalPane): string[] {
 }
 
 /**
+ * Helper: Get all split IDs from a pane tree
+ */
+export function getAllSplitIds(pane: TerminalPane): string[] {
+  if (pane.type === 'terminal') {
+    return [];
+  }
+  return [pane.id, ...pane.children.flatMap(getAllSplitIds)];
+}
+
+/**
  * Helper: Get the first terminal ID from a pane tree (depth-first)
  */
 export function getFirstTerminalId(pane: TerminalPane): number | null {
@@ -194,23 +211,19 @@ export function getAllTerminalIds(pane: TerminalPane): number[] {
 }
 
 /**
- * Helper: Update sizes of a split pane (identified by first child pane ID)
+ * Helper: Update sizes of a split pane (identified by split ID)
  */
 function updatePaneSizesInTree(
   pane: TerminalPane,
-  firstChildId: string,
+  splitId: string,
   newSizes: number[]
 ): TerminalPane {
   if (pane.type === 'terminal') {
     return pane;
   }
 
-  // Check if this split's first child matches
-  const firstChild = pane.children[0];
-  const firstChildPaneId =
-    firstChild.type === 'terminal' ? firstChild.id : getAllPaneIds(firstChild)[0];
-
-  if (firstChildPaneId === firstChildId) {
+  // Check if this split matches by ID
+  if (pane.id === splitId) {
     return {
       ...pane,
       sizes: newSizes,
@@ -220,7 +233,7 @@ function updatePaneSizesInTree(
   // Recurse into children
   return {
     ...pane,
-    children: pane.children.map((child) => updatePaneSizesInTree(child, firstChildId, newSizes)),
+    children: pane.children.map((child) => updatePaneSizesInTree(child, splitId, newSizes)),
   };
 }
 
@@ -234,6 +247,7 @@ export function paneToPersistedPane(pane: TerminalPane): PersistedPane {
   }
   return {
     type: 'split',
+    id: pane.id,
     direction: pane.direction,
     children: pane.children.map(paneToPersistedPane),
     sizes: [...pane.sizes],
@@ -250,6 +264,7 @@ export function persistedPaneToPane(persisted: PersistedPane): TerminalPane {
   }
   return {
     type: 'split',
+    id: persisted.id || generateSplitId(), // Generate ID for backwards compatibility
     direction: persisted.direction,
     children: persisted.children.map(persistedPaneToPane),
     sizes: [...persisted.sizes],
@@ -382,14 +397,14 @@ function createTabStore() {
     /**
      * Update sizes of a split pane
      */
-    updatePaneSizes: (tabId: string, firstChildId: string, sizes: number[]) => {
+    updatePaneSizes: (tabId: string, splitId: string, sizes: number[]) => {
       update((state) => ({
         ...state,
         tabs: state.tabs.map((t) => {
           if (t.id === tabId && t.type === 'terminal') {
             return {
               ...t,
-              rootPane: updatePaneSizesInTree(t.rootPane, firstChildId, sizes),
+              rootPane: updatePaneSizesInTree(t.rootPane, splitId, sizes),
             };
           }
           return t;
@@ -466,6 +481,16 @@ function createTabStore() {
         })
         .reduce((max, id) => Math.max(max, id), 0);
       nextPaneId = maxPaneId + 1;
+
+      // Update nextSplitId to avoid ID collisions
+      const maxSplitId = tabs
+        .flatMap((t) => getAllSplitIds(t.rootPane))
+        .map((id) => {
+          const match = id.match(/^split-(\d+)$/);
+          return match ? parseInt(match[1], 10) : 0;
+        })
+        .reduce((max, id) => Math.max(max, id), 0);
+      nextSplitId = maxSplitId + 1;
 
       set({
         tabs,

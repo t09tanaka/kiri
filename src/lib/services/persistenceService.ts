@@ -20,6 +20,7 @@ export interface PersistedPaneLeaf {
 
 export interface PersistedPaneSplit {
   type: 'split';
+  id?: string; // Optional for backwards compatibility with old data
   direction: 'horizontal' | 'vertical';
   children: PersistedPane[];
   sizes: number[];

@@ -4,12 +4,14 @@ import {
   tabStore,
   activeTab,
   getAllPaneIds,
+  getAllSplitIds,
   getAllTerminalIds,
   getFirstTerminalId,
   closePaneInTree,
   paneToPersistedPane,
   persistedPaneToPane,
   type TerminalPane,
+  type TerminalPaneSplit,
 } from './tabStore';
 import type { PersistedPane } from '@/lib/services/persistenceService';
 
@@ -317,7 +319,7 @@ describe('tabStore', () => {
 
       // User drags boundary to custom sizes: [30%, 70%]
       const pane2Id = (rootPane.children[1] as { id: string }).id;
-      tabStore.updatePaneSizes(tabId, firstPaneId, [30, 70]);
+      tabStore.updatePaneSizes(tabId, rootPane.id, [30, 70]);
 
       state = get(tabStore);
       rootPane = state.tabs[0].rootPane;
@@ -355,7 +357,7 @@ describe('tabStore', () => {
       const pane2Id = (rootPane.children[1] as { id: string }).id;
 
       // User drags boundary to custom sizes: [30%, 70%]
-      tabStore.updatePaneSizes(tabId, firstPaneId, [30, 70]);
+      tabStore.updatePaneSizes(tabId, rootPane.id, [30, 70]);
 
       // Split pane-2 in DIFFERENT direction (horizontal)
       tabStore.splitPane(tabId, pane2Id, 'horizontal');
@@ -444,11 +446,9 @@ describe('tabStore', () => {
       tabStore.splitPane(tabId, paneId, 'horizontal');
 
       const splitState = get(tabStore).tabs[0];
-      const firstChildId = (
-        (splitState.rootPane as { children: TerminalPane[] }).children[0] as { id: string }
-      ).id;
+      const splitId = (splitState.rootPane as TerminalPaneSplit).id;
 
-      tabStore.updatePaneSizes(tabId, firstChildId, [30, 70]);
+      tabStore.updatePaneSizes(tabId, splitId, [30, 70]);
 
       const updatedTab = get(tabStore).tabs[0];
       expect((updatedTab.rootPane as { sizes: number[] }).sizes).toEqual([30, 70]);
@@ -584,6 +584,53 @@ describe('getAllPaneIds', () => {
     };
 
     expect(getAllPaneIds(pane)).toEqual(['pane-1', 'pane-2', 'pane-3']);
+  });
+});
+
+describe('getAllSplitIds', () => {
+  it('should return empty array for leaf', () => {
+    const pane: TerminalPane = { type: 'terminal', id: 'pane-1', terminalId: null };
+
+    expect(getAllSplitIds(pane)).toEqual([]);
+  });
+
+  it('should return split ID for single split', () => {
+    const pane: TerminalPane = {
+      type: 'split',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: null },
+        { type: 'terminal', id: 'pane-2', terminalId: null },
+      ],
+      sizes: [50, 50],
+    };
+
+    expect(getAllSplitIds(pane)).toEqual(['split-1']);
+  });
+
+  it('should return all split IDs for nested splits', () => {
+    const pane: TerminalPane = {
+      type: 'split',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: null },
+        {
+          type: 'split',
+          id: 'split-2',
+          direction: 'vertical',
+          children: [
+            { type: 'terminal', id: 'pane-2', terminalId: null },
+            { type: 'terminal', id: 'pane-3', terminalId: null },
+          ],
+          sizes: [50, 50],
+        },
+      ],
+      sizes: [50, 50],
+    };
+
+    expect(getAllSplitIds(pane)).toEqual(['split-1', 'split-2']);
   });
 });
 
@@ -819,8 +866,13 @@ describe('advanced tabStore operations', () => {
       // Second split (nested)
       tabStore.splitPane(tabId, secondPaneId, 'vertical');
 
-      // Update sizes of nested split
-      tabStore.updatePaneSizes(tabId, secondPaneId, [30, 70]);
+      // Get the nested split's ID
+      state = get(tabStore);
+      const outerSplit = state.tabs[0].rootPane as TerminalPaneSplit;
+      const nestedSplitId = (outerSplit.children[1] as TerminalPaneSplit).id;
+
+      // Update sizes of nested split using split ID
+      tabStore.updatePaneSizes(tabId, nestedSplitId, [30, 70]);
 
       const finalTab = get(tabStore).tabs[0];
       const finalSplit = finalTab.rootPane as { children: TerminalPane[] };
@@ -828,9 +880,9 @@ describe('advanced tabStore operations', () => {
       expect(nestedSplit.sizes).toEqual([30, 70]);
     });
 
-    it('should handle updatePaneSizes when first child is a split (not terminal)', () => {
+    it('should correctly update nested split sizes without affecting parent', () => {
       // Create a structure where the first child of a split is another split
-      // Structure: split[split[pane1a, pane1b], pane2]
+      // Structure: outerSplit[innerSplit[pane1a, pane1b], pane2]
       tabStore.addTerminalTab();
       let state = get(tabStore);
       const tabId = state.tabs[0].id;
@@ -842,29 +894,36 @@ describe('advanced tabStore operations', () => {
 
       state = get(tabStore);
       terminalTab = state.tabs[0];
-      const splitPane = terminalTab.rootPane as { children: TerminalPane[] };
+      const splitPane = terminalTab.rootPane as TerminalPaneSplit;
       const pane1Id = (splitPane.children[0] as { id: string }).id;
 
-      // Split pane1 to make it a split: split[split[pane1a, pane1b], pane2]
+      // Split pane1 to make it a split: outerSplit[innerSplit[pane1a, pane1b], pane2]
       tabStore.splitPane(tabId, pane1Id, 'vertical');
 
       state = get(tabStore);
       terminalTab = state.tabs[0];
-      const outerSplit = terminalTab.rootPane as { children: TerminalPane[] };
-      // First child is now a split (innerSplit)
-      const innerSplit = outerSplit.children[0] as { children: TerminalPane[] };
-      const innerFirstPaneId = (innerSplit.children[0] as { id: string }).id;
+      const outerSplit = terminalTab.rootPane as TerminalPaneSplit;
+      const innerSplit = outerSplit.children[0] as TerminalPaneSplit;
 
-      // updatePaneSizes identifies a split by its first child's ID
-      // When first child is a split, it uses getAllPaneIds(firstChild)[0]
-      // So using innerFirstPaneId identifies the OUTER split (whose first child is innerSplit)
-      // This tests the branch where firstChild.type !== 'terminal'
-      tabStore.updatePaneSizes(tabId, innerFirstPaneId, [25, 75]);
+      // Update inner split sizes using its own ID
+      tabStore.updatePaneSizes(tabId, innerSplit.id, [25, 75]);
 
-      // The OUTER split's sizes should be updated
       const finalTab = get(tabStore).tabs[0];
-      const finalOuterSplit = finalTab.rootPane as { sizes: number[] };
-      expect(finalOuterSplit.sizes).toEqual([25, 75]);
+      const finalOuterSplit = finalTab.rootPane as TerminalPaneSplit;
+      // Inner split sizes should be updated
+      expect((finalOuterSplit.children[0] as TerminalPaneSplit).sizes).toEqual([25, 75]);
+      // Outer split sizes should NOT be affected
+      expect(finalOuterSplit.sizes).toEqual([50, 50]);
+
+      // Now update outer split sizes using its own ID
+      tabStore.updatePaneSizes(tabId, outerSplit.id, [40, 60]);
+
+      const finalTab2 = get(tabStore).tabs[0];
+      const finalOuterSplit2 = finalTab2.rootPane as TerminalPaneSplit;
+      // Outer split sizes should be updated
+      expect(finalOuterSplit2.sizes).toEqual([40, 60]);
+      // Inner split sizes should NOT be affected
+      expect((finalOuterSplit2.children[0] as TerminalPaneSplit).sizes).toEqual([25, 75]);
     });
 
     it('should close one of multiple children in split', () => {
@@ -1158,6 +1217,7 @@ describe('paneToPersistedPane', () => {
   it('should convert a split pane recursively', () => {
     const pane: TerminalPane = {
       type: 'split',
+      id: 'split-1',
       direction: 'horizontal',
       children: [
         { type: 'terminal', id: 'pane-1', terminalId: 1 },
@@ -1169,6 +1229,7 @@ describe('paneToPersistedPane', () => {
 
     expect(persisted).toEqual({
       type: 'split',
+      id: 'split-1',
       direction: 'horizontal',
       children: [
         { type: 'terminal', id: 'pane-1' },
@@ -1181,11 +1242,13 @@ describe('paneToPersistedPane', () => {
   it('should convert nested splits', () => {
     const pane: TerminalPane = {
       type: 'split',
+      id: 'split-1',
       direction: 'vertical',
       children: [
         { type: 'terminal', id: 'pane-1', terminalId: 1 },
         {
           type: 'split',
+          id: 'split-2',
           direction: 'horizontal',
           children: [
             { type: 'terminal', id: 'pane-2', terminalId: 2 },
@@ -1200,11 +1263,13 @@ describe('paneToPersistedPane', () => {
 
     expect(persisted).toEqual({
       type: 'split',
+      id: 'split-1',
       direction: 'vertical',
       children: [
         { type: 'terminal', id: 'pane-1' },
         {
           type: 'split',
+          id: 'split-2',
           direction: 'horizontal',
           children: [
             { type: 'terminal', id: 'pane-2' },
@@ -1229,6 +1294,7 @@ describe('persistedPaneToPane', () => {
   it('should convert a persisted split pane recursively', () => {
     const persisted: PersistedPane = {
       type: 'split',
+      id: 'split-10',
       direction: 'horizontal',
       children: [
         { type: 'terminal', id: 'pane-1' },
@@ -1240,6 +1306,7 @@ describe('persistedPaneToPane', () => {
 
     expect(pane).toEqual({
       type: 'split',
+      id: 'split-10',
       direction: 'horizontal',
       children: [
         { type: 'terminal', id: 'pane-1', terminalId: null },
@@ -1249,14 +1316,34 @@ describe('persistedPaneToPane', () => {
     });
   });
 
+  it('should generate split ID when persisted data has no ID (backwards compat)', () => {
+    const persisted: PersistedPane = {
+      type: 'split',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1' },
+        { type: 'terminal', id: 'pane-2' },
+      ],
+      sizes: [30, 70],
+    };
+    const pane = persistedPaneToPane(persisted);
+
+    expect(pane.type).toBe('split');
+    if (pane.type === 'split') {
+      expect(pane.id).toMatch(/^split-\d+$/);
+    }
+  });
+
   it('should convert nested persisted splits', () => {
     const persisted: PersistedPane = {
       type: 'split',
+      id: 'split-20',
       direction: 'vertical',
       children: [
         { type: 'terminal', id: 'pane-1' },
         {
           type: 'split',
+          id: 'split-21',
           direction: 'horizontal',
           children: [
             { type: 'terminal', id: 'pane-2' },
@@ -1271,11 +1358,13 @@ describe('persistedPaneToPane', () => {
 
     expect(pane).toEqual({
       type: 'split',
+      id: 'split-20',
       direction: 'vertical',
       children: [
         { type: 'terminal', id: 'pane-1', terminalId: null },
         {
           type: 'split',
+          id: 'split-21',
           direction: 'horizontal',
           children: [
             { type: 'terminal', id: 'pane-2', terminalId: null },
@@ -1392,11 +1481,10 @@ describe('getStateForPersistence with pane structure', () => {
     tabStore.splitPane(tabId, paneId, 'vertical');
 
     state = get(tabStore);
-    const rootPane = state.tabs[0].rootPane;
-    if (rootPane.type !== 'split') return;
-    const firstChildId = (rootPane.children[0] as { id: string }).id;
+    const rootPane = state.tabs[0].rootPane as TerminalPaneSplit;
+    const splitId = rootPane.id;
 
-    tabStore.updatePaneSizes(tabId, firstChildId, [30, 70]);
+    tabStore.updatePaneSizes(tabId, splitId, [30, 70]);
 
     const { tabs } = tabStore.getStateForPersistence();
     if (tabs[0].rootPane!.type === 'split') {
