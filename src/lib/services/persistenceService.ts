@@ -511,7 +511,7 @@ export const DEFAULT_EXCLUDE_PATTERNS: string[] = [
 /**
  * Default copy patterns for worktree creation (cannot be removed)
  */
-export const DEFAULT_WORKTREE_COPY_PATTERNS: string[] = ['.env*'];
+export const DEFAULT_WORKTREE_COPY_PATTERNS: string[] = ['**/.env*'];
 
 const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   searchExcludePatterns: [...DEFAULT_EXCLUDE_PATTERNS],

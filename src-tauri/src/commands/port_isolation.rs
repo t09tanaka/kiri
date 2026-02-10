@@ -163,7 +163,7 @@ pub fn detect_ports_in_compose(content: &str, file_path: &str) -> Vec<PortSource
 /// Scan a directory for all .env* files and detect ports
 pub fn scan_env_files_for_ports(dir: &Path) -> Vec<PortSource> {
     let mut all_ports = Vec::new();
-    let pattern = dir.join(".env*").to_string_lossy().to_string();
+    let pattern = dir.join("**/.env*").to_string_lossy().to_string();
 
     log::info!("Scanning for .env files with pattern: {}", pattern);
 
@@ -198,29 +198,25 @@ pub fn scan_env_files_for_ports(dir: &Path) -> Vec<PortSource> {
     all_ports
 }
 
-/// Scan a directory for Dockerfile and detect ports
+/// Scan a directory (including subdirectories) for Dockerfile and detect ports
 pub fn scan_dockerfile_for_ports(dir: &Path) -> Vec<PortSource> {
     let mut all_ports = Vec::new();
 
-    // Check for Dockerfile
-    let dockerfile_path = dir.join("Dockerfile");
-    if dockerfile_path.is_file() {
-        if let Ok(content) = fs::read_to_string(&dockerfile_path) {
-            let file_path = dockerfile_path.to_string_lossy().to_string();
-            let ports = detect_ports_in_dockerfile(&content, &file_path);
-            all_ports.extend(ports);
-        }
-    }
+    let dockerfile_patterns = [
+        "**/Dockerfile",
+        "**/Dockerfile.*",
+    ];
 
-    // Also check for Dockerfile.* variants
-    let pattern = dir.join("Dockerfile.*").to_string_lossy().to_string();
-    if let Ok(entries) = glob(&pattern) {
-        for entry in entries.flatten() {
-            if entry.is_file() {
-                if let Ok(content) = fs::read_to_string(&entry) {
-                    let file_path = entry.to_string_lossy().to_string();
-                    let ports = detect_ports_in_dockerfile(&content, &file_path);
-                    all_ports.extend(ports);
+    for pattern_suffix in dockerfile_patterns {
+        let pattern = dir.join(pattern_suffix).to_string_lossy().to_string();
+        if let Ok(entries) = glob(&pattern) {
+            for entry in entries.flatten() {
+                if entry.is_file() {
+                    if let Ok(content) = fs::read_to_string(&entry) {
+                        let file_path = entry.to_string_lossy().to_string();
+                        let ports = detect_ports_in_dockerfile(&content, &file_path);
+                        all_ports.extend(ports);
+                    }
                 }
             }
         }
@@ -229,24 +225,28 @@ pub fn scan_dockerfile_for_ports(dir: &Path) -> Vec<PortSource> {
     all_ports
 }
 
-/// Scan a directory for docker-compose files and detect ports
+/// Scan a directory (including subdirectories) for docker-compose files and detect ports
 pub fn scan_compose_for_ports(dir: &Path) -> Vec<PortSource> {
     let mut all_ports = Vec::new();
 
-    let compose_files = [
-        "docker-compose.yml",
-        "docker-compose.yaml",
-        "compose.yml",
-        "compose.yaml",
+    let compose_patterns = [
+        "**/docker-compose.yml",
+        "**/docker-compose.yaml",
+        "**/compose.yml",
+        "**/compose.yaml",
     ];
 
-    for filename in compose_files {
-        let compose_path = dir.join(filename);
-        if compose_path.is_file() {
-            if let Ok(content) = fs::read_to_string(&compose_path) {
-                let file_path = compose_path.to_string_lossy().to_string();
-                let ports = detect_ports_in_compose(&content, &file_path);
-                all_ports.extend(ports);
+    for pattern_suffix in compose_patterns {
+        let pattern = dir.join(pattern_suffix).to_string_lossy().to_string();
+        if let Ok(entries) = glob(&pattern) {
+            for entry in entries.flatten() {
+                if entry.is_file() {
+                    if let Ok(content) = fs::read_to_string(&entry) {
+                        let file_path = entry.to_string_lossy().to_string();
+                        let ports = detect_ports_in_compose(&content, &file_path);
+                        all_ports.extend(ports);
+                    }
+                }
             }
         }
     }
@@ -1178,5 +1178,127 @@ DATABASE_URL=postgres://user:pass@localhost:5432/mydb
         assert!(result.content.contains("# Config")); // comment preserved
 
         assert_eq!(result.replacements.len(), 3);
+    }
+
+    #[test]
+    fn test_scan_env_files_for_ports_subdirectories() {
+        let dir = tempdir().unwrap();
+
+        // Root .env
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+
+        // Subdirectory .env files
+        let sub1 = dir.path().join("packages/api");
+        fs::create_dir_all(&sub1).unwrap();
+        fs::write(sub1.join(".env"), "API_PORT=8080\n").unwrap();
+
+        let sub2 = dir.path().join("services/worker");
+        fs::create_dir_all(&sub2).unwrap();
+        fs::write(sub2.join(".env.local"), "WORKER_PORT=9090\n").unwrap();
+
+        // Non-.env file should not be scanned
+        fs::write(sub1.join("config.txt"), "PORT=9999\n").unwrap();
+
+        let ports = scan_env_files_for_ports(dir.path());
+        assert_eq!(ports.len(), 3);
+
+        let vars: Vec<&str> = ports.iter().map(|p| p.variable_name.as_str()).collect();
+        assert!(vars.contains(&"PORT"));
+        assert!(vars.contains(&"API_PORT"));
+        assert!(vars.contains(&"WORKER_PORT"));
+    }
+
+    #[test]
+    fn test_copy_files_with_port_transformation_subdirectories() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Root .env
+        fs::write(source_dir.path().join(".env"), "PORT=3000\n").unwrap();
+
+        // Subdirectory .env
+        let sub = source_dir.path().join("packages/api");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join(".env"), "API_PORT=8080\n").unwrap();
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 20000,
+            },
+            PortAssignment {
+                variable_name: "API_PORT".to_string(),
+                original_value: 8080,
+                assigned_value: 20001,
+            },
+        ];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["**/.env*".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 2);
+        assert!(result.errors.is_empty());
+
+        // Verify root .env was transformed
+        let root_env = fs::read_to_string(target_dir.path().join(".env")).unwrap();
+        assert!(root_env.contains("PORT=20000"));
+
+        // Verify subdirectory .env was transformed
+        let sub_env = fs::read_to_string(target_dir.path().join("packages/api/.env")).unwrap();
+        assert!(sub_env.contains("API_PORT=20001"));
+    }
+
+    #[test]
+    fn test_scan_compose_for_ports_subdirectories() {
+        let dir = tempdir().unwrap();
+
+        // Root docker-compose.yml
+        fs::write(
+            dir.path().join("docker-compose.yml"),
+            "services:\n  web:\n    ports:\n      - \"3000:3000\"\n",
+        )
+        .unwrap();
+
+        // Subdirectory docker-compose.yml
+        let sub = dir.path().join("services/backend");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(
+            sub.join("docker-compose.yml"),
+            "services:\n  api:\n    ports:\n      - \"8080:8080\"\n",
+        )
+        .unwrap();
+
+        let ports = scan_compose_for_ports(dir.path());
+        assert_eq!(ports.len(), 2);
+
+        let values: Vec<u16> = ports.iter().map(|p| p.port_value).collect();
+        assert!(values.contains(&3000));
+        assert!(values.contains(&8080));
+    }
+
+    #[test]
+    fn test_scan_dockerfile_for_ports_subdirectories() {
+        let dir = tempdir().unwrap();
+
+        // Root Dockerfile
+        fs::write(dir.path().join("Dockerfile"), "EXPOSE 3000\n").unwrap();
+
+        // Subdirectory Dockerfile
+        let sub = dir.path().join("services/api");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("Dockerfile"), "EXPOSE 8080\n").unwrap();
+
+        let ports = scan_dockerfile_for_ports(dir.path());
+        assert_eq!(ports.len(), 2);
+
+        let values: Vec<u16> = ports.iter().map(|p| p.port_value).collect();
+        assert!(values.contains(&3000));
+        assert!(values.contains(&8080));
     }
 }

@@ -1837,4 +1837,49 @@ mod tests {
         let subdir_yarn = pms.iter().find(|p| p.command == "cd frontend && yarn install");
         assert!(subdir_yarn.is_some());
     }
+
+    #[test]
+    fn test_copy_files_to_worktree_recursive_env_pattern() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create .env files at root and in subdirectories
+        fs::write(source_dir.path().join(".env"), "ROOT=1").unwrap();
+        fs::write(source_dir.path().join(".env.local"), "ROOT_LOCAL=2").unwrap();
+
+        let sub1 = source_dir.path().join("packages/api");
+        fs::create_dir_all(&sub1).unwrap();
+        fs::write(sub1.join(".env"), "API_PORT=3000").unwrap();
+        fs::write(sub1.join(".env.production"), "API_PROD=true").unwrap();
+
+        let sub2 = source_dir.path().join("packages/web");
+        fs::create_dir_all(&sub2).unwrap();
+        fs::write(sub2.join(".env"), "WEB_PORT=8080").unwrap();
+
+        // Also create a non-.env file that should NOT be copied
+        fs::write(sub1.join("config.json"), "{}").unwrap();
+
+        let result = copy_files_to_worktree(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["**/.env*".to_string()],
+        );
+
+        assert!(result.is_ok());
+        let copy_result = result.unwrap();
+        assert_eq!(copy_result.copied_files.len(), 5);
+        assert!(copy_result.errors.is_empty());
+
+        // Verify root .env files
+        assert!(target_dir.path().join(".env").exists());
+        assert!(target_dir.path().join(".env.local").exists());
+
+        // Verify subdirectory .env files with preserved structure
+        assert!(target_dir.path().join("packages/api/.env").exists());
+        assert!(target_dir.path().join("packages/api/.env.production").exists());
+        assert!(target_dir.path().join("packages/web/.env").exists());
+
+        // Non-.env files should NOT be copied
+        assert!(!target_dir.path().join("packages/api/config.json").exists());
+    }
 }
