@@ -2,8 +2,8 @@
 //! These are thin wrappers that delegate to the core logic in terminal.rs
 
 use super::terminal::{
-    create_pty_size, find_utf8_boundary, open_pty_with_shell, resolve_cwd, resolve_terminal_size,
-    PtyInstance, TerminalOutput, TerminalState,
+    create_pty_size, find_utf8_boundary, get_process_cwd, open_pty_with_shell, resolve_cwd,
+    resolve_terminal_size, PtyInstance, TerminalOutput, TerminalState,
 };
 use serde::Serialize;
 use std::io::{Read, Write};
@@ -259,6 +259,29 @@ pub fn get_foreground_process_name(
     // Delegate to get_terminal_process_info for consistency
     let info = get_terminal_process_info(state, id)?;
     Ok(info.name)
+}
+
+/// Get the current working directory for a terminal's shell process
+#[tauri::command]
+pub fn get_terminal_cwd(
+    state: tauri::State<'_, TerminalState>,
+    id: u32,
+) -> Result<Option<String>, String> {
+    let mut manager = state.lock().map_err(|e| e.to_string())?;
+    if let Some(instance) = manager.instances.get_mut(&id) {
+        match instance.child.try_wait() {
+            Ok(Some(_)) => return Ok(None),
+            Ok(None) => {}
+            Err(_) => return Ok(None),
+        }
+        if let Some(shell_pid) = instance.shell_pid {
+            Ok(get_process_cwd(shell_pid))
+        } else {
+            Ok(None)
+        }
+    } else {
+        Ok(None)
+    }
 }
 
 /// Check if a terminal has a foreground process running (command in execution)

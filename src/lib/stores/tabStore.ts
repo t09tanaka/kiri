@@ -6,6 +6,7 @@ export interface TerminalPaneLeaf {
   type: 'terminal';
   id: string; // pane ID (e.g., "pane-1")
   terminalId: number | null;
+  cwd?: string | null;
 }
 
 export interface TerminalPaneSplit {
@@ -211,6 +212,24 @@ export function getAllTerminalIds(pane: TerminalPane): number[] {
 }
 
 /**
+ * Get a mapping of paneId -> terminalId for all terminal panes
+ */
+export function getPaneTerminalIdMap(pane: TerminalPane): Map<string, number> {
+  const map = new Map<string, number>();
+  if (pane.type === 'terminal') {
+    if (pane.terminalId !== null) {
+      map.set(pane.id, pane.terminalId);
+    }
+  } else {
+    for (const child of pane.children) {
+      const childMap = getPaneTerminalIdMap(child);
+      childMap.forEach((v, k) => map.set(k, v));
+    }
+  }
+  return map;
+}
+
+/**
  * Helper: Update sizes of a split pane (identified by split ID)
  */
 function updatePaneSizesInTree(
@@ -260,7 +279,7 @@ export function paneToPersistedPane(pane: TerminalPane): PersistedPane {
  */
 export function persistedPaneToPane(persisted: PersistedPane): TerminalPane {
   if (persisted.type === 'terminal') {
-    return { type: 'terminal', id: persisted.id, terminalId: null };
+    return { type: 'terminal', id: persisted.id, terminalId: null, cwd: persisted.cwd || null };
   }
   return {
     type: 'split',

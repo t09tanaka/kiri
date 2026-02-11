@@ -10,6 +10,7 @@ import {
   closePaneInTree,
   paneToPersistedPane,
   persistedPaneToPane,
+  getPaneTerminalIdMap,
   type TerminalPane,
   type TerminalPaneSplit,
 } from './tabStore';
@@ -1288,7 +1289,7 @@ describe('persistedPaneToPane', () => {
     const persisted: PersistedPane = { type: 'terminal', id: 'pane-1' };
     const pane = persistedPaneToPane(persisted);
 
-    expect(pane).toEqual({ type: 'terminal', id: 'pane-1', terminalId: null });
+    expect(pane).toEqual({ type: 'terminal', id: 'pane-1', terminalId: null, cwd: null });
   });
 
   it('should convert a persisted split pane recursively', () => {
@@ -1309,8 +1310,8 @@ describe('persistedPaneToPane', () => {
       id: 'split-10',
       direction: 'horizontal',
       children: [
-        { type: 'terminal', id: 'pane-1', terminalId: null },
-        { type: 'terminal', id: 'pane-2', terminalId: null },
+        { type: 'terminal', id: 'pane-1', terminalId: null, cwd: null },
+        { type: 'terminal', id: 'pane-2', terminalId: null, cwd: null },
       ],
       sizes: [30, 70],
     });
@@ -1361,14 +1362,14 @@ describe('persistedPaneToPane', () => {
       id: 'split-20',
       direction: 'vertical',
       children: [
-        { type: 'terminal', id: 'pane-1', terminalId: null },
+        { type: 'terminal', id: 'pane-1', terminalId: null, cwd: null },
         {
           type: 'split',
           id: 'split-21',
           direction: 'horizontal',
           children: [
-            { type: 'terminal', id: 'pane-2', terminalId: null },
-            { type: 'terminal', id: 'pane-3', terminalId: null },
+            { type: 'terminal', id: 'pane-2', terminalId: null, cwd: null },
+            { type: 'terminal', id: 'pane-3', terminalId: null, cwd: null },
           ],
           sizes: [40, 60],
         },
@@ -1637,5 +1638,73 @@ describe('restoreState with pane structure', () => {
     if (rootPane.type !== 'split') return;
     // First child should now be a nested split
     expect(rootPane.children[0].type).toBe('split');
+  });
+});
+
+describe('getPaneTerminalIdMap', () => {
+  it('should return map with single entry for leaf pane with terminalId', () => {
+    const pane: TerminalPane = { type: 'terminal', id: 'pane-1', terminalId: 42 };
+    const map = getPaneTerminalIdMap(pane);
+
+    expect(map.size).toBe(1);
+    expect(map.get('pane-1')).toBe(42);
+  });
+
+  it('should return empty map for leaf pane with null terminalId', () => {
+    const pane: TerminalPane = { type: 'terminal', id: 'pane-1', terminalId: null };
+    const map = getPaneTerminalIdMap(pane);
+
+    expect(map.size).toBe(0);
+  });
+
+  it('should return all pane-terminalId pairs for split pane tree', () => {
+    const pane: TerminalPane = {
+      type: 'split',
+      id: 'split-1',
+      direction: 'horizontal',
+      children: [
+        { type: 'terminal', id: 'pane-1', terminalId: 10 },
+        {
+          type: 'split',
+          id: 'split-2',
+          direction: 'vertical',
+          children: [
+            { type: 'terminal', id: 'pane-2', terminalId: 20 },
+            { type: 'terminal', id: 'pane-3', terminalId: null },
+          ],
+          sizes: [50, 50],
+        },
+      ],
+      sizes: [50, 50],
+    };
+    const map = getPaneTerminalIdMap(pane);
+
+    expect(map.size).toBe(2);
+    expect(map.get('pane-1')).toBe(10);
+    expect(map.get('pane-2')).toBe(20);
+    expect(map.has('pane-3')).toBe(false);
+  });
+});
+
+describe('persistedPaneToPane with cwd', () => {
+  it('should carry over cwd from persisted data', () => {
+    const persisted: PersistedPane = { type: 'terminal', id: 'pane-1', cwd: '/home/user/project' };
+    const pane = persistedPaneToPane(persisted);
+
+    expect(pane.type).toBe('terminal');
+    if (pane.type === 'terminal') {
+      expect(pane.cwd).toBe('/home/user/project');
+      expect(pane.terminalId).toBeNull();
+    }
+  });
+
+  it('should set cwd to null when not present in persisted data (backwards compat)', () => {
+    const persisted: PersistedPane = { type: 'terminal', id: 'pane-1' };
+    const pane = persistedPaneToPane(persisted);
+
+    expect(pane.type).toBe('terminal');
+    if (pane.type === 'terminal') {
+      expect(pane.cwd).toBeNull();
+    }
   });
 });

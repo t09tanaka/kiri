@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS: PersistedSettings = {
 export interface PersistedPaneLeaf {
   type: 'terminal';
   id: string;
+  cwd?: string; // Terminal CWD for restoration
 }
 
 export interface PersistedPaneSplit {

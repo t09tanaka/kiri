@@ -64,12 +64,33 @@ pub fn get_shell_path() -> String {
 }
 
 /// Resolve the working directory for the terminal
-/// Returns the cwd if provided, otherwise the home directory, or None
+/// Returns the cwd if provided and valid, otherwise the home directory, or None
 pub fn resolve_cwd(cwd: Option<String>) -> Option<String> {
     match cwd {
-        Some(dir) => Some(dir),
+        Some(dir) => {
+            if std::path::Path::new(&dir).is_dir() {
+                Some(dir)
+            } else {
+                dirs::home_dir().map(|p| p.to_string_lossy().to_string())
+            }
+        }
         None => dirs::home_dir().map(|p| p.to_string_lossy().to_string()),
     }
+}
+
+/// Get the current working directory of a process by PID
+pub fn get_process_cwd(pid: u32) -> Option<String> {
+    use sysinfo::{Pid, ProcessRefreshKind, System, UpdateKind};
+    let mut sys = System::new();
+    let pid = Pid::from_u32(pid);
+    let refresh_kind = ProcessRefreshKind::new().with_cwd(UpdateKind::Always);
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::Some(&[pid]),
+        refresh_kind,
+    );
+    sys.process(pid)
+        .and_then(|p| p.cwd())
+        .map(|p| p.to_string_lossy().to_string())
 }
 
 /// Build a shell command with the given configuration
@@ -257,6 +278,30 @@ mod tests {
         assert!(cwd.is_some());
         let cwd_path = cwd.unwrap();
         assert!(!cwd_path.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_cwd_nonexistent_path() {
+        let cwd = resolve_cwd(Some("/nonexistent/path/that/does/not/exist".to_string()));
+        // Should fallback to home directory
+        let home = dirs::home_dir().map(|p| p.to_string_lossy().to_string());
+        assert_eq!(cwd, home);
+    }
+
+    #[test]
+    fn test_get_process_cwd_current_process() {
+        let pid = std::process::id();
+        let cwd = get_process_cwd(pid);
+        // Current process should have a CWD
+        assert!(cwd.is_some());
+        let cwd_path = cwd.unwrap();
+        assert!(!cwd_path.is_empty());
+    }
+
+    #[test]
+    fn test_get_process_cwd_nonexistent_pid() {
+        let cwd = get_process_cwd(999_999_999);
+        assert!(cwd.is_none());
     }
 
     #[test]
