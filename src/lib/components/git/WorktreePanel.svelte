@@ -1648,10 +1648,11 @@
           {/each}
 
           <!-- Add new command -->
-          <div class="command-add">
+          <div class="command-add-section">
+            <span class="command-add-title">Add new command</span>
             <input
               type="text"
-              class="command-input command-name-input"
+              class="pattern-input"
               bind:value={newInitCommandName}
               placeholder="Name (e.g. Build project)"
               spellcheck="false"
@@ -1661,7 +1662,7 @@
             />
             <input
               type="text"
-              class="command-input command-value-input"
+              class="pattern-input"
               bind:value={newInitCommandValue}
               placeholder="Command (e.g. cargo build)"
               spellcheck="false"
@@ -1677,7 +1678,7 @@
             />
             <button
               type="button"
-              class="pattern-add-btn"
+              class="pattern-add-btn command-add-btn"
               onclick={() => addInitCommand()}
               disabled={!newInitCommandName.trim() || !newInitCommandValue.trim()}
             >
@@ -3162,38 +3163,21 @@
     white-space: nowrap;
   }
 
-  .command-add {
+  .command-add-section {
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    margin-top: var(--space-1);
+    margin-top: var(--space-2);
   }
 
-  .command-input {
-    flex: 1;
-    padding: var(--space-2) var(--space-3);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    font-size: 12px;
-    color: var(--text-primary);
-    outline: none;
-    transition: border-color var(--transition-fast);
-  }
-
-  .command-input:focus {
-    border-color: var(--accent-color);
-  }
-
-  .command-input::placeholder {
+  .command-add-title {
+    font-size: 11px;
+    font-weight: 500;
     color: var(--text-muted);
+    letter-spacing: 0.02em;
   }
 
-  .command-value-input {
-    font-family: var(--font-mono);
-  }
-
-  .command-add > .pattern-add-btn {
+  .command-add-btn {
     align-self: flex-end;
   }
 
