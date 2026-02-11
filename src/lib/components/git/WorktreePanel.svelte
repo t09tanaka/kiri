@@ -63,17 +63,22 @@
   let newInitCommandName = $state('');
   let newInitCommandValue = $state('');
 
-  // Creation progress state
-  type CreationStep = 'worktree' | 'copy' | 'init' | 'done';
-  let creationStep = $state<CreationStep | null>(null);
-  let creationOutput = $state<string[]>([]);
-  let creationCancelled = $state(false);
+  // Progress task list state
+  type TaskStatus = 'pending' | 'running' | 'completed' | 'failed';
 
-  // Open worktree progress state
-  type OpenStep = 'init' | 'done';
-  let openStep = $state<OpenStep | null>(null);
-  let openOutput = $state<string[]>([]);
+  interface ProgressTask {
+    id: string;
+    name: string;
+    status: TaskStatus;
+    detail?: string;
+  }
+
+  let progressTasks = $state<ProgressTask[]>([]);
+  let isProgressActive = $state(false);
+  let creationCancelled = $state(false);
   let openCancelled = $state(false);
+
+  const showProgress = $derived(isProgressActive && progressTasks.length > 0);
 
   // Port isolation state
   let portConfig = $state<PortConfig | null>(null);
@@ -87,6 +92,12 @@
   async function forceUIUpdate(delayMs = 50): Promise<void> {
     await tick();
     await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  // Pause between task completions so the user can see each checkmark
+  const TASK_STEP_PAUSE_MS = 300;
+  async function pauseBetweenTasks(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, TASK_STEP_PAUSE_MS));
   }
 
   // Event listener cleanup
@@ -599,8 +610,86 @@
     return commands;
   }
 
-  function addCreationOutput(line: string) {
-    creationOutput = [...creationOutput, line];
+  /** Split "Install dependencies (npm)" → { baseName: "Install dependencies", suffix: "npm" } */
+  function splitCommandName(name: string): { baseName: string; suffix?: string } {
+    const match = name.match(/^(.+?)\s*\((.+)\)$/);
+    if (match) {
+      return { baseName: match[1].trim(), suffix: match[2] };
+    }
+    return { baseName: name };
+  }
+
+  function buildCreationTaskList(
+    branchName: string,
+    effectiveCommands: WorktreeInitCommand[],
+    hasPortAssignments: boolean
+  ): ProgressTask[] {
+    const tasks: ProgressTask[] = [
+      {
+        id: 'worktree',
+        name: `Create worktree '${branchToWorktreeName(branchName)}'`,
+        status: 'pending',
+      },
+      {
+        id: 'copy',
+        name: 'Copy files',
+        status: 'pending',
+      },
+    ];
+
+    if (hasPortAssignments) {
+      tasks.push({
+        id: 'port-remap',
+        name: 'Remap ports',
+        status: 'pending',
+      });
+    }
+
+    effectiveCommands.forEach((cmd, index) => {
+      const { baseName, suffix } = splitCommandName(cmd.name);
+      tasks.push({
+        id: `init-${index}`,
+        name: baseName,
+        status: 'pending',
+        detail: suffix,
+      });
+    });
+
+    tasks.push({
+      id: 'open-window',
+      name: 'Open worktree window',
+      status: 'pending',
+    });
+
+    return tasks;
+  }
+
+  function buildOpenTaskList(effectiveCommands: WorktreeInitCommand[]): ProgressTask[] {
+    const tasks: ProgressTask[] = [];
+
+    effectiveCommands.forEach((cmd, index) => {
+      const { baseName, suffix } = splitCommandName(cmd.name);
+      tasks.push({
+        id: `init-${index}`,
+        name: baseName,
+        status: 'pending',
+        detail: suffix,
+      });
+    });
+
+    tasks.push({
+      id: 'open-window',
+      name: 'Open worktree window',
+      status: 'pending',
+    });
+
+    return tasks;
+  }
+
+  function updateTask(taskId: string, status: TaskStatus, detail?: string) {
+    progressTasks = progressTasks.map((task) =>
+      task.id === taskId ? { ...task, status, ...(detail !== undefined ? { detail } : {}) } : task
+    );
   }
 
   onDestroy(() => {
@@ -671,96 +760,111 @@
   async function continueWorktreeCreation() {
     isCreating = true;
     createError = null;
-    creationStep = 'worktree';
-    creationOutput = [];
     creationCancelled = false;
-    await forceUIUpdate(); // Force UI update to show loading
+
+    const branchName = createName.trim();
+    const effectiveCommands = getEffectiveInitCommands().filter((c) => c.enabled);
+
+    // Build and display the full task list immediately
+    const currentPortAssignments = portConfig?.enabled ? portAssignments : [];
+    const hasPortAssignments = currentPortAssignments.length > 0;
+    progressTasks = buildCreationTaskList(branchName, effectiveCommands, hasPortAssignments);
+    isProgressActive = true;
+    await forceUIUpdate();
 
     // Capture projectPath in a local variable to avoid closure issues
     const currentProjectPath = projectPath;
 
     try {
-      const branchName = createName.trim();
       const wtName = branchToWorktreeName(branchName);
 
       // Step 1: Create worktree
-      addCreationOutput(`Creating worktree '${wtName}'...`);
+      updateTask('worktree', 'running');
       await forceUIUpdate();
       const wt = await worktreeService.create(
         currentProjectPath,
-        wtName, // worktree name (with '/' replaced by '-')
-        branchName, // branch name (original, may contain '/')
-        !isExistingBranch // create new branch if not selecting existing
+        wtName,
+        branchName,
+        !isExistingBranch
       );
 
       if (creationCancelled) {
-        // Clean up: remove the worktree
         await worktreeService.remove(currentProjectPath, wtName);
         resetCreation();
         return;
       }
 
-      addCreationOutput('Worktree created');
+      updateTask('worktree', 'completed');
       await forceUIUpdate();
+      await pauseBetweenTasks();
 
-      // Step 2: Copy files (with port transformation if assignments exist)
-      creationStep = 'copy';
+      // Step 2: Copy files
+      updateTask('copy', 'running');
       await forceUIUpdate();
-      // Patterns for regular copy (user-configured + defaults)
       const regularCopyPatterns = [...DEFAULT_WORKTREE_COPY_PATTERNS, ...userCopyPatterns];
-      // Patterns for port transformation (enabled target files only)
       const disabledFiles = portConfig?.disabledTargetFiles ?? [];
       const enabledTargetFiles = (portConfig?.targetFiles ?? DEFAULT_TARGET_FILES).filter(
         (f) => !disabledFiles.includes(f)
       );
-      // Combine: regular copy + enabled target files (deduplicated)
       const allPatterns = [...new Set([...regularCopyPatterns, ...enabledTargetFiles])];
-      // Get current port assignments if port isolation is enabled
-      const currentPortAssignments = portConfig?.enabled ? portAssignments : [];
       if (allPatterns.length > 0) {
-        addCreationOutput('Copying files...');
-        await forceUIUpdate();
         try {
           let copyResult;
-          if (currentPortAssignments.length > 0) {
-            // Use port-aware copy
+          if (hasPortAssignments) {
             copyResult = await portIsolationService.copyFilesWithPorts(
               currentProjectPath,
               wt.path,
               allPatterns,
               currentPortAssignments
             );
-            addCreationOutput(`Ports transformed: ${currentPortAssignments.length} variables`);
-            // Register port assignments for this worktree and persist
-            if (portConfig) {
-              portConfig = portIsolationService.registerWorktreeAssignments(
-                portConfig,
-                wtName,
-                currentPortAssignments
-              );
-              await savePortConfig();
-            }
           } else {
-            // Regular copy
             copyResult = await worktreeService.copyFiles(currentProjectPath, wt.path, allPatterns);
           }
-          if (copyResult.copied_files.length > 0) {
-            addCreationOutput(`${copyResult.copied_files.length} files copied`);
-          } else {
-            addCreationOutput('No files to copy');
-          }
+          const detail =
+            copyResult.copied_files.length > 0
+              ? `${copyResult.copied_files.length} files copied`
+              : 'No files to copy';
+          updateTask('copy', 'completed', detail);
           if (copyResult.errors.length > 0) {
             console.error('Copy errors:', copyResult.errors);
           }
-          await forceUIUpdate();
         } catch (copyError) {
           console.error('Failed to copy files:', copyError);
-          addCreationOutput('Copy failed');
-          await forceUIUpdate();
+          updateTask('copy', 'failed', 'Copy failed');
+          if (hasPortAssignments) {
+            updateTask('port-remap', 'failed', 'Skipped due to copy failure');
+          }
         }
       } else {
-        addCreationOutput('No copy patterns configured');
+        updateTask('copy', 'completed', 'No copy patterns configured');
+      }
+      await forceUIUpdate();
+      await pauseBetweenTasks();
+
+      // Step 2.5: Remap ports (register assignments)
+      if (hasPortAssignments) {
+        updateTask('port-remap', 'running');
         await forceUIUpdate();
+        try {
+          if (portConfig) {
+            portConfig = portIsolationService.registerWorktreeAssignments(
+              portConfig,
+              wtName,
+              currentPortAssignments
+            );
+            await savePortConfig();
+          }
+          updateTask(
+            'port-remap',
+            'completed',
+            `${currentPortAssignments.length} variables remapped`
+          );
+        } catch (portError) {
+          console.error('Failed to register port assignments:', portError);
+          updateTask('port-remap', 'failed', String(portError));
+        }
+        await forceUIUpdate();
+        await pauseBetweenTasks();
       }
 
       if (creationCancelled) {
@@ -770,41 +874,31 @@
       }
 
       // Step 3: Run initialization commands
-      creationStep = 'init';
-      await forceUIUpdate();
-      const effectiveCommands = getEffectiveInitCommands().filter((c) => c.enabled);
-
-      if (effectiveCommands.length === 0) {
-        addCreationOutput('No initialization commands to run');
-        await forceUIUpdate();
-      }
-
-      for (const cmd of effectiveCommands) {
+      for (let i = 0; i < effectiveCommands.length; i++) {
+        const cmd = effectiveCommands[i];
         if (creationCancelled) {
           await worktreeService.remove(currentProjectPath, wtName);
           resetCreation();
           return;
         }
 
-        addCreationOutput(`Running: ${cmd.command}`);
+        updateTask(`init-${i}`, 'running');
         await forceUIUpdate();
         try {
           const result = await worktreeService.runInitCommand(wt.path, cmd.command);
           if (result.success) {
-            addCreationOutput(`✓ ${cmd.name} completed`);
+            updateTask(`init-${i}`, 'completed');
           } else {
-            addCreationOutput(`⚠ ${cmd.name} failed (exit code: ${result.exit_code})`);
-            if (result.stderr) {
-              // Show last few lines of stderr
-              const lines = result.stderr.trim().split('\n').slice(-3);
-              lines.forEach((line) => addCreationOutput(`  ${line}`));
-            }
+            const errorDetail = result.stderr
+              ? result.stderr.trim().split('\n').slice(-1)[0]
+              : `exit code: ${result.exit_code}`;
+            updateTask(`init-${i}`, 'failed', errorDetail);
           }
-          await forceUIUpdate();
         } catch (cmdError) {
-          addCreationOutput(`⚠ ${cmd.name} error: ${cmdError}`);
-          await forceUIUpdate();
+          updateTask(`init-${i}`, 'failed', String(cmdError));
         }
+        await forceUIUpdate();
+        await pauseBetweenTasks();
       }
 
       if (creationCancelled) {
@@ -814,44 +908,39 @@
       }
 
       // Step 4: Done - open window
-      creationStep = 'done';
-      addCreationOutput('Opening worktree window...');
+      updateTask('open-window', 'running');
       await forceUIUpdate();
 
-      // Open new window and refresh worktree list (keep modal open)
-      openWorktreeWindow(wt, true); // skipInit=true since we just ran init commands
+      openWorktreeWindow(wt, true);
       loadWorktrees(currentProjectPath).catch(console.error);
 
-      // Brief delay to show completion, then reset
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      updateTask('open-window', 'completed');
+      await forceUIUpdate();
+
+      // Brief delay to show all-complete state, then reset
+      await new Promise((resolve) => setTimeout(resolve, 800));
       resetCreation();
       createName = '';
       isExistingBranch = false;
-      // Re-detect and re-allocate ports for next worktree
       await detectPortsForWorktree();
       await forceUIUpdate();
     } catch (e) {
       createError = e instanceof Error ? e.message : String(e);
       resetCreation();
-      // Force UI update after state change in async context
       await forceUIUpdate();
     }
   }
 
   function resetCreation() {
     isCreating = false;
-    creationStep = null;
-    creationOutput = [];
+    isProgressActive = false;
+    progressTasks = [];
     creationCancelled = false;
   }
 
-  function addOpenOutput(line: string) {
-    openOutput = [...openOutput, line];
-  }
-
   function resetOpen() {
-    openStep = null;
-    openOutput = [];
+    isProgressActive = false;
+    progressTasks = [];
     openCancelled = false;
   }
 
@@ -867,43 +956,38 @@
     }
 
     // For clicking on existing worktrees, run init commands first
-    openStep = 'init';
-    openOutput = [];
     openCancelled = false;
+    const effectiveCommands = getEffectiveInitCommands().filter((c) => c.enabled);
+
+    progressTasks = buildOpenTaskList(effectiveCommands);
+    isProgressActive = true;
     await forceUIUpdate();
 
     try {
-      const effectiveCommands = getEffectiveInitCommands().filter((c) => c.enabled);
-
-      if (effectiveCommands.length === 0) {
-        addOpenOutput('No initialization commands to run');
-        await forceUIUpdate();
-      } else {
-        for (const cmd of effectiveCommands) {
-          if (openCancelled) {
-            resetOpen();
-            return;
-          }
-
-          addOpenOutput(`Running: ${cmd.command}`);
-          await forceUIUpdate();
-          try {
-            const result = await worktreeService.runInitCommand(wt.path, cmd.command);
-            if (result.success) {
-              addOpenOutput(`✓ ${cmd.name} completed`);
-            } else {
-              addOpenOutput(`⚠ ${cmd.name} failed (exit code: ${result.exit_code})`);
-              if (result.stderr) {
-                const lines = result.stderr.trim().split('\n').slice(-3);
-                lines.forEach((line) => addOpenOutput(`  ${line}`));
-              }
-            }
-            await forceUIUpdate();
-          } catch (cmdError) {
-            addOpenOutput(`⚠ ${cmd.name} error: ${cmdError}`);
-            await forceUIUpdate();
-          }
+      for (let i = 0; i < effectiveCommands.length; i++) {
+        const cmd = effectiveCommands[i];
+        if (openCancelled) {
+          resetOpen();
+          return;
         }
+
+        updateTask(`init-${i}`, 'running');
+        await forceUIUpdate();
+        try {
+          const result = await worktreeService.runInitCommand(wt.path, cmd.command);
+          if (result.success) {
+            updateTask(`init-${i}`, 'completed');
+          } else {
+            const errorDetail = result.stderr
+              ? result.stderr.trim().split('\n').slice(-1)[0]
+              : `exit code: ${result.exit_code}`;
+            updateTask(`init-${i}`, 'failed', errorDetail);
+          }
+        } catch (cmdError) {
+          updateTask(`init-${i}`, 'failed', String(cmdError));
+        }
+        await forceUIUpdate();
+        await pauseBetweenTasks();
       }
 
       if (openCancelled) {
@@ -912,8 +996,7 @@
       }
 
       // Done - open window
-      openStep = 'done';
-      addOpenOutput('Opening worktree window...');
+      updateTask('open-window', 'running');
       await forceUIUpdate();
 
       try {
@@ -922,8 +1005,11 @@
         console.error('Failed to open worktree window:', e);
       }
 
-      // Brief delay to show completion, then reset
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      updateTask('open-window', 'completed');
+      await forceUIUpdate();
+
+      // Brief delay to show all-complete state, then reset
+      await new Promise((resolve) => setTimeout(resolve, 800));
       resetOpen();
     } catch (e) {
       console.error('Failed to open worktree:', e);
@@ -1046,21 +1132,71 @@
 
         <!-- Create Form / Progress View -->
         <div class="create-section">
-          {#if creationStep}
-            <!-- Creation Progress View (Simple) -->
-            <div class="progress-simple">
-              <Spinner size="md" />
-              <span class="progress-text"
-                >{creationOutput[creationOutput.length - 1] ?? 'Initializing...'}</span
-              >
-            </div>
-          {:else if openStep}
-            <!-- Open Worktree Progress View (Simple) -->
-            <div class="progress-simple">
-              <Spinner size="md" />
-              <span class="progress-text"
-                >{openOutput[openOutput.length - 1] ?? 'Initializing...'}</span
-              >
+          {#if showProgress}
+            <!-- Task List Progress View -->
+            <div class="progress-task-list">
+              {#each progressTasks as task (task.id)}
+                <div
+                  class="progress-task-item"
+                  class:is-pending={task.status === 'pending'}
+                  class:is-running={task.status === 'running'}
+                  class:is-completed={task.status === 'completed'}
+                  class:is-failed={task.status === 'failed'}
+                >
+                  <div class="task-status-icon">
+                    {#if task.status === 'pending'}
+                      <!-- Mist particle dot -->
+                      <span class="task-icon-dot"></span>
+                    {:else if task.status === 'running'}
+                      <Spinner size="sm" />
+                    {:else if task.status === 'completed'}
+                      <!-- Checkmark only -->
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        class="task-icon-completed"
+                      >
+                        <path
+                          d="M4 8.5L6.5 11L12 5"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    {:else if task.status === 'failed'}
+                      <!-- Filled warning circle with exclamation -->
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        class="task-icon-failed"
+                      >
+                        <circle cx="8" cy="8" r="7.5" fill="currentColor" opacity="0.15" />
+                        <line
+                          x1="8"
+                          y1="5"
+                          x2="8"
+                          y2="9"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                        />
+                        <circle cx="8" cy="11.5" r="0.8" fill="currentColor" />
+                      </svg>
+                    {/if}
+                  </div>
+                  <div class="task-content">
+                    <span class="task-name">{task.name}</span>
+                    {#if task.detail}
+                      <span class="task-detail">({task.detail})</span>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
             </div>
           {:else}
             <!-- Create Form -->
@@ -2789,24 +2925,159 @@
     background: rgba(125, 211, 252, 0.3);
   }
 
-  /* Simple Progress View */
-  .progress-simple {
+  /* Task List Progress View */
+  .progress-task-list {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-2);
-    flex: 1;
+    gap: var(--space-1);
+    padding: var(--space-2) 0;
   }
 
-  .progress-text {
-    font-size: 13px;
+  .progress-task-item {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-normal);
+    animation: taskFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .progress-task-item:nth-child(1) {
+    animation-delay: 0ms;
+  }
+  .progress-task-item:nth-child(2) {
+    animation-delay: 50ms;
+  }
+  .progress-task-item:nth-child(3) {
+    animation-delay: 100ms;
+  }
+  .progress-task-item:nth-child(4) {
+    animation-delay: 150ms;
+  }
+  .progress-task-item:nth-child(5) {
+    animation-delay: 200ms;
+  }
+  .progress-task-item:nth-child(6) {
+    animation-delay: 250ms;
+  }
+  .progress-task-item:nth-child(7) {
+    animation-delay: 300ms;
+  }
+  .progress-task-item:nth-child(8) {
+    animation-delay: 350ms;
+  }
+
+  @keyframes taskFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Status-specific styles */
+  .progress-task-item.is-pending {
+    opacity: 0.35;
+  }
+
+  .progress-task-item.is-running {
+    opacity: 1;
+    background: rgba(125, 211, 252, 0.05);
+    border: 1px solid rgba(125, 211, 252, 0.08);
+  }
+
+  .progress-task-item.is-completed {
+    opacity: 0.85;
+  }
+
+  .progress-task-item.is-completed .task-status-icon {
+    color: var(--git-added);
+    filter: drop-shadow(0 0 4px rgba(74, 222, 128, 0.3));
+  }
+
+  .progress-task-item.is-failed {
+    opacity: 0.9;
+  }
+
+  .progress-task-item.is-failed .task-status-icon {
+    color: var(--git-modified);
+    filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.3));
+  }
+
+  .task-status-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 20px;
+    flex-shrink: 0;
+    transition: all var(--transition-normal);
+  }
+
+  /* Pending: mist particle dot */
+  .task-icon-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    opacity: 0.5;
+  }
+
+  /* Completed: checkmark with entrance animation */
+  .task-icon-completed {
+    animation: taskCheckIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes taskCheckIn {
+    from {
+      opacity: 0;
+      transform: scale(0.5);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  /* Failed: subtle pulse on the icon */
+  .task-icon-failed {
+    animation: taskCheckIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .task-content {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    line-height: 20px;
+    overflow: hidden;
+  }
+
+  .task-name {
+    font-size: 12px;
     color: var(--text-secondary);
-    text-align: center;
-    max-width: 100%;
+    white-space: nowrap;
+  }
+
+  .progress-task-item.is-running .task-name {
+    color: var(--text-primary);
+  }
+
+  .task-detail {
+    font-size: 10px;
+    color: var(--text-muted);
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
+  }
+
+  .progress-task-item.is-failed .task-detail {
+    color: var(--git-modified);
   }
 
   /* Init Commands Settings */
