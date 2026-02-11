@@ -66,6 +66,9 @@ pub fn detect_compose_name(content: &str, file_path: &str) -> ComposeFileInfo {
 
     // State machine for tracking top-level volumes section
     let mut in_top_level_volumes = false;
+    // Track if we're inside a volume definition's config block (indent >= 4)
+    let mut in_volume_config = false;
+    let mut current_volume_key = String::new();
 
     for (line_num, line) in content.lines().enumerate() {
         let line_number = (line_num + 1) as u32;
@@ -91,6 +94,7 @@ pub fn detect_compose_name(content: &str, file_path: &str) -> ComposeFileInfo {
         if !line.starts_with(' ') && !line.starts_with('\t') {
             // Check if entering top-level volumes: section
             in_top_level_volumes = trimmed.starts_with("volumes:");
+            in_volume_config = false;
             continue;
         }
 
@@ -110,35 +114,41 @@ pub fn detect_compose_name(content: &str, file_path: &str) -> ComposeFileInfo {
             }
         }
 
-        // Detect named volumes in top-level volumes section
+        // Detect explicit volume name: in top-level volumes section
         if in_top_level_volumes {
-            // Named volumes are at indent level 2 (e.g., "  my_volume:" or "  my_volume: {}")
-            // They must not be deeper-indented config keys
             let leading_spaces = line.len() - line.trim_start().len();
-            if leading_spaces == 2 || (leading_spaces > 0 && line.starts_with('\t') && !line.starts_with("\t\t")) {
-                // This is a volume name definition at top-level volumes
-                let volume_line = trimmed;
-                if let Some(colon_pos) = volume_line.find(':') {
-                    let volume_name = volume_line[..colon_pos].trim().to_string();
-                    // Skip if it looks like a config key (e.g., "driver:", "external:", "name:")
-                    if !volume_name.is_empty()
-                        && !["driver", "external", "name", "labels", "driver_opts"]
-                            .contains(&volume_name.as_str())
-                    {
-                        warnings.push(ComposeWarning {
-                            warning_type: "VolumeName".to_string(),
-                            value: volume_name.clone(),
-                            line_number,
-                            message: format!(
-                                "Named volume '{}' may cause conflicts between worktrees",
-                                volume_name
-                            ),
-                        });
+            let is_indent_2 = leading_spaces == 2 || (leading_spaces > 0 && line.starts_with('\t') && !line.starts_with("\t\t"));
+            let is_indent_4_plus = leading_spaces >= 4 || line.starts_with("\t\t");
+
+            if is_indent_2 {
+                // Volume key definition (e.g., "  postgres_data:" or "  postgres_data: {}")
+                in_volume_config = false;
+                if let Some(colon_pos) = trimmed.find(':') {
+                    let key = trimmed[..colon_pos].trim().to_string();
+                    if !key.is_empty() && !["driver", "external", "name", "labels", "driver_opts"].contains(&key.as_str()) {
+                        current_volume_key = key;
+                        in_volume_config = true;
                     }
                 }
-            } else if leading_spaces > 2 || line.starts_with("\t\t") {
-                // Deeper indentation means we're in a volume's config, not a volume definition
-                // Don't exit the volumes section, just skip
+            } else if is_indent_4_plus && in_volume_config {
+                // Inside a volume's config block - check for explicit name: property
+                if let Some(colon_pos) = trimmed.find(':') {
+                    let config_key = trimmed[..colon_pos].trim();
+                    if config_key == "name" {
+                        let name_value = trimmed[colon_pos + 1..].trim().trim_matches(|c| c == '\'' || c == '"').to_string();
+                        if !name_value.is_empty() {
+                            warnings.push(ComposeWarning {
+                                warning_type: "VolumeName".to_string(),
+                                value: name_value.clone(),
+                                line_number,
+                                message: format!(
+                                    "Explicit volume name '{}' (volume '{}') may cause conflicts between worktrees",
+                                    name_value, current_volume_key
+                                ),
+                            });
+                        }
+                    }
+                }
             }
         }
     }
@@ -396,7 +406,36 @@ services:
     }
 
     #[test]
-    fn test_detect_volume_name_warnings() {
+    fn test_detect_volume_name_warnings_explicit_only() {
+        let content = "\
+name: my-project
+services:
+  web:
+    image: nginx
+volumes:
+  db_data:
+    name: my-project-db-data
+    driver: local
+  cache_data:
+  logs_data:
+    name: my-project-logs
+";
+        let info = detect_compose_name(content, "docker-compose.yml");
+
+        // Only volumes with explicit name: should trigger warnings
+        let vol_warnings: Vec<&ComposeWarning> = info
+            .warnings
+            .iter()
+            .filter(|w| w.warning_type == "VolumeName")
+            .collect();
+        assert_eq!(vol_warnings.len(), 2);
+        assert_eq!(vol_warnings[0].value, "my-project-db-data");
+        assert_eq!(vol_warnings[1].value, "my-project-logs");
+    }
+
+    #[test]
+    fn test_no_volume_warning_without_explicit_name() {
+        // Volumes without explicit name: are auto-prefixed by Docker Compose
         let content = "\
 name: my-project
 services:
@@ -408,18 +447,12 @@ volumes:
   cache_data:
 ";
         let info = detect_compose_name(content, "docker-compose.yml");
-
-        assert_eq!(
-            info.warnings.iter().filter(|w| w.warning_type == "VolumeName").count(),
-            2
-        );
         let vol_warnings: Vec<&ComposeWarning> = info
             .warnings
             .iter()
             .filter(|w| w.warning_type == "VolumeName")
             .collect();
-        assert_eq!(vol_warnings[0].value, "db_data");
-        assert_eq!(vol_warnings[1].value, "cache_data");
+        assert_eq!(vol_warnings.len(), 0);
     }
 
     #[test]
@@ -605,6 +638,7 @@ services:
     #[test]
     fn test_detect_volume_not_confused_with_service_volumes() {
         // Ensure that `volumes:` under a service doesn't trigger volume name detection
+        // Only top-level volumes with explicit `name:` should be warned
         let content = "\
 name: my-project
 services:
@@ -614,6 +648,8 @@ services:
       - ./data:/data
 volumes:
   real_volume:
+    name: my-project-data
+  unnamed_volume:
 ";
         let info = detect_compose_name(content, "docker-compose.yml");
 
@@ -622,7 +658,8 @@ volumes:
             .iter()
             .filter(|w| w.warning_type == "VolumeName")
             .collect();
+        // Only the volume with explicit `name:` should be warned
         assert_eq!(vol_warnings.len(), 1);
-        assert_eq!(vol_warnings[0].value, "real_volume");
+        assert_eq!(vol_warnings[0].value, "my-project-data");
     }
 }
