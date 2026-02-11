@@ -513,10 +513,10 @@
 
   .worktree-branch {
     padding: 3px var(--space-2);
-    background: rgba(251, 191, 36, 0.15);
+    background: rgba(74, 222, 128, 0.1);
     border: none;
     border-radius: var(--radius-sm);
-    color: var(--git-modified);
+    color: var(--git-added);
     font-weight: 500;
     font-size: 10px;
     cursor: pointer;
@@ -524,7 +524,7 @@
   }
 
   .worktree-branch:hover {
-    background: rgba(251, 191, 36, 0.25);
+    background: rgba(74, 222, 128, 0.15);
     transform: translateY(-1px);
   }
 
