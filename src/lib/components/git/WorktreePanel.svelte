@@ -403,13 +403,16 @@
     let count = 0;
     // Check auto-detected package managers
     for (const pm of detectedPackageManagers) {
-      const hasUserOverride = initCommands.some((c) => c.command === pm.command);
-      if (!hasUserOverride) {
-        count++;
+      const autoOverride = initCommands.find((c) => c.command === pm.command && c.auto);
+      if (autoOverride) {
+        if (autoOverride.enabled) count++;
+      } else {
+        const hasUserOverride = initCommands.some((c) => c.command === pm.command);
+        if (!hasUserOverride) count++;
       }
     }
-    // Count enabled user commands
-    count += initCommands.filter((c) => c.enabled).length;
+    // Count enabled user commands (exclude auto overrides, already counted above)
+    count += initCommands.filter((c) => c.enabled && !c.auto).length;
     return count;
   }
 
@@ -440,13 +443,16 @@
     const commands: string[] = [];
     // Auto-detected package managers
     for (const pm of detectedPackageManagers) {
-      const hasUserOverride = initCommands.some((c) => c.command === pm.command);
-      if (!hasUserOverride) {
-        commands.push(pm.command);
+      const autoOverride = initCommands.find((c) => c.command === pm.command && c.auto);
+      if (autoOverride) {
+        if (autoOverride.enabled) commands.push(pm.command);
+      } else {
+        const hasUserOverride = initCommands.some((c) => c.command === pm.command);
+        if (!hasUserOverride) commands.push(pm.command);
       }
     }
-    // User commands
-    for (const cmd of initCommands.filter((c) => c.enabled)) {
+    // User commands (exclude auto overrides, already handled above)
+    for (const cmd of initCommands.filter((c) => c.enabled && !c.auto)) {
       commands.push(cmd.command);
     }
 
@@ -581,6 +587,30 @@
     initCommands = initCommands.map((c) =>
       c.command === command ? { ...c, enabled: !c.enabled } : c
     );
+    saveInitCommands();
+  }
+
+  function toggleAutoCommand(pm: PackageManager) {
+    const existing = initCommands.find((c) => c.command === pm.command && c.auto);
+    if (existing) {
+      // Already overridden: toggle enabled state
+      initCommands = initCommands.map((c) =>
+        c.command === pm.command && c.auto ? { ...c, enabled: !c.enabled } : c
+      );
+    } else {
+      // First disable: add as disabled auto command
+      const cdMatch = pm.command.match(/^cd (.+?) && /);
+      const label = cdMatch ? `${pm.name} in ${cdMatch[1]}` : pm.name;
+      initCommands = [
+        ...initCommands,
+        {
+          name: `Install dependencies (${label})`,
+          command: pm.command,
+          enabled: false,
+          auto: true,
+        },
+      ];
+    }
     saveInitCommands();
   }
 
@@ -1288,17 +1318,76 @@
       </div>
 
       <!-- Initialization summary (above footer) -->
-      {#if getCopyFileCount() > 0 || getEnabledCommandCount() > 0 || getPortCount() > 0}
-        <div class="init-summary">
-          <div class="init-header">
-            <span class="init-label">Worktree initialization</span>
-            <button
-              type="button"
-              class="init-settings-btn"
-              onclick={() => (showCopySettingsModal = true)}
-              title="Settings"
+      <div class="init-summary">
+        <div class="init-header">
+          <span class="init-label">Worktree initialization</span>
+          <button
+            type="button"
+            class="init-settings-btn"
+            onclick={() => (showCopySettingsModal = true)}
+            title="Settings"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
             >
+              <circle cx="12" cy="12" r="3" />
+              <path
+                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+              />
+            </svg>
+          </button>
+        </div>
+        <div class="init-content">
+          <div class="init-stats">
+            <span class="stat-item has-tooltip">
               <svg
+                class="stat-icon stat-files"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <rect x="8" y="2" width="13" height="18" rx="2" />
+                <path d="M16 2v4a2 2 0 0 0 2 2h4" />
+                <path d="M5 10H3a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
+              </svg>
+              <span class="stat-text"
+                >{getCopyFileCount()}
+                {getCopyFileCount() === 1 ? 'file' : 'files'}
+                <span class="stat-verb">copy</span></span
+              >
+              <span class="tooltip">{getCopyFilesTooltip()}</span>
+            </span>
+            <span class="stat-item has-tooltip">
+              <svg
+                class="stat-icon stat-commands"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <polyline points="4 17 10 11 4 5" />
+                <line x1="12" y1="19" x2="20" y2="19" />
+              </svg>
+              <span class="stat-text"
+                >{getEnabledCommandCount()}
+                {getEnabledCommandCount() === 1 ? 'command' : 'commands'}
+                <span class="stat-verb">run</span></span
+              >
+              <span class="tooltip">{getCommandsTooltip()}</span>
+            </span>
+            <span class="stat-item has-tooltip">
+              <svg
+                class="stat-icon stat-ports"
                 width="12"
                 height="12"
                 viewBox="0 0 24 24"
@@ -1308,86 +1397,19 @@
               >
                 <circle cx="12" cy="12" r="3" />
                 <path
-                  d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+                  d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"
                 />
               </svg>
-            </button>
-          </div>
-          <div class="init-content">
-            <div class="init-stats">
-              {#if getCopyFileCount() > 0}
-                <span class="stat-item has-tooltip">
-                  <svg
-                    class="stat-icon stat-files"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <rect x="8" y="2" width="13" height="18" rx="2" />
-                    <path d="M16 2v4a2 2 0 0 0 2 2h4" />
-                    <path d="M5 10H3a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
-                  </svg>
-                  <span class="stat-text"
-                    >{getCopyFileCount()}
-                    {getCopyFileCount() === 1 ? 'file' : 'files'}
-                    <span class="stat-verb">copy</span></span
-                  >
-                  <span class="tooltip">{getCopyFilesTooltip()}</span>
-                </span>
-              {/if}
-              {#if getEnabledCommandCount() > 0}
-                <span class="stat-item has-tooltip">
-                  <svg
-                    class="stat-icon stat-commands"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <polyline points="4 17 10 11 4 5" />
-                    <line x1="12" y1="19" x2="20" y2="19" />
-                  </svg>
-                  <span class="stat-text"
-                    >{getEnabledCommandCount()}
-                    {getEnabledCommandCount() === 1 ? 'command' : 'commands'}
-                    <span class="stat-verb">run</span></span
-                  >
-                  <span class="tooltip">{getCommandsTooltip()}</span>
-                </span>
-              {/if}
-              {#if getPortCount() > 0}
-                <span class="stat-item has-tooltip">
-                  <svg
-                    class="stat-icon stat-ports"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                  >
-                    <circle cx="12" cy="12" r="3" />
-                    <path
-                      d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"
-                    />
-                  </svg>
-                  <span class="stat-text"
-                    >{getPortCount()}
-                    {getPortCount() === 1 ? 'port' : 'ports'}
-                    <span class="stat-verb">remap</span></span
-                  >
-                  <span class="tooltip">{getPortsTooltip()}</span>
-                </span>
-              {/if}
-            </div>
+              <span class="stat-text"
+                >{getPortCount()}
+                {getPortCount() === 1 ? 'port' : 'ports'}
+                <span class="stat-verb">remap</span></span
+              >
+              <span class="tooltip">{getPortsTooltip()}</span>
+            </span>
           </div>
         </div>
-      {/if}
+      </div>
 
       <!-- Row 2: Standard modal footer -->
       <div class="modal-footer">
@@ -1569,12 +1591,19 @@
 
           <!-- Auto-detected package managers -->
           {#each detectedPackageManagers as pm (pm.command)}
-            {@const hasUserOverride = initCommands.some((c) => c.command === pm.command)}
+            {@const autoOverride = initCommands.find((c) => c.command === pm.command && c.auto)}
+            {@const hasUserOverride = initCommands.some((c) => c.command === pm.command && !c.auto)}
             {@const cdMatch = pm.command.match(/^cd (.+?) && /)}
             {@const label = cdMatch ? `${pm.name} in ${cdMatch[1]}` : pm.name}
+            {@const isEnabled = autoOverride ? autoOverride.enabled : true}
             {#if !hasUserOverride}
-              <div class="command-item command-auto">
-                <input type="checkbox" class="command-checkbox" checked disabled />
+              <div class="command-item command-auto" class:command-disabled={!isEnabled}>
+                <input
+                  type="checkbox"
+                  class="command-checkbox"
+                  checked={isEnabled}
+                  onchange={() => toggleAutoCommand(pm)}
+                />
                 <div class="command-info">
                   <span class="command-name">Install dependencies ({label})</span>
                   <span class="command-value">{pm.command}</span>
@@ -1585,7 +1614,7 @@
           {/each}
 
           <!-- User-configured commands -->
-          {#each initCommands as cmd (cmd.command)}
+          {#each initCommands.filter((c) => !c.auto) as cmd (cmd.command)}
             <div class="command-item command-user">
               <input
                 type="checkbox"
@@ -3092,7 +3121,16 @@
   }
 
   .command-auto {
-    opacity: 0.7;
+    opacity: 0.85;
+  }
+
+  .command-auto.command-disabled {
+    opacity: 0.4;
+  }
+
+  .command-auto.command-disabled .command-name,
+  .command-auto.command-disabled .command-value {
+    text-decoration: line-through;
   }
 
   .command-checkbox {
@@ -3100,10 +3138,6 @@
     height: 14px;
     accent-color: var(--accent-color);
     cursor: pointer;
-  }
-
-  .command-checkbox:disabled {
-    cursor: default;
   }
 
   .command-info {
