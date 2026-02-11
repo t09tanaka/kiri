@@ -484,6 +484,14 @@ export interface PortConfig {
 }
 
 /**
+ * Compose isolation configuration
+ */
+export interface ComposeIsolationConfig {
+  enabled: boolean;
+  disabledFiles: string[];
+}
+
+/**
  * Project-specific settings (stored per project path)
  */
 export interface ProjectSettings {
@@ -491,6 +499,7 @@ export interface ProjectSettings {
   worktreeCopyPatterns: string[];
   worktreeInitCommands: WorktreeInitCommand[];
   portConfig?: PortConfig;
+  composeIsolationConfig?: ComposeIsolationConfig;
 }
 
 /**
@@ -551,6 +560,7 @@ export async function loadProjectSettings(projectPath: string): Promise<ProjectS
       worktreeInitCommands:
         settings.worktreeInitCommands ?? DEFAULT_PROJECT_SETTINGS.worktreeInitCommands,
       portConfig: settings.portConfig,
+      composeIsolationConfig: settings.composeIsolationConfig,
     };
   } catch (error) {
     console.error('Failed to load project settings:', error);
