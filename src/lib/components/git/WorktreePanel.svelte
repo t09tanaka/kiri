@@ -38,8 +38,10 @@
 
   let { projectPath, onClose }: Props = $props();
 
-  let isLoading = $state(false);
   let mounted = $state(false);
+
+  // Initialization loading state
+  let isInitializing = $state(true);
 
   // Create form state
   let createName = $state('');
@@ -187,9 +189,11 @@
     await loadContext();
     await loadCopySettings();
     await loadInitCommands();
-    await detectPackageManagers();
     await loadPortConfig();
+    await detectPackageManagers();
     await detectPortsForWorktree();
+
+    isInitializing = false;
   });
 
   async function loadContext() {
@@ -749,12 +753,7 @@
   async function loadWorktrees(path?: string) {
     const targetPath = path ?? projectPath;
     if (!targetPath) return;
-    isLoading = true;
-    try {
-      await worktreeStore.refresh(targetPath);
-    } finally {
-      isLoading = false;
-    }
+    await worktreeStore.refresh(targetPath);
   }
 
   async function loadBranches() {
@@ -1116,46 +1115,45 @@
       </div>
 
       <div class="modal-body">
-        <!-- Worktree Tree View -->
-        {#if isLoading && !mounted}
-          <div class="loading-state">
+        {#if isInitializing}
+          <div class="init-overlay">
             <Spinner size="md" />
-            <span>Loading worktrees...</span>
-          </div>
-        {:else}
-          <div class="worktree-tree">
-            <!-- Main repository (parent) -->
-            {#if mainWorktree()}
-              {@const main = mainWorktree()}
-              <div class="tree-item tree-parent" class:is-current={!isCurrentWindowWorktree()}>
-                <span class="tree-indicator"></span>
-                <span class="tree-branch">{main?.branch ?? 'detached'}</span>
-                {#if !isCurrentWindowWorktree()}
-                  <span class="tree-label label-current">CURRENT</span>
-                {/if}
-              </div>
-            {/if}
-
-            <!-- Linked worktrees (children) -->
-            {#each linkedWorktrees() as wt, i (wt.path)}
-              {@const isLast = i === linkedWorktrees().length - 1}
-              <button
-                type="button"
-                class="tree-item tree-child"
-                onclick={() => openWorktreeWindow(wt)}
-                title="Click to open"
-              >
-                <span class="tree-connector" class:is-last={isLast}></span>
-                <span class="tree-indicator"></span>
-                <span class="tree-branch">{wt.branch ?? 'detached'}</span>
-                {#if wt.is_locked}
-                  <span class="tree-locked" title="Locked">🔒</span>
-                {/if}
-                <span class="tree-label label-wt">WT</span>
-              </button>
-            {/each}
+            <span>Scanning project...</span>
           </div>
         {/if}
+        <!-- Worktree Tree View -->
+        <div class="worktree-tree">
+          <!-- Main repository (parent) -->
+          {#if mainWorktree()}
+            {@const main = mainWorktree()}
+            <div class="tree-item tree-parent" class:is-current={!isCurrentWindowWorktree()}>
+              <span class="tree-indicator"></span>
+              <span class="tree-branch">{main?.branch ?? 'detached'}</span>
+              {#if !isCurrentWindowWorktree()}
+                <span class="tree-label label-current">CURRENT</span>
+              {/if}
+            </div>
+          {/if}
+
+          <!-- Linked worktrees (children) -->
+          {#each linkedWorktrees() as wt, i (wt.path)}
+            {@const isLast = i === linkedWorktrees().length - 1}
+            <button
+              type="button"
+              class="tree-item tree-child"
+              onclick={() => openWorktreeWindow(wt)}
+              title="Click to open"
+            >
+              <span class="tree-connector" class:is-last={isLast}></span>
+              <span class="tree-indicator"></span>
+              <span class="tree-branch">{wt.branch ?? 'detached'}</span>
+              {#if wt.is_locked}
+                <span class="tree-locked" title="Locked">🔒</span>
+              {/if}
+              <span class="tree-label label-wt">WT</span>
+            </button>
+          {/each}
+        </div>
 
         <!-- Separator -->
         <div class="section-divider"></div>
@@ -2002,9 +2000,11 @@
   }
 
   .modal-body {
+    position: relative;
     flex: 1;
     overflow-y: auto;
     padding: var(--space-4);
+    min-height: 220px;
   }
 
   /* Initialization summary (above footer) */
@@ -2532,6 +2532,23 @@
     padding: var(--space-6);
     color: var(--text-muted);
     font-size: 13px;
+  }
+
+  /* Initialization Overlay */
+  .init-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    background: var(--bg-glass);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-radius: var(--radius-xl);
+    color: var(--text-muted);
+    font-size: 13px;
+    z-index: 10;
   }
 
   /* Settings Modal */
