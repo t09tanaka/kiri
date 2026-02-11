@@ -28,6 +28,12 @@
     type PortAssignment,
     type PortSource,
   } from '@/lib/services/portIsolationService';
+  import {
+    composeIsolationService,
+    type DetectedComposeFiles,
+    type ComposeNameReplacement,
+  } from '@/lib/services/composeIsolationService';
+  import type { ComposeIsolationConfig } from '@/lib/services/persistenceService';
   import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
   import { formatRelativeTime } from '@/lib/utils/dateFormat';
 
@@ -89,6 +95,12 @@
   let selectedPorts = $state<Map<string, boolean>>(new Map());
   let portAssignments = $state<PortAssignment[]>([]);
   let newTargetFile = $state('');
+
+  // Compose isolation state
+  let composeConfig = $state<ComposeIsolationConfig | null>(null);
+  let detectedComposeFiles = $state<DetectedComposeFiles | null>(null);
+  let isDetectingCompose = $state(false);
+  let composeReplacements = $state<ComposeNameReplacement[]>([]);
 
   // Helper to force UI update - uses setTimeout to ensure render cycle completes
   async function forceUIUpdate(delayMs = 50): Promise<void> {
@@ -160,6 +172,14 @@
     return branchToWorktreeName(name);
   });
 
+  // Rebuild compose replacements when worktree name changes
+  $effect(() => {
+    void worktreeName();
+    if (detectedComposeFiles && composeConfig?.enabled) {
+      rebuildComposeReplacements();
+    }
+  });
+
   // Compute worktree path preview
   const pathPreview = $derived(() => {
     const wtName = worktreeName();
@@ -190,8 +210,10 @@
     await loadCopySettings();
     await loadInitCommands();
     await loadPortConfig();
+    await loadComposeConfig();
     await detectPackageManagers();
     await detectPortsForWorktree();
+    await detectComposeFilesForWorktree();
 
     isInitializing = false;
   });
@@ -556,6 +578,118 @@
     savePortConfig();
   }
 
+  // ============================================================================
+  // Compose isolation functions
+  // ============================================================================
+
+  async function loadComposeConfig() {
+    try {
+      const settings = await loadProjectSettings(projectPath);
+      composeConfig = settings.composeIsolationConfig ?? {
+        enabled: true,
+        disabledFiles: [],
+      };
+    } catch {
+      composeConfig = { enabled: true, disabledFiles: [] };
+    }
+  }
+
+  async function saveComposeConfig() {
+    if (!composeConfig) return;
+    try {
+      const settings = await loadProjectSettings(projectPath);
+      settings.composeIsolationConfig = composeConfig;
+      await saveProjectSettings(projectPath, settings);
+    } catch (e) {
+      console.error('Failed to save compose config:', e);
+    }
+  }
+
+  async function detectComposeFilesForWorktree(): Promise<void> {
+    if (!composeConfig?.enabled) {
+      detectedComposeFiles = null;
+      composeReplacements = [];
+      return;
+    }
+    isDetectingCompose = true;
+    try {
+      const detected = await composeIsolationService.detectComposeFiles(projectPath);
+      detectedComposeFiles = detected;
+      rebuildComposeReplacements();
+    } catch (e) {
+      console.error('Failed to detect compose files:', e);
+      detectedComposeFiles = null;
+      composeReplacements = [];
+    } finally {
+      isDetectingCompose = false;
+    }
+  }
+
+  function rebuildComposeReplacements() {
+    if (!detectedComposeFiles || !composeConfig?.enabled) {
+      composeReplacements = [];
+      return;
+    }
+    const wtName = worktreeName();
+    if (!wtName) {
+      composeReplacements = [];
+      return;
+    }
+    composeReplacements = composeIsolationService.buildReplacements(
+      detectedComposeFiles,
+      wtName,
+      composeConfig.disabledFiles ?? []
+    );
+  }
+
+  function toggleComposeIsolation() {
+    if (composeConfig) {
+      composeConfig = { ...composeConfig, enabled: !composeConfig.enabled };
+      saveComposeConfig();
+      if (composeConfig.enabled) {
+        detectComposeFilesForWorktree();
+      } else {
+        detectedComposeFiles = null;
+        composeReplacements = [];
+      }
+    }
+  }
+
+  function toggleComposeFile(filePath: string) {
+    if (!composeConfig) return;
+    const disabled = composeConfig.disabledFiles ?? [];
+    if (disabled.includes(filePath)) {
+      composeConfig = {
+        ...composeConfig,
+        disabledFiles: disabled.filter((f) => f !== filePath),
+      };
+    } else {
+      composeConfig = {
+        ...composeConfig,
+        disabledFiles: [...disabled, filePath],
+      };
+    }
+    saveComposeConfig();
+    rebuildComposeReplacements();
+  }
+
+  function getComposeCount(): number {
+    if (!composeConfig?.enabled || !detectedComposeFiles) return 0;
+    const disabled = composeConfig.disabledFiles ?? [];
+    return detectedComposeFiles.files.filter(
+      (f) => f.project_name !== null && !disabled.includes(f.file_path)
+    ).length;
+  }
+
+  function getComposeTooltip(): string {
+    if (!detectedComposeFiles || getComposeCount() === 0) return 'No compose files to isolate';
+    const disabled = composeConfig?.disabledFiles ?? [];
+    const lines = detectedComposeFiles.files
+      .filter((f) => f.project_name !== null && !disabled.includes(f.file_path))
+      .map((f) => `  ${f.file_path}: ${f.project_name}`);
+    return `Compose isolation:\n${lines.join('\n')}`;
+  }
+
   function addInitCommand() {
     const name = newInitCommandName.trim();
     const command = newInitCommandValue.trim();
@@ -656,7 +790,8 @@
   function buildCreationTaskList(
     branchName: string,
     effectiveCommands: WorktreeInitCommand[],
-    hasPortAssignments: boolean
+    hasPortAssignments: boolean,
+    hasComposeReplacements: boolean
   ): ProgressTask[] {
     const tasks: ProgressTask[] = [
       {
@@ -675,6 +810,14 @@
       tasks.push({
         id: 'port-remap',
         name: 'Remap ports',
+        status: 'pending',
+      });
+    }
+
+    if (hasComposeReplacements) {
+      tasks.push({
+        id: 'compose-name',
+        name: 'Isolate compose names',
         status: 'pending',
       });
     }
@@ -797,7 +940,14 @@
     // Build and display the full task list immediately
     const currentPortAssignments = portConfig?.enabled ? portAssignments : [];
     const hasPortAssignments = currentPortAssignments.length > 0;
-    progressTasks = buildCreationTaskList(branchName, effectiveCommands, hasPortAssignments);
+    const currentComposeReplacements = composeConfig?.enabled ? composeReplacements : [];
+    const hasComposeReplacements = currentComposeReplacements.length > 0;
+    progressTasks = buildCreationTaskList(
+      branchName,
+      effectiveCommands,
+      hasPortAssignments,
+      hasComposeReplacements
+    );
     isProgressActive = true;
     await forceUIUpdate();
 
@@ -891,6 +1041,31 @@
         } catch (portError) {
           console.error('Failed to register port assignments:', portError);
           updateTask('port-remap', 'failed', String(portError));
+        }
+        await forceUIUpdate();
+        await pauseBetweenTasks();
+      }
+
+      // Step 2.7: Compose name isolation
+      if (hasComposeReplacements) {
+        updateTask('compose-name', 'running');
+        await forceUIUpdate();
+        try {
+          const composeResult = await composeIsolationService.applyComposeIsolation(
+            wt.path,
+            currentComposeReplacements
+          );
+          updateTask(
+            'compose-name',
+            'completed',
+            `${composeResult.transformed_files.length} files updated`
+          );
+          if (composeResult.errors.length > 0) {
+            console.error('Compose isolation errors:', composeResult.errors);
+          }
+        } catch (composeError) {
+          console.error('Failed to isolate compose names:', composeError);
+          updateTask('compose-name', 'failed', String(composeError));
         }
         await forceUIUpdate();
         await pauseBetweenTasks();
@@ -1405,6 +1580,29 @@
               >
               <span class="tooltip">{getPortsTooltip()}</span>
             </span>
+            <span class="stat-item has-tooltip">
+              <svg
+                class="stat-icon stat-compose"
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path
+                  d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+                />
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                <line x1="12" y1="22.08" x2="12" y2="12" />
+              </svg>
+              <span class="stat-text"
+                >{getComposeCount()}
+                {getComposeCount() === 1 ? 'compose file' : 'compose files'}
+                <span class="stat-verb">rename</span></span
+              >
+              <span class="tooltip">{getComposeTooltip()}</span>
+            </span>
           </div>
         </div>
       </div>
@@ -1839,6 +2037,92 @@
             </div>
           {/if}
         </div>
+
+        <!-- Compose Isolation Section -->
+        <div class="settings-section">
+          <div class="settings-section-header">
+            <div class="settings-section-title">Compose isolation</div>
+            <label class="toggle-switch">
+              <input
+                type="checkbox"
+                checked={composeConfig?.enabled ?? true}
+                onchange={() => toggleComposeIsolation()}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <p class="settings-section-description">
+            Auto-replace project name in docker-compose files to prevent conflicts between
+            worktrees.
+          </p>
+
+          {#if composeConfig?.enabled}
+            {#if isDetectingCompose}
+              <div class="port-loading">
+                <Spinner size="sm" />
+                <span>Scanning compose files...</span>
+              </div>
+            {:else if detectedComposeFiles && detectedComposeFiles.files.length > 0}
+              <div class="compose-list">
+                {#each detectedComposeFiles.files as file (file.file_path)}
+                  {@const replacement = composeReplacements.find(
+                    (r) => r.file_path === file.file_path
+                  )}
+                  {@const isDisabled = (composeConfig.disabledFiles ?? []).includes(file.file_path)}
+                  <div class="compose-file-group" class:disabled={isDisabled}>
+                    <div class="compose-file-row">
+                      <div class="compose-file-check">
+                        {#if file.project_name !== null}
+                          <input
+                            type="checkbox"
+                            class="port-checkbox"
+                            checked={!isDisabled}
+                            onchange={() => toggleComposeFile(file.file_path)}
+                          />
+                        {/if}
+                      </div>
+                      <div class="compose-file-info">
+                        <code class="compose-file-path">{file.file_path}</code>
+                        {#if file.project_name !== null && replacement && !isDisabled}
+                          <span class="compose-name-transform">
+                            <code class="compose-name-original">{file.project_name}</code>
+                            <span class="compose-arrow">→</span>
+                            <code class="compose-name-new">{replacement.new_name}</code>
+                          </span>
+                        {:else if file.project_name !== null}
+                          <span class="compose-name-transform">
+                            <code class="compose-name-original">name</code>
+                            <span class="compose-will-rename">will be replaced</span>
+                          </span>
+                        {:else}
+                          <span class="compose-note">No name (directory-based)</span>
+                        {/if}
+                      </div>
+                    </div>
+                    {#if file.warnings.length > 0}
+                      <div class="compose-file-warnings">
+                        {#each file.warnings as warning (`${file.file_path}-${warning.line_number}-${warning.value}`)}
+                          <div class="compose-warning-item">
+                            <span class="compose-warning-icon">⚠</span>
+                            <span class="compose-warning-text"
+                              >static <code
+                                >{warning.warning_type === 'ContainerName'
+                                  ? 'container_name'
+                                  : 'volume name'}</code
+                              > may conflict</span
+                            >
+                          </div>
+                        {/each}
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <div class="port-empty">No docker-compose files detected</div>
+            {/if}
+          {/if}
+        </div>
       </div>
     </div>
   </div>
@@ -2036,9 +2320,9 @@
   }
 
   .init-stats {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-1) var(--space-3);
     flex: 1;
   }
 
@@ -2072,6 +2356,7 @@
     align-items: center;
     gap: 5px;
     font-size: 11px;
+    white-space: nowrap;
     cursor: help;
     transition: opacity var(--transition-fast);
   }
@@ -3557,5 +3842,124 @@
     font-size: 10px;
     color: var(--text-muted);
     display: block;
+  }
+
+  /* Compose isolation list */
+  .compose-list {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+  }
+
+  .compose-file-group {
+    transition: opacity var(--transition-fast);
+  }
+
+  .compose-file-group + .compose-file-group {
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .compose-file-group.disabled {
+    opacity: 0.4;
+  }
+
+  .compose-file-row {
+    display: flex;
+    align-items: flex-start;
+    padding: var(--space-2);
+    gap: var(--space-1);
+  }
+
+  .compose-file-check {
+    width: 20px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    padding-top: 1px;
+  }
+
+  .compose-file-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .compose-file-path {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-secondary);
+  }
+
+  .compose-name-transform {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+  }
+
+  .compose-name-original {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-color);
+  }
+
+  .compose-arrow {
+    color: var(--text-muted);
+    opacity: 0.5;
+    font-size: 10px;
+  }
+
+  .compose-name-new {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent-color);
+    font-weight: 500;
+  }
+
+  .compose-will-rename {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .compose-note {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  /* Compose file-level warnings */
+  .compose-file-warnings {
+    padding: 0 var(--space-2) var(--space-2) 28px;
+  }
+
+  .compose-warning-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 0;
+    font-size: 10px;
+  }
+
+  .compose-warning-icon {
+    flex-shrink: 0;
+    font-size: 9px;
+    color: var(--accent3-color);
+  }
+
+  .compose-warning-text {
+    color: var(--text-muted);
+    font-size: 10px;
+  }
+
+  .compose-warning-text code {
+    font-family: var(--font-mono);
+    color: var(--accent3-color);
+    font-size: 10px;
   }
 </style>
