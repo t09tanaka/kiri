@@ -753,11 +753,14 @@ pub fn run_init_command(cwd: String, command: String) -> Result<CommandOutput, S
         .map_err(|e| format!("Failed to execute command: {}", e))?;
 
     #[cfg(not(target_os = "windows"))]
-    let output = Command::new("sh")
-        .args(["-c", &command])
-        .current_dir(path)
-        .output()
-        .map_err(|e| format!("Failed to execute command: {}", e))?;
+    let output = {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
+        Command::new(&shell)
+            .args(["-l", "-c", &command])
+            .current_dir(path)
+            .output()
+            .map_err(|e| format!("Failed to execute command: {}", e))?
+    };
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
