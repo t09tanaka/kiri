@@ -133,7 +133,7 @@
     <Terminal
       {tabId}
       paneId={pane.id}
-      {cwd}
+      cwd={pane.cwd || cwd}
       showControls={true}
       onSplitHorizontal={() => handleSplitHorizontal(pane.id)}
       onSplitVertical={() => handleSplitVertical(pane.id)}

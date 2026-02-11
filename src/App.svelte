@@ -45,17 +45,19 @@
     saveProjectSettings,
     type PersistedWindowState,
     type PersistedWindowGeometry,
+    type PersistedPane,
   } from '@/lib/services/persistenceService';
   import { portIsolationService } from '@/lib/services/portIsolationService';
   import { terminalService } from '@/lib/services/terminalService';
   import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
-  import { getAllTerminalIds } from '@/lib/stores/tabStore';
+  import { getAllTerminalIds, getPaneTerminalIdMap } from '@/lib/stores/tabStore';
   import { get } from 'svelte/store';
 
   let showShortcuts = $state(false);
   let windowLabel = $state('');
   let windowIndex = $state(-1); // -1 for main, 0+ for other windows
   let nextWindowIndex = $state(0); // Track next index for new windows (main only)
+  let isAppQuitting = $state(false);
 
   /**
    * Get current window geometry (position and size)
@@ -78,6 +80,33 @@
   }
 
   /**
+   * Recursively add CWD to persisted pane leaves from active terminals
+   */
+  async function addCwdToPersistedPane(
+    pane: PersistedPane,
+    paneTerminalMap: Map<string, number>
+  ): Promise<PersistedPane> {
+    if (pane.type === 'terminal') {
+      const terminalId = paneTerminalMap.get(pane.id);
+      if (terminalId !== undefined) {
+        try {
+          const cwd = await terminalService.getCwd(terminalId);
+          if (cwd) {
+            return { ...pane, cwd };
+          }
+        } catch {
+          // Terminal might be closing, ignore
+        }
+      }
+      return pane;
+    }
+    const children = await Promise.all(
+      pane.children.map((child) => addCwdToPersistedPane(child, paneTerminalMap))
+    );
+    return { ...pane, children };
+  }
+
+  /**
    * Get current window state for persistence
    */
   async function getCurrentWindowState(): Promise<PersistedWindowState> {
@@ -85,6 +114,18 @@
     const { tabs, activeTabId } = tabStore.getStateForPersistence();
     const ui = appStore.getUIForPersistence();
     const geometry = await getWindowGeometry();
+
+    // Collect CWD for each terminal pane
+    const runtimeState = get(tabStore);
+    for (const tab of tabs) {
+      if (tab.type === 'terminal' && tab.rootPane) {
+        const runtimeTab = runtimeState.tabs.find((t) => t.id === tab.id);
+        if (runtimeTab) {
+          const paneTerminalMap = getPaneTerminalIdMap(runtimeTab.rootPane);
+          tab.rootPane = await addCwdToPersistedPane(tab.rootPane, paneTerminalMap);
+        }
+      }
+    }
 
     return {
       label: windowLabel,
@@ -209,15 +250,16 @@
     for (let i = 0; i < otherWindowsData.length; i++) {
       const winState = otherWindowsData[i];
       try {
-        // Create window with geometry if available
+        // Create window with geometry and index via URL parameter
         const geometry = winState.geometry;
         await invoke('create_window', {
           x: geometry?.x ?? null,
           y: geometry?.y ?? null,
           width: geometry?.width ?? null,
           height: geometry?.height ?? null,
+          windowIndex: i,
         });
-        // Send state and index to the new window after a short delay
+        // Send state to the new window after a short delay
         setTimeout(async () => {
           await emit('restore-window-state', { index: i, state: winState });
         }, 500);
@@ -341,14 +383,12 @@
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'n') {
       e.preventDefault();
       try {
-        await invoke('create_window');
-        // If main window, assign index to new window
         if (windowLabel === 'main') {
           const indexToAssign = nextWindowIndex;
           nextWindowIndex++;
-          setTimeout(async () => {
-            await emit('assign-window-index', { index: indexToAssign });
-          }, 500);
+          await invoke('create_window', { windowIndex: indexToAssign });
+        } else {
+          await invoke('create_window');
         }
       } catch (error) {
         console.error('Failed to create window:', error);
@@ -424,6 +464,7 @@
     // Listen for state restore event and index assignment (for non-main windows)
     let unlistenRestore: (() => void) | null = null;
     let unlistenAssignIndex: (() => void) | null = null;
+    let unlistenAppQuitting: (() => void) | null = null;
     if (!isMainWindow) {
       // Listen for state restore (when app starts)
       unlistenRestore = await listen<{ index: number; state: Omit<PersistedWindowState, 'label'> }>(
@@ -441,6 +482,16 @@
           windowIndex = event.payload.index;
         }
       });
+      // Listen for app-quitting event: save state immediately and skip worktree delete
+      unlistenAppQuitting = await listen('app-quitting', async () => {
+        isAppQuitting = true;
+        // Proactively save state before the app exits
+        try {
+          await saveCurrentWindowState();
+        } catch {
+          // Ignore errors during shutdown
+        }
+      });
     }
 
     // Restore session (main window only)
@@ -448,8 +499,16 @@
       await restoreSession();
     }
 
-    // Handle ?project= URL parameter (for worktree windows)
+    // Handle URL parameters
     const params = new URLSearchParams(window.location.search);
+
+    // Read windowIndex from URL parameter (reliable, no race condition)
+    const windowIndexParam = params.get('windowIndex');
+    if (windowIndexParam && !isMainWindow) {
+      windowIndex = parseInt(windowIndexParam, 10);
+    }
+
+    // Handle ?project= URL parameter (for worktree windows)
     const projectParam = params.get('project');
     if (projectParam) {
       const decodedPath = decodeURIComponent(projectParam);
@@ -569,52 +628,63 @@
 
       event.preventDefault();
 
-      // For worktree windows, automatically delete the worktree
-      const currentPath = projectStore.getCurrentPath();
-      if (currentPath) {
-        try {
-          // Get fresh worktree context directly from Tauri (don't rely on store state)
-          const worktreeContext = await worktreeService.getContext(currentPath);
-          if (
-            worktreeContext?.is_worktree &&
-            worktreeContext?.main_repo_path &&
-            worktreeContext?.worktree_name
-          ) {
-            // Remove worktree using main repo path and internal worktree name
-            await worktreeService.remove(
-              worktreeContext.main_repo_path,
-              worktreeContext.worktree_name
-            );
+      // Main window: immediately notify other windows to save their state
+      if (isMainWindow) {
+        await eventService.emit('app-quitting', {});
+      }
 
-            // Release port assignments for this worktree
-            try {
-              const settings = await loadProjectSettings(worktreeContext.main_repo_path);
-              if (settings.portConfig) {
-                settings.portConfig = portIsolationService.removeWorktreeAssignments(
-                  settings.portConfig,
-                  worktreeContext.worktree_name
-                );
-                await saveProjectSettings(worktreeContext.main_repo_path, settings);
+      // For worktree windows, automatically delete the worktree (skip when app is quitting)
+      if (!isAppQuitting) {
+        const currentPath = projectStore.getCurrentPath();
+        if (currentPath) {
+          try {
+            // Get fresh worktree context directly from Tauri (don't rely on store state)
+            const worktreeContext = await worktreeService.getContext(currentPath);
+            if (
+              worktreeContext?.is_worktree &&
+              worktreeContext?.main_repo_path &&
+              worktreeContext?.worktree_name
+            ) {
+              // Remove worktree using main repo path and internal worktree name
+              await worktreeService.remove(
+                worktreeContext.main_repo_path,
+                worktreeContext.worktree_name
+              );
+
+              // Release port assignments for this worktree
+              try {
+                const settings = await loadProjectSettings(worktreeContext.main_repo_path);
+                if (settings.portConfig) {
+                  settings.portConfig = portIsolationService.removeWorktreeAssignments(
+                    settings.portConfig,
+                    worktreeContext.worktree_name
+                  );
+                  await saveProjectSettings(worktreeContext.main_repo_path, settings);
+                }
+              } catch (portError) {
+                console.error('Failed to release port assignments:', portError);
               }
-            } catch (portError) {
-              console.error('Failed to release port assignments:', portError);
-            }
 
-            // Emit event to notify other windows
-            await eventService.emit('worktree-removed', { path: currentPath });
+              // Emit event to notify other windows
+              await eventService.emit('worktree-removed', { path: currentPath });
+            }
+          } catch (error) {
+            console.error('Failed to remove worktree:', error);
           }
-        } catch (error) {
-          console.error('Failed to remove worktree:', error);
         }
       }
 
       try {
         if (isMainWindow) {
-          // Main window: save state
+          // Wait for non-main windows to save their state (event was emitted earlier)
+          await new Promise((resolve) => setTimeout(resolve, 300));
           await saveCurrentWindowState();
         } else if (windowIndex >= 0) {
-          // Non-main window: remove from session instead of saving
-          await removeOtherWindow(windowIndex);
+          // Non-main window: save state, then mark as closed only if not quitting
+          await saveCurrentWindowState();
+          if (!isAppQuitting) {
+            await removeOtherWindow(windowIndex);
+          }
         }
       } catch (error) {
         console.error('Failed to handle window close:', error);
@@ -647,6 +717,21 @@
       handleOpenDirectory();
     });
 
+    // Listen for menu-new-window event from Rust menu handler
+    // Only the main window handles this to assign proper windowIndex
+    let unlistenMenuNewWindow: (() => void) | null = null;
+    if (isMainWindow) {
+      unlistenMenuNewWindow = await listen('menu-new-window', async () => {
+        try {
+          const indexToAssign = nextWindowIndex;
+          nextWindowIndex++;
+          await invoke('create_window', { windowIndex: indexToAssign });
+        } catch (error) {
+          console.error('Failed to create window from menu:', error);
+        }
+      });
+    }
+
     performanceService.markStartupPhase('app-mount-complete');
 
     return () => {
@@ -656,6 +741,7 @@
       unsubscribeSettingsStore?.();
       unlistenRestore?.();
       unlistenAssignIndex?.();
+      unlistenAppQuitting?.();
       unlistenWorktreeRemoved();
       window.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -663,6 +749,7 @@
       unlistenResized();
       unlistenMoved();
       unlistenMenu();
+      unlistenMenuNewWindow?.();
       cleanupLongTaskObserver();
     };
   });

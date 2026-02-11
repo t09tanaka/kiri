@@ -127,9 +127,8 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     app.on_menu_event(move |app_handle, event| {
         match event.id().as_ref() {
             "new_window" => {
-                if let Err(e) = super::create_window_impl(&app_handle, None, None, None, None, None, None) {
-                    eprintln!("Failed to create window: {}", e);
-                }
+                // Emit to frontend so main window can assign proper windowIndex
+                let _ = app_handle.emit("menu-new-window", ());
             }
             "open" => {
                 // Emit event to frontend to handle open dialog

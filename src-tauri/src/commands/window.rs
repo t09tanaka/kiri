@@ -49,6 +49,7 @@ pub fn create_window_impl(
     width: Option<f64>,
     height: Option<f64>,
     project_path: Option<String>,
+    window_index: Option<i32>,
 ) -> Result<(), String> {
     let id = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("window-{}", id);
@@ -65,13 +66,18 @@ pub fn create_window_impl(
             .unwrap_or((1200.0, 800.0)),
     };
 
-    // Build URL with optional project path parameter
-    let url = match &project_path {
-        Some(path) => {
-            let encoded = urlencoding::encode(path);
-            WebviewUrl::App(format!("?project={}", encoded).into())
-        }
-        None => WebviewUrl::default(),
+    // Build URL with optional parameters
+    let mut params = Vec::new();
+    if let Some(path) = &project_path {
+        params.push(format!("project={}", urlencoding::encode(path)));
+    }
+    if let Some(idx) = window_index {
+        params.push(format!("windowIndex={}", idx));
+    }
+    let url = if params.is_empty() {
+        WebviewUrl::default()
+    } else {
+        WebviewUrl::App(format!("?{}", params.join("&")).into())
     };
 
     let mut builder = WebviewWindowBuilder::new(app, &label, url)
@@ -107,8 +113,9 @@ pub fn create_window(
     width: Option<f64>,
     height: Option<f64>,
     project_path: Option<String>,
+    window_index: Option<i32>,
 ) -> Result<(), String> {
-    create_window_impl(&app, Some(&registry), x, y, width, height, project_path)
+    create_window_impl(&app, Some(&registry), x, y, width, height, project_path, window_index)
 }
 
 /// Focus an existing window for the given project path, or create a new one if not found
@@ -139,7 +146,7 @@ pub fn focus_or_create_window(
     }
 
     // No existing window, create a new one
-    create_window(app, registry, None, None, None, None, Some(project_path))?;
+    create_window(app, registry, None, None, None, None, Some(project_path), None)?;
     Ok(false) // Indicates new window was created
 }
 
