@@ -205,7 +205,7 @@
         </button>
       {/if}
     {/if}
-    {#if !$isWorktree}
+    {#if gitInfo?.branch && !$isWorktree}
       <button
         class="status-item worktrees-btn"
         class:disabled={$isSubdirectoryOfRepo}
