@@ -690,6 +690,22 @@
     return `Compose isolation:\n${lines.join('\n')}`;
   }
 
+  function getComposeWarningCount(): number {
+    if (!detectedComposeFiles) return 0;
+    return detectedComposeFiles.files.reduce((sum, f) => sum + f.warnings.length, 0);
+  }
+
+  function openComposeSettings() {
+    showCopySettingsModal = true;
+    // Scroll to compose isolation section after modal renders
+    requestAnimationFrame(() => {
+      const section = document.getElementById('compose-isolation-section');
+      if (section) {
+        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    });
+  }
+
   function addInitCommand() {
     const name = newInitCommandName.trim();
     const command = newInitCommandValue.trim();
@@ -1288,6 +1304,19 @@
           </button>
         </div>
       </div>
+
+      {#if getComposeWarningCount() > 0}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <div class="compose-conflict-banner" onclick={() => openComposeSettings()}>
+          <span class="compose-conflict-icon">⚠</span>
+          <span class="compose-conflict-text"
+            >{getComposeWarningCount()}
+            {getComposeWarningCount() === 1 ? 'conflict' : 'conflicts'} detected</span
+          >
+          <span class="compose-conflict-link">Settings →</span>
+        </div>
+      {/if}
 
       <div class="modal-body">
         {#if isInitializing}
@@ -2039,7 +2068,7 @@
         </div>
 
         <!-- Compose Isolation Section -->
-        <div class="settings-section">
+        <div class="settings-section" id="compose-isolation-section">
           <div class="settings-section-header">
             <div class="settings-section-title">Compose isolation</div>
             <label class="toggle-switch">
@@ -3961,5 +3990,41 @@
     font-family: var(--font-mono);
     color: var(--accent3-color);
     font-size: 10px;
+  }
+
+  .compose-conflict-banner {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    background: rgba(252, 211, 77, 0.08);
+    border-bottom: 1px solid rgba(252, 211, 77, 0.15);
+    font-size: 11px;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+  }
+
+  .compose-conflict-banner:hover {
+    background: rgba(252, 211, 77, 0.12);
+  }
+
+  .compose-conflict-icon {
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+
+  .compose-conflict-text {
+    color: var(--accent3-color);
+  }
+
+  .compose-conflict-link {
+    color: var(--accent-color);
+    margin-left: auto;
+    font-size: 10px;
+    opacity: 0.7;
+  }
+
+  .compose-conflict-banner:hover .compose-conflict-link {
+    opacity: 1;
   }
 </style>
