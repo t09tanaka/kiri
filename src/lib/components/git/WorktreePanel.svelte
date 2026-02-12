@@ -3655,6 +3655,8 @@
 
   .port-table-row.disabled {
     opacity: 0.4;
+    pointer-events: auto;
+    cursor: default;
   }
 
   .port-col-check {
@@ -3771,6 +3773,8 @@
 
   .target-file-item.disabled {
     opacity: 0.5;
+    pointer-events: auto;
+    cursor: default;
   }
 
   .target-file-checkbox {
@@ -3894,6 +3898,8 @@
 
   .compose-file-group.disabled {
     opacity: 0.4;
+    pointer-events: auto;
+    cursor: default;
   }
 
   .compose-file-row {
