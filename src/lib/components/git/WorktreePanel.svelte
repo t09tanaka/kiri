@@ -3450,7 +3450,7 @@
   /* Init Commands Settings */
   .command-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
     background: var(--bg-secondary);
@@ -3474,6 +3474,7 @@
   .command-checkbox {
     width: 14px;
     height: 14px;
+    margin-top: 3px;
     accent-color: var(--accent-color);
     cursor: pointer;
   }
