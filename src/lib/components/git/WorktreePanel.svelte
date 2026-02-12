@@ -1960,45 +1960,51 @@
                 <span>Detecting ports...</span>
               </div>
             {:else if getUniquePorts().length > 0}
-              <div class="port-table">
-                <div class="port-table-header">
-                  <div class="port-col-check"></div>
-                  <div class="port-col-var">Variable</div>
-                  <div class="port-col-before">Before</div>
-                  <div class="port-col-after">After</div>
-                  <div class="port-col-source">Source</div>
-                </div>
-                {#each getUniquePorts() as port (port.variable_name)}
-                  {@const isSelected = selectedPorts.get(port.variable_name) ?? true}
-                  {@const assigned = getAssignedPortValue(port.variable_name)}
-                  {@const sources = getPortSourceFiles(port.variable_name)}
-                  <div class="port-table-row" class:disabled={!isSelected}>
-                    <div class="port-col-check">
-                      <input
-                        type="checkbox"
-                        class="port-checkbox"
-                        checked={isSelected}
-                        onchange={() => togglePortSelection(port.variable_name)}
-                      />
-                    </div>
-                    <div class="port-col-var">
-                      <code class="port-var-name">{port.variable_name}</code>
-                    </div>
-                    <div class="port-col-before">
-                      <span class="port-value port-original">{port.port_value}</span>
-                    </div>
-                    <div class="port-col-after">
-                      {#if isSelected && assigned !== null}
-                        <span class="port-value port-new">{assigned}</span>
-                      {:else}
-                        <span class="port-value port-unchanged">-</span>
-                      {/if}
-                    </div>
-                    <div class="port-col-source">
-                      <span class="port-source-files">{sources.join(', ')}</span>
-                    </div>
-                  </div>
-                {/each}
+              <div class="port-table-wrap">
+                <table class="port-table">
+                  <thead>
+                    <tr>
+                      <th class="port-col-check"></th>
+                      <th class="port-col-var">Variable</th>
+                      <th class="port-col-before">Before</th>
+                      <th class="port-col-after">After</th>
+                      <th class="port-col-source">Source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each getUniquePorts() as port (port.variable_name)}
+                      {@const isSelected = selectedPorts.get(port.variable_name) ?? true}
+                      {@const assigned = getAssignedPortValue(port.variable_name)}
+                      {@const sources = getPortSourceFiles(port.variable_name)}
+                      <tr class="port-table-row" class:disabled={!isSelected}>
+                        <td class="port-col-check">
+                          <input
+                            type="checkbox"
+                            class="port-checkbox"
+                            checked={isSelected}
+                            onchange={() => togglePortSelection(port.variable_name)}
+                          />
+                        </td>
+                        <td class="port-col-var">
+                          <code class="port-var-name">{port.variable_name}</code>
+                        </td>
+                        <td class="port-col-before">
+                          <span class="port-value port-original">{port.port_value}</span>
+                        </td>
+                        <td class="port-col-after">
+                          {#if isSelected && assigned !== null}
+                            <span class="port-value port-new">{assigned}</span>
+                          {:else}
+                            <span class="port-value port-unchanged">-</span>
+                          {/if}
+                        </td>
+                        <td class="port-col-source">
+                          <span class="port-source-files">{sources.join(', ')}</span>
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
               </div>
               {#if getSelectedPortCount() > 0}
                 <div class="port-summary">
@@ -3624,34 +3630,39 @@
     color: var(--text-muted);
   }
 
-  .port-table {
-    display: flex;
-    flex-direction: column;
+  .port-table-wrap {
     background: var(--bg-secondary);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     overflow-x: auto;
+    overflow-y: hidden;
   }
 
-  .port-table-header {
-    display: flex;
-    padding: var(--space-2) var(--space-2);
+  .port-table {
+    width: 100%;
+    border-collapse: collapse;
+    white-space: nowrap;
+    font-size: 11px;
+  }
+
+  .port-table thead th {
+    padding: var(--space-2);
     background: rgba(0, 0, 0, 0.15);
     font-size: 9px;
     font-weight: 600;
     color: var(--text-muted);
-    white-space: nowrap;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+    text-align: left;
   }
 
-  .port-table-row {
-    display: flex;
-    padding: var(--space-2) var(--space-2);
+  .port-table tbody tr {
     border-top: 1px solid var(--border-subtle);
-    font-size: 11px;
     transition: opacity var(--transition-fast);
-    white-space: nowrap;
+  }
+
+  .port-table tbody td {
+    padding: var(--space-2);
   }
 
   .port-table-row.disabled {
@@ -3662,26 +3673,22 @@
 
   .port-col-check {
     width: 20px;
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
   }
 
   .port-col-var {
-    flex-shrink: 0;
-    white-space: nowrap;
+    width: 23ch;
+    max-width: 23ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--font-mono);
   }
 
   .port-col-before,
   .port-col-after {
-    width: 50px;
-    flex-shrink: 0;
     text-align: right;
   }
 
   .port-col-source {
-    flex-shrink: 0;
-    white-space: nowrap;
     padding-left: var(--space-3);
   }
 
