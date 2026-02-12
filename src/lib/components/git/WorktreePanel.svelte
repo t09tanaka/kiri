@@ -360,6 +360,29 @@
     }
   }
 
+  /**
+   * Get enabled target file patterns (excluding disabled ones)
+   */
+  function getEnabledTargetPatterns(): string[] {
+    if (!portConfig) return [];
+    const disabled = portConfig.disabledTargetFiles ?? [];
+    return (portConfig.targetFiles ?? DEFAULT_TARGET_FILES).filter((f) => !disabled.includes(f));
+  }
+
+  /**
+   * Check if a port variable is transformable (has source files matching enabled target patterns)
+   */
+  function isPortTransformable(variableName: string): boolean {
+    if (!detectedPorts || !portConfig) return true;
+    const allSources = [...detectedPorts.env_ports, ...detectedPorts.compose_ports];
+    return portIsolationService.isPortTransformable(
+      variableName,
+      allSources,
+      projectPath,
+      getEnabledTargetPatterns()
+    );
+  }
+
   function allocatePortsForWorktree(): void {
     if (!detectedPorts || !portConfig) return;
 
@@ -369,13 +392,15 @@
         .map(([name]) => name)
     );
 
-    if (selectedVars.size === 0) {
+    const uniquePorts = portIsolationService.getAllUniquePorts(detectedPorts);
+    const portsToAllocate = uniquePorts.filter(
+      (p) => selectedVars.has(p.variable_name) && isPortTransformable(p.variable_name)
+    );
+
+    if (portsToAllocate.length === 0) {
       portAssignments = [];
       return;
     }
-
-    const uniquePorts = portIsolationService.getAllUniquePorts(detectedPorts);
-    const portsToAllocate = uniquePorts.filter((p) => selectedVars.has(p.variable_name));
 
     // Allocate ports avoiding those already used by other worktrees
     portAssignments = portIsolationService.allocatePortsAvoidingUsed(portsToAllocate, portConfig);
@@ -411,9 +436,11 @@
     return portIsolationService.getAllUniquePorts(detectedPorts);
   }
 
-  // Count of selected ports
+  // Count of selected AND transformable ports
   function getSelectedPortCount(): number {
-    return Array.from(selectedPorts.values()).filter(Boolean).length;
+    return Array.from(selectedPorts.entries()).filter(
+      ([name, selected]) => selected && isPortTransformable(name)
+    ).length;
   }
 
   // Counts for execution summary
@@ -578,6 +605,8 @@
       };
     }
     savePortConfig();
+    // Re-allocate ports since transformable set may have changed
+    allocatePortsForWorktree();
   }
 
   // ============================================================================
@@ -1974,14 +2003,20 @@
                   <tbody>
                     {#each getUniquePorts() as port (port.variable_name)}
                       {@const isSelected = selectedPorts.get(port.variable_name) ?? true}
+                      {@const transformable = isPortTransformable(port.variable_name)}
                       {@const assigned = getAssignedPortValue(port.variable_name)}
                       {@const sources = getPortSourceFiles(port.variable_name)}
-                      <tr class="port-table-row" class:disabled={!isSelected}>
+                      <tr
+                        class="port-table-row"
+                        class:disabled={!isSelected && transformable}
+                        class:non-transformable={!transformable}
+                      >
                         <td class="port-col-check">
                           <input
                             type="checkbox"
                             class="port-checkbox"
-                            checked={isSelected}
+                            checked={isSelected && transformable}
+                            disabled={!transformable}
                             onchange={() => togglePortSelection(port.variable_name)}
                           />
                         </td>
@@ -1992,7 +2027,7 @@
                           <span class="port-value port-original">{port.port_value}</span>
                         </td>
                         <td class="port-col-after">
-                          {#if isSelected && assigned !== null}
+                          {#if transformable && isSelected && assigned !== null}
                             <span class="port-value port-new">{assigned}</span>
                           {:else}
                             <span class="port-value port-unchanged">-</span>
@@ -3670,6 +3705,17 @@
     opacity: 0.4;
     pointer-events: auto;
     cursor: default;
+  }
+
+  .port-table-row.non-transformable {
+    opacity: 0.3;
+    pointer-events: auto;
+    cursor: default;
+  }
+
+  .port-table-row.non-transformable .port-checkbox {
+    pointer-events: none;
+    cursor: not-allowed;
   }
 
   .port-col-check {

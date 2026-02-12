@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { portIsolationService } from './portIsolationService';
+import {
+  portIsolationService,
+  targetFilePatternToRegex,
+  matchesTargetFilePattern,
+} from './portIsolationService';
 import type { DetectedPorts, PortSource } from './portIsolationService';
 import type { PortConfig } from './persistenceService';
 
@@ -365,6 +369,166 @@ describe('portIsolationService', () => {
       // Both should get the same assigned_value regardless of order
       expect(result[0].assigned_value).toBe(20000);
       expect(result[1].assigned_value).toBe(20000);
+    });
+  });
+
+  describe('targetFilePatternToRegex', () => {
+    it('should match .env files with **/.env* pattern', () => {
+      const regex = targetFilePatternToRegex('**/.env*');
+      expect(regex.test('.env')).toBe(true);
+      expect(regex.test('.env.local')).toBe(true);
+      expect(regex.test('.env.production')).toBe(true);
+      expect(regex.test('packages/api/.env')).toBe(true);
+      expect(regex.test('a/b/.env.production')).toBe(true);
+    });
+
+    it('should not match non-.env files with **/.env* pattern', () => {
+      const regex = targetFilePatternToRegex('**/.env*');
+      expect(regex.test('env')).toBe(false);
+      expect(regex.test('something.env')).toBe(false);
+      expect(regex.test('config.json')).toBe(false);
+    });
+
+    it('should match exact docker-compose.yml with **/docker-compose.yml', () => {
+      const regex = targetFilePatternToRegex('**/docker-compose.yml');
+      expect(regex.test('docker-compose.yml')).toBe(true);
+      expect(regex.test('services/docker-compose.yml')).toBe(true);
+      expect(regex.test('a/b/docker-compose.yml')).toBe(true);
+    });
+
+    it('should not match similar files with **/docker-compose.yml', () => {
+      const regex = targetFilePatternToRegex('**/docker-compose.yml');
+      expect(regex.test('docker-compose.yaml')).toBe(false);
+      expect(regex.test('docker-compose.dev.yml')).toBe(false);
+    });
+
+    it('should match docker-compose.*.yml pattern', () => {
+      const regex = targetFilePatternToRegex('**/docker-compose.*.yml');
+      expect(regex.test('docker-compose.dev.yml')).toBe(true);
+      expect(regex.test('docker-compose.test.yml')).toBe(true);
+      expect(regex.test('services/docker-compose.prod.yml')).toBe(true);
+    });
+
+    it('should match compose.yml pattern', () => {
+      const regex = targetFilePatternToRegex('**/compose.yml');
+      expect(regex.test('compose.yml')).toBe(true);
+      expect(regex.test('infra/compose.yml')).toBe(true);
+    });
+
+    it('should handle pattern without **/ prefix', () => {
+      const regex = targetFilePatternToRegex('.env*');
+      expect(regex.test('.env')).toBe(true);
+      expect(regex.test('.env.local')).toBe(true);
+      // Without **/, should NOT match subdirectory paths
+      expect(regex.test('subdir/.env')).toBe(false);
+    });
+  });
+
+  describe('matchesTargetFilePattern', () => {
+    it('should return true for matching path and pattern', () => {
+      expect(matchesTargetFilePattern('.env', '**/.env*')).toBe(true);
+      expect(matchesTargetFilePattern('backend/.env.local', '**/.env*')).toBe(true);
+      expect(matchesTargetFilePattern('docker-compose.yml', '**/docker-compose.yml')).toBe(true);
+      expect(
+        matchesTargetFilePattern('backend/docker-compose.test.yml', '**/docker-compose.*.yml')
+      ).toBe(true);
+    });
+
+    it('should return false for non-matching path and pattern', () => {
+      expect(matchesTargetFilePattern('config.json', '**/.env*')).toBe(false);
+      expect(matchesTargetFilePattern('docker-compose.dev.yml', '**/docker-compose.yml')).toBe(
+        false
+      );
+    });
+  });
+
+  describe('isPortTransformable', () => {
+    const projectPath = '/project';
+
+    it('should return true when source file matches an enabled pattern', () => {
+      const sources: PortSource[] = [
+        makePortSource({ variable_name: 'PORT', file_path: '/project/.env' }),
+      ];
+      expect(
+        portIsolationService.isPortTransformable('PORT', sources, projectPath, ['**/.env*'])
+      ).toBe(true);
+    });
+
+    it('should return false when no enabled patterns', () => {
+      const sources: PortSource[] = [
+        makePortSource({ variable_name: 'PORT', file_path: '/project/.env' }),
+      ];
+      expect(portIsolationService.isPortTransformable('PORT', sources, projectPath, [])).toBe(
+        false
+      );
+    });
+
+    it('should return false when source file does not match any enabled pattern', () => {
+      const sources: PortSource[] = [
+        makePortSource({
+          variable_name: 'COMPOSE:5432',
+          file_path: '/project/docker-compose.test.yml',
+        }),
+      ];
+      expect(
+        portIsolationService.isPortTransformable('COMPOSE:5432', sources, projectPath, ['**/.env*'])
+      ).toBe(false);
+    });
+
+    it('should return true when at least one source file matches (mixed sources)', () => {
+      const sources: PortSource[] = [
+        makePortSource({ variable_name: 'PORT', file_path: '/project/.env' }),
+        makePortSource({
+          variable_name: 'PORT',
+          file_path: '/project/docker-compose.yml',
+        }),
+      ];
+      // Only .env* pattern enabled, docker-compose.yml disabled
+      expect(
+        portIsolationService.isPortTransformable('PORT', sources, projectPath, ['**/.env*'])
+      ).toBe(true);
+    });
+
+    it('should return false when all source files match only disabled patterns', () => {
+      const sources: PortSource[] = [
+        makePortSource({
+          variable_name: 'COMPOSE:3000',
+          file_path: '/project/docker-compose.yml',
+        }),
+        makePortSource({
+          variable_name: 'COMPOSE:3000',
+          file_path: '/project/docker-compose.dev.yml',
+        }),
+      ];
+      // Only .env* enabled, both compose patterns disabled
+      expect(
+        portIsolationService.isPortTransformable('COMPOSE:3000', sources, projectPath, ['**/.env*'])
+      ).toBe(false);
+    });
+
+    it('should handle subdirectory source files', () => {
+      const sources: PortSource[] = [
+        makePortSource({
+          variable_name: 'PORT',
+          file_path: '/project/backend/.env',
+        }),
+      ];
+      expect(
+        portIsolationService.isPortTransformable('PORT', sources, projectPath, ['**/.env*'])
+      ).toBe(true);
+    });
+
+    it('should return false when variable has no sources', () => {
+      expect(
+        portIsolationService.isPortTransformable('UNKNOWN', [], projectPath, ['**/.env*'])
+      ).toBe(false);
+    });
+
+    it('should handle relative file paths (no prefix stripping needed)', () => {
+      const sources: PortSource[] = [makePortSource({ variable_name: 'PORT', file_path: '.env' })];
+      expect(
+        portIsolationService.isPortTransformable('PORT', sources, projectPath, ['**/.env*'])
+      ).toBe(true);
     });
   });
 });

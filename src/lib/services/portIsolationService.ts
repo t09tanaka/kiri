@@ -52,6 +52,41 @@ export const DEFAULT_TARGET_FILES = [
 ];
 
 /**
+ * Convert a target file glob pattern to a RegExp.
+ * Supports:
+ *   ** / -> matches any path prefix (including empty)
+ *   *    -> matches any characters except /
+ *
+ * Examples:
+ *   ** /.env*                  -> /^(?:.*\/)?.env[^/]*$/
+ *   ** /docker-compose.*.yml  -> /^(?:.*\/)?docker-compose\.[^/]*\.yml$/
+ */
+export function targetFilePatternToRegex(pattern: string): RegExp {
+  const parts = pattern.split('**/');
+  let regexStr = '^';
+
+  for (let i = 0; i < parts.length; i++) {
+    if (i > 0) {
+      // **/ was here -- match any path prefix (including empty)
+      regexStr += '(?:.*/)?';
+    }
+    // Escape regex special chars except *, then replace * with [^/]*
+    const segment = parts[i].replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*');
+    regexStr += segment;
+  }
+
+  regexStr += '$';
+  return new RegExp(regexStr);
+}
+
+/**
+ * Check if a relative file path matches a target file pattern.
+ */
+export function matchesTargetFilePattern(relativePath: string, pattern: string): boolean {
+  return targetFilePatternToRegex(pattern).test(relativePath);
+}
+
+/**
  * Port isolation service for worktrees
  * Wraps Tauri port isolation commands
  */
@@ -120,6 +155,31 @@ export const portIsolationService = {
    */
   isComposePort: (variableName: string): boolean => {
     return variableName.startsWith('COMPOSE:');
+  },
+
+  /**
+   * Determine if a port variable is "transformable" given the current target file configuration.
+   * A port is transformable if at least one of its source files matches an ENABLED target pattern.
+   */
+  isPortTransformable: (
+    variableName: string,
+    allPortSources: PortSource[],
+    projectPath: string,
+    enabledPatterns: string[]
+  ): boolean => {
+    if (enabledPatterns.length === 0) return false;
+
+    const prefix = projectPath.endsWith('/') ? projectPath : `${projectPath}/`;
+    const sources = allPortSources.filter((p) => p.variable_name === variableName);
+
+    if (sources.length === 0) return false;
+
+    return sources.some((source) => {
+      const rel = source.file_path.startsWith(prefix)
+        ? source.file_path.slice(prefix.length)
+        : source.file_path;
+      return enabledPatterns.some((pattern) => matchesTargetFilePattern(rel, pattern));
+    });
   },
 
   /**
