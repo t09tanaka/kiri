@@ -340,7 +340,7 @@
       if (portIsolationService.hasDetectablePorts(detected)) {
         detectedPorts = detected;
         // Initialize selected ports (all checked by default)
-        const uniquePorts = portIsolationService.getUniqueEnvPorts(detected);
+        const uniquePorts = portIsolationService.getAllUniquePorts(detected);
         // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally using Map
         const newSelected = new Map<string, boolean>();
         for (const port of uniquePorts) {
@@ -374,7 +374,7 @@
       return;
     }
 
-    const uniquePorts = portIsolationService.getUniqueEnvPorts(detectedPorts);
+    const uniquePorts = portIsolationService.getAllUniquePorts(detectedPorts);
     const portsToAllocate = uniquePorts.filter((p) => selectedVars.has(p.variable_name));
 
     // Allocate ports avoiding those already used by other worktrees
@@ -395,7 +395,8 @@
 
   function getPortSourceFiles(variableName: string): string[] {
     if (!detectedPorts) return [];
-    return detectedPorts.env_ports
+    const allPorts = [...detectedPorts.env_ports, ...detectedPorts.compose_ports];
+    return allPorts
       .filter((p) => p.variable_name === variableName)
       .map((p) => {
         const filename = p.file_path.split('/').pop() ?? p.file_path;
@@ -403,10 +404,10 @@
       });
   }
 
-  // Get unique ports for display
-  function getUniqueEnvPorts(): PortSource[] {
+  // Get unique ports for display (env + compose)
+  function getUniquePorts(): PortSource[] {
     if (!detectedPorts) return [];
-    return portIsolationService.getUniqueEnvPorts(detectedPorts);
+    return portIsolationService.getAllUniquePorts(detectedPorts);
   }
 
   // Count of selected ports
@@ -1957,7 +1958,7 @@
                 <Spinner size="sm" />
                 <span>Detecting ports...</span>
               </div>
-            {:else if getUniqueEnvPorts().length > 0}
+            {:else if getUniquePorts().length > 0}
               <div class="port-table">
                 <div class="port-table-header">
                   <div class="port-col-check"></div>
@@ -1966,7 +1967,7 @@
                   <div class="port-col-after">After</div>
                   <div class="port-col-source">Source</div>
                 </div>
-                {#each getUniqueEnvPorts() as port (port.variable_name)}
+                {#each getUniquePorts() as port (port.variable_name)}
                   {@const isSelected = selectedPorts.get(port.variable_name) ?? true}
                   {@const assigned = getAssignedPortValue(port.variable_name)}
                   {@const sources = getPortSourceFiles(port.variable_name)}

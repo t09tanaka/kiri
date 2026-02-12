@@ -10,7 +10,7 @@ const ENV_PORT_PATTERN: &str = r"^([A-Z_]*PORT[A-Z_]*)=(\d+)";
 // Pattern for URLs with ports: VAR_URL=protocol://host:PORT or VAR_URL=protocol://user:pass@host:PORT
 const ENV_URL_PORT_PATTERN: &str = r"^([A-Z][A-Z0-9_]*_URL)=\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:(\d+)";
 const DOCKERFILE_EXPOSE_PATTERN: &str = r"^EXPOSE\s+(\d+)";
-const COMPOSE_PORT_PATTERN: &str = r#"^\s*-\s*"?(\d+):(\d+)"?"#;
+const COMPOSE_PORT_PATTERN: &str = r#"^\s*-\s*["']?(\d+):(\d+)["']?"#;
 
 // Port range for allocation
 const PORT_RANGE_START: u16 = 20000;
@@ -148,7 +148,7 @@ pub fn detect_ports_in_compose(content: &str, file_path: &str) -> Vec<PortSource
                 if let Ok(port) = host_port_str.as_str().parse::<u16>() {
                     ports.push(PortSource {
                         file_path: file_path.to_string(),
-                        variable_name: "ports".to_string(),
+                        variable_name: format!("COMPOSE:{}", port),
                         port_value: port,
                         line_number: (line_num + 1) as u32,
                     });
@@ -749,9 +749,89 @@ services:
         let ports = detect_ports_in_compose(content, "docker-compose.yml");
         assert_eq!(ports.len(), 3);
 
+        assert_eq!(ports[0].variable_name, "COMPOSE:3000");
         assert_eq!(ports[0].port_value, 3000);
+        assert_eq!(ports[1].variable_name, "COMPOSE:8080");
         assert_eq!(ports[1].port_value, 8080);
+        assert_eq!(ports[2].variable_name, "COMPOSE:5432");
         assert_eq!(ports[2].port_value, 5432);
+    }
+
+    #[test]
+    fn test_detect_ports_in_compose_single_quotes() {
+        let content = r#"
+version: "3"
+services:
+  db:
+    ports:
+      - '5433:5432'
+  redis:
+    ports:
+      - '6380:6379'
+"#;
+
+        let ports = detect_ports_in_compose(content, "docker-compose.test.yml");
+        assert_eq!(ports.len(), 2);
+
+        assert_eq!(ports[0].variable_name, "COMPOSE:5433");
+        assert_eq!(ports[0].port_value, 5433);
+        assert_eq!(ports[1].variable_name, "COMPOSE:6380");
+        assert_eq!(ports[1].port_value, 6380);
+    }
+
+    #[test]
+    fn test_detect_ports_in_compose_no_quotes() {
+        let content = r#"
+services:
+  web:
+    ports:
+      - 3000:3000
+      - 8080:80
+"#;
+
+        let ports = detect_ports_in_compose(content, "docker-compose.yml");
+        assert_eq!(ports.len(), 2);
+
+        assert_eq!(ports[0].variable_name, "COMPOSE:3000");
+        assert_eq!(ports[0].port_value, 3000);
+        assert_eq!(ports[1].variable_name, "COMPOSE:8080");
+        assert_eq!(ports[1].port_value, 8080);
+    }
+
+    #[test]
+    fn test_allocate_ports_compose_deduplication() {
+        let ports = vec![
+            PortSource {
+                file_path: "docker-compose.yml".to_string(),
+                variable_name: "COMPOSE:5433".to_string(),
+                port_value: 5433,
+                line_number: 5,
+            },
+            PortSource {
+                file_path: "docker-compose.dev.yml".to_string(),
+                variable_name: "COMPOSE:5433".to_string(),
+                port_value: 5433,
+                line_number: 3,
+            },
+            PortSource {
+                file_path: "docker-compose.yml".to_string(),
+                variable_name: "COMPOSE:8080".to_string(),
+                port_value: 8080,
+                line_number: 8,
+            },
+        ];
+
+        let result = allocate_ports(&ports, 20000).unwrap();
+        assert_eq!(result.assignments.len(), 3);
+        // Only 2 unique variable names, so next_port should be 20002
+        assert_eq!(result.next_port, 20002);
+
+        // Both COMPOSE:5433 entries should get the same assigned value
+        assert_eq!(result.assignments[0].assigned_value, 20000);
+        assert_eq!(result.assignments[1].assigned_value, 20000);
+
+        // COMPOSE:8080 gets a different assigned value
+        assert_eq!(result.assignments[2].assigned_value, 20001);
     }
 
     #[test]

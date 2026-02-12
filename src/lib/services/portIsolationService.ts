@@ -93,6 +93,36 @@ export const portIsolationService = {
   },
 
   /**
+   * Get all unique compose ports (deduplicated by variable name)
+   */
+  getUniqueComposePorts: (detected: DetectedPorts): PortSource[] => {
+    const seen = new Map<string, PortSource>();
+    for (const port of detected.compose_ports) {
+      if (!seen.has(port.variable_name)) {
+        seen.set(port.variable_name, port);
+      }
+    }
+    return Array.from(seen.values());
+  },
+
+  /**
+   * Get all unique ports from both env and compose sources
+   */
+  getAllUniquePorts: (detected: DetectedPorts): PortSource[] => {
+    return [
+      ...portIsolationService.getUniqueEnvPorts(detected),
+      ...portIsolationService.getUniqueComposePorts(detected),
+    ];
+  },
+
+  /**
+   * Check if a variable name represents a compose port (has "COMPOSE:" prefix)
+   */
+  isComposePort: (variableName: string): boolean => {
+    return variableName.startsWith('COMPOSE:');
+  },
+
+  /**
    * Check if a directory has any detectable ports
    */
   hasDetectablePorts: (detected: DetectedPorts): boolean => {
@@ -132,7 +162,9 @@ export const portIsolationService = {
   },
 
   /**
-   * Allocate ports avoiding those already used by other worktrees
+   * Allocate ports avoiding those already used by other worktrees.
+   * Ports with the same original port_value (e.g., .env PORT=3000 and compose COMPOSE:3000)
+   * will be assigned the same new port value.
    */
   allocatePortsAvoidingUsed: (
     ports: PortSource[],
@@ -140,10 +172,22 @@ export const portIsolationService = {
   ): PortAssignment[] => {
     const usedPorts = portIsolationService.getUsedPorts(config);
     const assignments: PortAssignment[] = [];
+    const assignedByOriginalValue = new Map<number, number>();
 
     let nextAvailable = config.portRangeStart;
 
     for (const port of ports) {
+      // If the same original port value was already assigned, reuse it
+      const existingAssignment = assignedByOriginalValue.get(port.port_value);
+      if (existingAssignment !== undefined) {
+        assignments.push({
+          variable_name: port.variable_name,
+          original_value: port.port_value,
+          assigned_value: existingAssignment,
+        });
+        continue;
+      }
+
       // Find next available port that's not in use
       while (usedPorts.has(nextAvailable) && nextAvailable <= config.portRangeEnd) {
         nextAvailable++;
@@ -159,6 +203,9 @@ export const portIsolationService = {
         original_value: port.port_value,
         assigned_value: nextAvailable,
       });
+
+      // Track assignment by original value for reuse
+      assignedByOriginalValue.set(port.port_value, nextAvailable);
 
       // Mark this port as used and move to next
       usedPorts.add(nextAvailable);
