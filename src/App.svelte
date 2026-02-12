@@ -37,6 +37,7 @@
     loadMultiWindowSession,
     saveMainWindowState,
     saveOtherWindowState,
+    saveFullSession,
     clearOtherWindows,
     removeOtherWindow,
     loadSettings,
@@ -482,12 +483,23 @@
           windowIndex = event.payload.index;
         }
       });
-      // Listen for app-quitting event: save state immediately and skip worktree delete
+      // Listen for app-quitting event: report state to main window (don't write to store directly)
       unlistenAppQuitting = await listen('app-quitting', async () => {
         isAppQuitting = true;
-        // Proactively save state before the app exits
         try {
-          await saveCurrentWindowState();
+          const state = await getCurrentWindowState();
+          if (windowIndex >= 0) {
+            await eventService.emit('window-state-report', {
+              index: windowIndex,
+              state: {
+                currentProject: state.currentProject,
+                tabs: state.tabs,
+                activeTabId: state.activeTabId,
+                ui: state.ui,
+                geometry: state.geometry,
+              },
+            });
+          }
         } catch {
           // Ignore errors during shutdown
         }
@@ -628,9 +640,43 @@
 
       event.preventDefault();
 
-      // Main window: immediately notify other windows to save their state
+      // Main window: collect states from all non-main windows, then save in one write
       if (isMainWindow) {
+        const nonMainCount = nextWindowIndex;
+        // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local non-reactive collection in event handler
+        const collectedStates = new Map<number, Omit<PersistedWindowState, 'label'>>();
+
+        let resolveCollection: (() => void) | null = null;
+        const collectionPromise = new Promise<void>((resolve) => {
+          resolveCollection = resolve;
+        });
+
+        const unlistenReport = await eventService.listen<{
+          index: number;
+          state: Omit<PersistedWindowState, 'label'>;
+        }>('window-state-report', (event) => {
+          collectedStates.set(event.payload.index, event.payload.state);
+          if (collectedStates.size >= nonMainCount && resolveCollection) {
+            resolveCollection();
+          }
+        });
+
+        // Notify non-main windows to report their state
         await eventService.emit('app-quitting', {});
+
+        // Wait for all reports or timeout
+        if (nonMainCount > 0) {
+          await Promise.race([
+            collectionPromise,
+            new Promise<void>((resolve) => setTimeout(resolve, 500)),
+          ]);
+        }
+
+        unlistenReport();
+
+        // Save all states in one write
+        const mainState = await getCurrentWindowState();
+        await saveFullSession(mainState, collectedStates);
       }
 
       // For worktree windows, automatically delete the worktree (skip when app is quitting)
@@ -676,9 +722,7 @@
 
       try {
         if (isMainWindow) {
-          // Wait for non-main windows to save their state (event was emitted earlier)
-          await new Promise((resolve) => setTimeout(resolve, 300));
-          await saveCurrentWindowState();
+          // Main window already saved all states via saveFullSession above
         } else if (windowIndex >= 0) {
           // Non-main window: save state, then mark as closed only if not quitting
           await saveCurrentWindowState();

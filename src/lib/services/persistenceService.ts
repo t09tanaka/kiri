@@ -379,6 +379,41 @@ export async function removeOtherWindow(index: number): Promise<void> {
 }
 
 /**
+ * Save the complete multi-window session in a single write.
+ * Called only by the main window during app quit to avoid race conditions.
+ */
+export async function saveFullSession(
+  mainWindowState: Omit<PersistedWindowState, 'label'>,
+  otherWindowStates: Map<number, Omit<PersistedWindowState, 'label'>>
+): Promise<void> {
+  try {
+    const s = await getStore();
+
+    // Build compact otherWindows array from the map (skip gaps)
+    const otherWindows: Omit<PersistedWindowState, 'label'>[] = [];
+    if (otherWindowStates.size > 0) {
+      const maxIndex = Math.max(...otherWindowStates.keys());
+      for (let i = 0; i <= maxIndex; i++) {
+        const state = otherWindowStates.get(i);
+        if (state) {
+          otherWindows.push(state);
+        }
+      }
+    }
+
+    const session: PersistedSession = {
+      mainWindow: { ...mainWindowState, label: 'main' },
+      otherWindows,
+    };
+
+    await s.set('multiWindowSession', session);
+    await s.save();
+  } catch (error) {
+    console.error('Failed to save full session:', error);
+  }
+}
+
+/**
  * Clear all other windows (called on startup before restoring)
  */
 export async function clearOtherWindows(): Promise<void> {
