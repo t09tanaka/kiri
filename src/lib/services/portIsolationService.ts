@@ -45,6 +45,8 @@ export const DEFAULT_TARGET_FILES = [
   '**/.env*',
   '**/docker-compose.yml',
   '**/docker-compose.yaml',
+  '**/docker-compose.*.yml',
+  '**/docker-compose.*.yaml',
   '**/compose.yml',
   '**/compose.yaml',
 ];

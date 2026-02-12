@@ -232,6 +232,8 @@ pub fn scan_compose_for_ports(dir: &Path) -> Vec<PortSource> {
     let compose_patterns = [
         "**/docker-compose.yml",
         "**/docker-compose.yaml",
+        "**/docker-compose.*.yml",
+        "**/docker-compose.*.yaml",
         "**/compose.yml",
         "**/compose.yaml",
     ];
@@ -1279,6 +1281,42 @@ DATABASE_URL=postgres://user:pass@localhost:5432/mydb
 
         let values: Vec<u16> = ports.iter().map(|p| p.port_value).collect();
         assert!(values.contains(&3000));
+        assert!(values.contains(&8080));
+    }
+
+    #[test]
+    fn test_scan_compose_for_ports_dotted_filenames() {
+        let dir = tempdir().unwrap();
+
+        // Root docker-compose.yml
+        fs::write(
+            dir.path().join("docker-compose.yml"),
+            "services:\n  web:\n    ports:\n      - \"3000:3000\"\n",
+        )
+        .unwrap();
+
+        // docker-compose.test.yml (dotted variant)
+        let sub = dir.path().join("backend");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(
+            sub.join("docker-compose.test.yml"),
+            "services:\n  db:\n    ports:\n      - \"5433:5432\"\n",
+        )
+        .unwrap();
+
+        // docker-compose.override.yaml (dotted variant with .yaml)
+        fs::write(
+            dir.path().join("docker-compose.override.yaml"),
+            "services:\n  web:\n    ports:\n      - \"8080:8080\"\n",
+        )
+        .unwrap();
+
+        let ports = scan_compose_for_ports(dir.path());
+        assert_eq!(ports.len(), 3);
+
+        let values: Vec<u16> = ports.iter().map(|p| p.port_value).collect();
+        assert!(values.contains(&3000));
+        assert!(values.contains(&5433));
         assert!(values.contains(&8080));
     }
 
