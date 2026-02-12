@@ -23,6 +23,15 @@ describe('Spinner Component (Browser)', () => {
     expect(svg).toHaveAttribute('height', '24');
   });
 
+  it('renders SVG element with correct size for xs', () => {
+    const { container } = render(Spinner, { props: { size: 'xs' } });
+
+    const svg = container.querySelector('svg');
+    expect(svg).toBeInTheDocument();
+    expect(svg).toHaveAttribute('width', '12');
+    expect(svg).toHaveAttribute('height', '12');
+  });
+
   it('renders SVG element with correct size for sm', () => {
     const { container } = render(Spinner, { props: { size: 'sm' } });
 

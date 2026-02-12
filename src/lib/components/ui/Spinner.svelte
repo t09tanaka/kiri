@@ -1,12 +1,13 @@
 <script lang="ts">
   interface Props {
-    size?: 'sm' | 'md' | 'lg';
+    size?: 'xs' | 'sm' | 'md' | 'lg';
     color?: string;
   }
 
   let { size = 'md', color = 'var(--accent-color)' }: Props = $props();
 
   const sizeMap = {
+    xs: { width: 12, stroke: 1.5 },
     sm: { width: 16, stroke: 2 },
     md: { width: 24, stroke: 2.5 },
     lg: { width: 36, stroke: 3 },
@@ -17,6 +18,7 @@
 
 <div
   class="spinner-container"
+  class:xs={size === 'xs'}
   class:sm={size === 'sm'}
   class:md={size === 'md'}
   class:lg={size === 'lg'}
@@ -60,6 +62,11 @@
     border-radius: 50%;
     filter: blur(4px);
     animation: glowPulse 2s ease-in-out infinite;
+  }
+
+  .xs .spinner-glow {
+    inset: -1px;
+    filter: blur(1px);
   }
 
   .sm .spinner-glow {

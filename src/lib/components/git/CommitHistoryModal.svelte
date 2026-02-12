@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { commitHistoryStore, unpushedCount, behindCount } from '@/lib/stores/commitHistoryStore';
   import { gitService } from '@/lib/services/gitService';
   import { eventService, type UnlistenFn } from '@/lib/services/eventService';
@@ -142,6 +142,7 @@
 
   async function handlePull() {
     commitHistoryStore.setPulling(true);
+    await tick();
     try {
       const result = await gitService.pullCommits(projectPath);
       if (result.success) {
@@ -160,6 +161,7 @@
 
   async function handlePush() {
     commitHistoryStore.setPushing(true);
+    await tick();
     try {
       // Fetch before push to ensure we have latest remote state
       await gitService.fetchRemote(projectPath);
@@ -266,7 +268,7 @@
             disabled={$commitHistoryStore.isPulling}
           >
             {#if $commitHistoryStore.isPulling}
-              <Spinner size="sm" />
+              <Spinner size="xs" />
             {:else}
               Pull
             {/if}
@@ -298,7 +300,7 @@
             disabled={$commitHistoryStore.isPushing}
           >
             {#if $commitHistoryStore.isPushing}
-              <Spinner size="sm" />
+              <Spinner size="xs" />
             {:else}
               Push
             {/if}
