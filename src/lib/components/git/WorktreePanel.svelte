@@ -930,6 +930,8 @@
       e.stopPropagation();
       if (showBranchDropdown) {
         showBranchDropdown = false;
+      } else if (showCopySettingsModal) {
+        showCopySettingsModal = false;
       } else {
         onClose();
       }
