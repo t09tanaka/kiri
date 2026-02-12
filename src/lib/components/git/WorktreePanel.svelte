@@ -396,11 +396,12 @@
   function getPortSourceFiles(variableName: string): string[] {
     if (!detectedPorts) return [];
     const allPorts = [...detectedPorts.env_ports, ...detectedPorts.compose_ports];
+    const prefix = projectPath.endsWith('/') ? projectPath : `${projectPath}/`;
     return allPorts
       .filter((p) => p.variable_name === variableName)
       .map((p) => {
-        const filename = p.file_path.split('/').pop() ?? p.file_path;
-        return `${filename}:${p.line_number}`;
+        const rel = p.file_path.startsWith(prefix) ? p.file_path.slice(prefix.length) : p.file_path;
+        return `${rel}:${p.line_number}`;
       });
   }
 
@@ -1994,9 +1995,7 @@
                       {/if}
                     </div>
                     <div class="port-col-source">
-                      <span class="port-source-files" title={sources.join(', ')}>
-                        {sources[0]}{sources.length > 1 ? ` +${sources.length - 1}` : ''}
-                      </span>
+                      <span class="port-source-files">{sources.join(', ')}</span>
                     </div>
                   </div>
                 {/each}
@@ -3631,7 +3630,7 @@
     background: var(--bg-secondary);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
-    overflow: hidden;
+    overflow-x: auto;
   }
 
   .port-table-header {
@@ -3641,6 +3640,7 @@
     font-size: 9px;
     font-weight: 600;
     color: var(--text-muted);
+    white-space: nowrap;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -3651,6 +3651,7 @@
     border-top: 1px solid var(--border-subtle);
     font-size: 11px;
     transition: opacity var(--transition-fast);
+    white-space: nowrap;
   }
 
   .port-table-row.disabled {
@@ -3667,10 +3668,8 @@
   }
 
   .port-col-var {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 
   .port-col-before,
@@ -3681,11 +3680,9 @@
   }
 
   .port-col-source {
-    width: 80px;
     flex-shrink: 0;
-    text-align: right;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: nowrap;
+    padding-left: var(--space-3);
   }
 
   .port-checkbox {
