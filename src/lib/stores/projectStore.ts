@@ -4,6 +4,7 @@ import { Store } from '@tauri-apps/plugin-store';
 import { windowService } from '@/lib/services/windowService';
 
 const MAX_RECENT_PROJECTS = 10;
+export const MAX_RECENT_MENU_ITEMS = 5;
 const STORE_PATH = 'kiri-settings.json';
 
 export interface RecentProject {
@@ -186,6 +187,16 @@ function createProjectStore() {
         return {
           ...state,
           recentProjects: updatedProjects,
+        };
+      });
+    },
+
+    async clearRecentProjects() {
+      update((state) => {
+        saveRecentProjects([]);
+        return {
+          ...state,
+          recentProjects: [],
         };
       });
     },
