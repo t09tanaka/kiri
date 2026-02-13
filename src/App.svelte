@@ -776,6 +776,24 @@
       });
     }
 
+    // Listen for menu-open-recent event from Rust menu handler
+    // Opens in a new window (or focuses existing) to avoid overwriting the current project
+    const unlistenOpenRecent = await listen<string>('menu-open-recent', async (event) => {
+      const path = event.payload;
+      if (path) {
+        try {
+          await invoke('focus_or_create_window', { projectPath: path });
+        } catch (error) {
+          console.error('Failed to open recent project:', error);
+        }
+      }
+    });
+
+    // Listen for menu-clear-recent event from Rust menu handler
+    const unlistenClearRecent = await listen('menu-clear-recent', async () => {
+      await projectStore.clearRecentProjects();
+    });
+
     performanceService.markStartupPhase('app-mount-complete');
 
     return () => {
@@ -794,6 +812,8 @@
       unlistenMoved();
       unlistenMenu();
       unlistenMenuNewWindow?.();
+      unlistenOpenRecent();
+      unlistenClearRecent();
       cleanupLongTaskObserver();
     };
   });
