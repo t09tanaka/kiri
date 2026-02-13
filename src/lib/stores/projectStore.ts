@@ -2,6 +2,7 @@ import { writable, derived } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { Store } from '@tauri-apps/plugin-store';
 import { windowService } from '@/lib/services/windowService';
+import { eventService } from '@/lib/services/eventService';
 
 const MAX_RECENT_PROJECTS = 10;
 export const MAX_RECENT_MENU_ITEMS = 5;
@@ -74,6 +75,11 @@ function createProjectStore() {
     }
   }
 
+  async function emitRecentMenuUpdate(projects: RecentProject[]) {
+    const menuItems = projects.slice(0, MAX_RECENT_MENU_ITEMS);
+    await eventService.emit('update-recent-menu', menuItems);
+  }
+
   return {
     subscribe,
 
@@ -84,6 +90,7 @@ function createProjectStore() {
         recentProjects,
         isLoading: false,
       }));
+      await emitRecentMenuUpdate(recentProjects);
     },
 
     async openProject(path: string) {
@@ -97,9 +104,10 @@ function createProjectStore() {
         gitBranch,
       };
 
+      let updatedProjects: RecentProject[] = [];
+
       update((state) => {
         const existingIndex = state.recentProjects.findIndex((p) => p.path === path);
-        let updatedProjects: RecentProject[];
 
         if (existingIndex >= 0) {
           updatedProjects = [
@@ -121,6 +129,8 @@ function createProjectStore() {
           recentProjects: updatedProjects,
         };
       });
+
+      await emitRecentMenuUpdate(updatedProjects);
 
       // Resize window to main editor size when opening a project
       try {
@@ -181,14 +191,18 @@ function createProjectStore() {
     },
 
     async removeProject(path: string) {
+      let updatedProjects: RecentProject[] = [];
+
       update((state) => {
-        const updatedProjects = state.recentProjects.filter((p) => p.path !== path);
+        updatedProjects = state.recentProjects.filter((p) => p.path !== path);
         saveRecentProjects(updatedProjects);
         return {
           ...state,
           recentProjects: updatedProjects,
         };
       });
+
+      await emitRecentMenuUpdate(updatedProjects);
     },
 
     async clearRecentProjects() {
@@ -199,6 +213,8 @@ function createProjectStore() {
           recentProjects: [],
         };
       });
+
+      await emitRecentMenuUpdate([]);
     },
 
     getCurrentPath(): string | null {

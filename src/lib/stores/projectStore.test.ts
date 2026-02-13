@@ -71,4 +71,94 @@ describe('projectStore', () => {
       expect(mockStoreInstance.set).toHaveBeenCalledWith('recentProjects', []);
     });
   });
+
+  describe('recent menu event emitting', () => {
+    it('should emit update-recent-menu after openProject', async () => {
+      mockStoreInstance.get.mockResolvedValue([]);
+
+      const { projectStore } = await import('./projectStore');
+      await projectStore.init();
+
+      // Clear any init calls
+      const { eventService } = await import('@/lib/services/eventService');
+      vi.mocked(eventService.emit).mockClear();
+
+      await projectStore.openProject('/test/project');
+
+      expect(eventService.emit).toHaveBeenCalledWith(
+        'update-recent-menu',
+        expect.arrayContaining([expect.objectContaining({ path: '/test/project' })])
+      );
+    });
+
+    it('should emit update-recent-menu after clearRecentProjects', async () => {
+      mockStoreInstance.get.mockResolvedValue([{ path: '/a', name: 'a', lastOpened: 1 }]);
+
+      const { projectStore } = await import('./projectStore');
+      await projectStore.init();
+
+      const { eventService } = await import('@/lib/services/eventService');
+      vi.mocked(eventService.emit).mockClear();
+
+      await projectStore.clearRecentProjects();
+
+      expect(eventService.emit).toHaveBeenCalledWith('update-recent-menu', []);
+    });
+
+    it('should emit at most MAX_RECENT_MENU_ITEMS items', async () => {
+      const projects = Array.from({ length: 10 }, (_, i) => ({
+        path: `/project-${i}`,
+        name: `project-${i}`,
+        lastOpened: i,
+      }));
+      mockStoreInstance.get.mockResolvedValue(projects);
+
+      const { projectStore, MAX_RECENT_MENU_ITEMS } = await import('./projectStore');
+      await projectStore.init();
+
+      const { eventService } = await import('@/lib/services/eventService');
+      const emitCalls = vi
+        .mocked(eventService.emit)
+        .mock.calls.filter((call) => call[0] === 'update-recent-menu');
+      expect(emitCalls.length).toBeGreaterThan(0);
+      const lastCall = emitCalls[emitCalls.length - 1];
+      expect((lastCall[1] as unknown[]).length).toBeLessThanOrEqual(MAX_RECENT_MENU_ITEMS);
+    });
+
+    it('should emit update-recent-menu on init', async () => {
+      mockStoreInstance.get.mockResolvedValue([{ path: '/a', name: 'a', lastOpened: 1 }]);
+
+      const { projectStore } = await import('./projectStore');
+
+      const { eventService } = await import('@/lib/services/eventService');
+      vi.mocked(eventService.emit).mockClear();
+
+      await projectStore.init();
+
+      expect(eventService.emit).toHaveBeenCalledWith(
+        'update-recent-menu',
+        expect.arrayContaining([expect.objectContaining({ path: '/a' })])
+      );
+    });
+
+    it('should emit update-recent-menu after removeProject', async () => {
+      mockStoreInstance.get.mockResolvedValue([
+        { path: '/a', name: 'a', lastOpened: 1 },
+        { path: '/b', name: 'b', lastOpened: 2 },
+      ]);
+
+      const { projectStore } = await import('./projectStore');
+      await projectStore.init();
+
+      const { eventService } = await import('@/lib/services/eventService');
+      vi.mocked(eventService.emit).mockClear();
+
+      await projectStore.removeProject('/a');
+
+      expect(eventService.emit).toHaveBeenCalledWith(
+        'update-recent-menu',
+        expect.arrayContaining([expect.objectContaining({ path: '/b' })])
+      );
+    });
+  });
 });
