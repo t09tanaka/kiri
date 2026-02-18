@@ -77,6 +77,28 @@ function createTerminalRegistry() {
       });
       return instance;
     },
+
+    /**
+     * Clear all terminal instances, disposing each one.
+     * Used when switching projects to clean up all PTY sessions.
+     * Returns the terminal IDs that were cleared (for PTY cleanup).
+     */
+    clearAll: (): number[] => {
+      const terminalIds: number[] = [];
+      update((map) => {
+        for (const [, instance] of map) {
+          terminalIds.push(instance.terminalId);
+          instance.unlisten();
+          try {
+            instance.terminal.dispose();
+          } catch {
+            // WebGL/Canvas addon may throw during dispose if DOM is already detached
+          }
+        }
+        return new Map();
+      });
+      return terminalIds;
+    },
   };
 }
 

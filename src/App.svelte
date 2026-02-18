@@ -52,6 +52,7 @@
   import { terminalService } from '@/lib/services/terminalService';
   import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
   import { getAllTerminalIds, getPaneTerminalIdMap } from '@/lib/stores/tabStore';
+  import { terminalRegistry } from '@/lib/stores/terminalRegistry';
   import { get } from 'svelte/store';
 
   let showShortcuts = $state(false);
@@ -281,13 +282,41 @@
     });
 
     if (selected && typeof selected === 'string') {
+      // Skip reset if opening the same project
+      const currentPath = projectStore.getCurrentPath();
+      if (currentPath && currentPath !== selected) {
+        await resetTerminals();
+      }
+
       await projectStore.openProject(selected);
-      // Open a default terminal tab when opening a new project (if no tabs exist)
+      // Open a default terminal tab for the new project
       const { tabs } = tabStore.getStateForPersistence();
       if (tabs.length === 0) {
         tabStore.addTerminalTab();
       }
     }
+  }
+
+  /**
+   * Close all terminal PTY sessions, dispose xterm instances, and reset tab store.
+   * Used when switching to a different project in the same window.
+   */
+  async function resetTerminals() {
+    // Collect terminal IDs from tabs before resetting
+    const state = get(tabStore);
+    const tabTerminalIds = state.tabs.flatMap((t) => getAllTerminalIds(t.rootPane));
+
+    // Reset tab store first so Svelte unmounts Terminal components cleanly
+    tabStore.reset();
+
+    // Clear any remaining registry entries (disposes xterm instances, calls unlisten)
+    const registryTerminalIds = terminalRegistry.clearAll();
+
+    // Merge all terminal IDs and deduplicate
+    const allIds = [...new Set([...registryTerminalIds, ...tabTerminalIds])];
+
+    // Close all PTY processes on the backend
+    await Promise.all(allIds.map((id) => terminalService.closeTerminal(id).catch(() => {})));
   }
 
   async function handleKeyDown(e: KeyboardEvent) {

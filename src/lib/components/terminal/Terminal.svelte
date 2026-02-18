@@ -825,7 +825,11 @@
     }
 
     if (terminal) {
-      terminal.dispose();
+      try {
+        terminal.dispose();
+      } catch {
+        // WebGL/Canvas addon may throw during dispose if DOM is already detached
+      }
     }
   });
 </script>
