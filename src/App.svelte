@@ -418,7 +418,8 @@
           nextWindowIndex++;
           await invoke('create_window', { windowIndex: indexToAssign });
         } else {
-          await invoke('create_window');
+          // Delegate to main window so it can assign a proper windowIndex
+          await emit('menu-new-window', {});
         }
       } catch (error) {
         console.error('Failed to create window:', error);
