@@ -9,18 +9,8 @@ export const windowService = {
   /**
    * Create a new window, optionally opening a project path
    */
-  createWindow: (options?: {
-    x?: number | null;
-    y?: number | null;
-    width?: number | null;
-    height?: number | null;
-    projectPath?: string | null;
-  }): Promise<void> =>
+  createWindow: (options?: { projectPath?: string | null }): Promise<void> =>
     invoke('create_window', {
-      x: options?.x ?? null,
-      y: options?.y ?? null,
-      width: options?.width ?? null,
-      height: options?.height ?? null,
       projectPath: options?.projectPath ?? null,
     }),
 
@@ -41,39 +31,6 @@ export const windowService = {
    * Unregister the current window from the registry (call on window close)
    */
   unregisterWindow: (label: string): Promise<void> => invoke('unregister_window', { label }),
-
-  /**
-   * Set the geometry (position and size) of the current window
-   */
-  setGeometry: async (options: {
-    x?: number;
-    y?: number;
-    width: number;
-    height: number;
-  }): Promise<void> => {
-    const window = getCurrentWindow();
-    const label = window.label;
-
-    // Get current position if not provided
-    let x = options.x;
-    let y = options.y;
-    if (x === undefined || y === undefined) {
-      const [currentX, currentY] = await invoke<[number, number, number, number]>(
-        'get_window_geometry',
-        { label }
-      );
-      x = x ?? currentX;
-      y = y ?? currentY;
-    }
-
-    await invoke('set_window_geometry', {
-      label,
-      x,
-      y,
-      width: options.width,
-      height: options.height,
-    });
-  },
 
   /**
    * Set the size and center the window on screen

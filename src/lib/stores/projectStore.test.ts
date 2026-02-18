@@ -21,7 +21,6 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 vi.mock('@/lib/services/windowService', () => ({
   windowService: {
-    setGeometry: vi.fn().mockResolvedValue(undefined),
     setSizeAndCenter: vi.fn().mockResolvedValue(undefined),
   },
 }));

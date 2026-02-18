@@ -1,5 +1,4 @@
-import { writable, get } from 'svelte/store';
-import type { PersistedUI } from '@/lib/services/persistenceService';
+import { writable } from 'svelte/store';
 
 export type ViewMode = 'terminal' | 'editor';
 // Keep 'changes' in type for backwards compatibility with persisted data
@@ -56,31 +55,6 @@ function createAppStore() {
         ...state,
         currentFile: file,
       })),
-
-    /**
-     * Get UI state for persistence
-     */
-    getUIForPersistence: (): PersistedUI => {
-      const state = get({ subscribe });
-      return {
-        sidebarWidth: state.sidebarWidth,
-        showSidebar: state.showSidebar,
-        sidebarMode: state.sidebarMode,
-      };
-    },
-
-    /**
-     * Restore UI state from persistence
-     * Note: sidebarMode is always set to 'explorer' as DiffView now opens in a separate window
-     */
-    restoreUI: (ui: PersistedUI) => {
-      update((state) => ({
-        ...state,
-        sidebarWidth: Math.max(160, Math.min(400, ui.sidebarWidth)),
-        showSidebar: ui.showSidebar,
-        sidebarMode: 'explorer',
-      }));
-    },
 
     reset: () => set(initialState),
   };

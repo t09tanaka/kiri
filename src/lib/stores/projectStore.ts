@@ -134,7 +134,7 @@ function createProjectStore() {
 
       // Resize window to main editor size when opening a project
       try {
-        await windowService.setGeometry({ width: 1200, height: 800 });
+        await windowService.setSizeAndCenter(1200, 800);
       } catch (error) {
         console.error('Failed to resize window:', error);
       }

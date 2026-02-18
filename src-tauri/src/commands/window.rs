@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
 
@@ -49,7 +49,6 @@ pub fn create_window_impl(
     width: Option<f64>,
     height: Option<f64>,
     project_path: Option<String>,
-    window_index: Option<i32>,
 ) -> Result<(), String> {
     let id = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("window-{}", id);
@@ -70,9 +69,6 @@ pub fn create_window_impl(
     let mut params = Vec::new();
     if let Some(path) = &project_path {
         params.push(format!("project={}", urlencoding::encode(path)));
-    }
-    if let Some(idx) = window_index {
-        params.push(format!("windowIndex={}", idx));
     }
     let url = if params.is_empty() {
         WebviewUrl::default()
@@ -113,9 +109,8 @@ pub fn create_window(
     width: Option<f64>,
     height: Option<f64>,
     project_path: Option<String>,
-    window_index: Option<i32>,
 ) -> Result<(), String> {
-    create_window_impl(&app, Some(&registry), x, y, width, height, project_path, window_index)
+    create_window_impl(&app, Some(&registry), x, y, width, height, project_path)
 }
 
 /// Focus an existing window for the given project path, or create a new one if not found
@@ -146,7 +141,7 @@ pub fn focus_or_create_window(
     }
 
     // No existing window, create a new one
-    create_window(app, registry, None, None, None, None, Some(project_path), None)?;
+    create_window(app, registry, None, None, None, None, Some(project_path))?;
     Ok(false) // Indicates new window was created
 }
 
@@ -172,61 +167,6 @@ pub fn unregister_window(
     if let Ok(mut reg) = registry.lock() {
         reg.unregister_by_label(&label);
     }
-    Ok(())
-}
-
-/// Get window geometry (position and size) for the specified window label
-/// Returns logical coordinates for cross-platform consistency
-#[tauri::command]
-pub fn get_window_geometry(
-    app: AppHandle,
-    label: String,
-) -> Result<(f64, f64, f64, f64), String> {
-    let window = app
-        .get_webview_window(&label)
-        .ok_or_else(|| format!("Window '{}' not found", label))?;
-
-    let scale_factor = window.scale_factor().unwrap_or(1.0);
-
-    let position = window
-        .outer_position()
-        .map_err(|e| format!("Failed to get position: {}", e))?;
-    let size = window
-        .inner_size()
-        .map_err(|e| format!("Failed to get size: {}", e))?;
-
-    // Convert physical to logical coordinates
-    let logical_x = position.x as f64 / scale_factor;
-    let logical_y = position.y as f64 / scale_factor;
-    let logical_width = size.width as f64 / scale_factor;
-    let logical_height = size.height as f64 / scale_factor;
-
-    Ok((logical_x, logical_y, logical_width, logical_height))
-}
-
-/// Set window geometry (position and size) for the specified window label
-/// Accepts logical coordinates for cross-platform consistency
-#[tauri::command]
-pub fn set_window_geometry(
-    app: AppHandle,
-    label: String,
-    x: f64,
-    y: f64,
-    width: f64,
-    height: f64,
-) -> Result<(), String> {
-    let window = app
-        .get_webview_window(&label)
-        .ok_or_else(|| format!("Window '{}' not found", label))?;
-
-    window
-        .set_position(LogicalPosition::new(x, y))
-        .map_err(|e| format!("Failed to set position: {}", e))?;
-
-    window
-        .set_size(LogicalSize::new(width, height))
-        .map_err(|e| format!("Failed to set size: {}", e))?;
-
     Ok(())
 }
 

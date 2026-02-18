@@ -27,252 +27,27 @@
   import { eventService } from '@/lib/services/eventService';
   import { windowService } from '@/lib/services/windowService';
   import { PeekEditor } from '@/lib/components/peek';
-  import { appStore } from '@/lib/stores/appStore';
   import { gitStore } from '@/lib/stores/gitStore';
   import { projectStore, isProjectOpen } from '@/lib/stores/projectStore';
   import { settingsStore } from '@/lib/stores/settingsStore';
   import { performanceService } from '@/lib/services/performanceService';
   import { setupLongTaskObserver } from '@/lib/utils/performanceMarker';
   import {
-    loadMultiWindowSession,
-    saveMainWindowState,
-    saveOtherWindowState,
-    saveFullSession,
-    clearOtherWindows,
-    removeOtherWindow,
     loadSettings,
     saveSettings,
     loadProjectSettings,
     saveProjectSettings,
-    type PersistedWindowState,
-    type PersistedWindowGeometry,
-    type PersistedPane,
   } from '@/lib/services/persistenceService';
   import { portIsolationService } from '@/lib/services/portIsolationService';
   import { terminalService } from '@/lib/services/terminalService';
   import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
-  import { getAllTerminalIds, getPaneTerminalIdMap } from '@/lib/stores/tabStore';
+  import { getAllTerminalIds } from '@/lib/stores/tabStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
   import { get } from 'svelte/store';
 
   let showShortcuts = $state(false);
   let windowLabel = $state('');
-  let windowIndex = $state(-1); // -1 for main, 0+ for other windows
-  let nextWindowIndex = $state(0); // Track next index for new windows (main only)
   let isAppQuitting = $state(false);
-
-  /**
-   * Get current window geometry (position and size)
-   */
-  async function getWindowGeometry(): Promise<PersistedWindowGeometry | undefined> {
-    try {
-      const result = await invoke<[number, number, number, number]>('get_window_geometry', {
-        label: windowLabel,
-      });
-      return {
-        x: result[0],
-        y: result[1],
-        width: result[2],
-        height: result[3],
-      };
-    } catch (error) {
-      console.error('Failed to get window geometry:', error);
-      return undefined;
-    }
-  }
-
-  /**
-   * Recursively add CWD to persisted pane leaves from active terminals
-   */
-  async function addCwdToPersistedPane(
-    pane: PersistedPane,
-    paneTerminalMap: Map<string, number>
-  ): Promise<PersistedPane> {
-    if (pane.type === 'terminal') {
-      const terminalId = paneTerminalMap.get(pane.id);
-      if (terminalId !== undefined) {
-        try {
-          const cwd = await terminalService.getCwd(terminalId);
-          if (cwd) {
-            return { ...pane, cwd };
-          }
-        } catch {
-          // Terminal might be closing, ignore
-        }
-      }
-      return pane;
-    }
-    const children = await Promise.all(
-      pane.children.map((child) => addCwdToPersistedPane(child, paneTerminalMap))
-    );
-    return { ...pane, children };
-  }
-
-  /**
-   * Get current window state for persistence
-   */
-  async function getCurrentWindowState(): Promise<PersistedWindowState> {
-    const currentPath = projectStore.getCurrentPath();
-    const { tabs, activeTabId } = tabStore.getStateForPersistence();
-    const ui = appStore.getUIForPersistence();
-    const geometry = await getWindowGeometry();
-
-    // Collect CWD for each terminal pane
-    const runtimeState = get(tabStore);
-    for (const tab of tabs) {
-      if (tab.type === 'terminal' && tab.rootPane) {
-        const runtimeTab = runtimeState.tabs.find((t) => t.id === tab.id);
-        if (runtimeTab) {
-          const paneTerminalMap = getPaneTerminalIdMap(runtimeTab.rootPane);
-          tab.rootPane = await addCwdToPersistedPane(tab.rootPane, paneTerminalMap);
-        }
-      }
-    }
-
-    return {
-      label: windowLabel,
-      currentProject: currentPath,
-      tabs,
-      activeTabId,
-      ui,
-      geometry,
-    };
-  }
-
-  /**
-   * Save current window's state to disk
-   */
-  async function saveCurrentWindowState() {
-    // Don't save if window label is not yet set
-    if (!windowLabel) {
-      return;
-    }
-
-    const state = await getCurrentWindowState();
-
-    // For main window, always save (to preserve geometry even on start screen)
-    // For other windows, only save if they have content
-    if (windowLabel === 'main') {
-      await saveMainWindowState(state);
-    } else if (windowIndex >= 0) {
-      // Don't save empty non-main windows (no project and no tabs)
-      if (!state.currentProject && state.tabs.length === 0) {
-        return;
-      }
-      await saveOtherWindowState(windowIndex, state);
-    }
-  }
-
-  /**
-   * Restore window geometry (position and size)
-   */
-  async function restoreWindowGeometry(geometry: PersistedWindowGeometry) {
-    try {
-      // Delay to ensure window is fully initialized
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      await invoke('set_window_geometry', {
-        label: windowLabel,
-        x: geometry.x,
-        y: geometry.y,
-        width: geometry.width,
-        height: geometry.height,
-      });
-      // Trigger terminal resize after geometry change
-      // Use multiple dispatches to ensure terminals catch the new size
-      setTimeout(() => {
-        window.dispatchEvent(new Event('terminal-resize'));
-      }, 100);
-      setTimeout(() => {
-        window.dispatchEvent(new Event('terminal-resize'));
-      }, 300);
-    } catch (error) {
-      console.error('Failed to restore window geometry:', error);
-    }
-  }
-
-  /**
-   * Restore window state from persisted data
-   */
-  async function restoreWindowState(state: PersistedWindowState, restoreGeometry = false) {
-    // Restore UI settings
-    if (state.ui) {
-      appStore.restoreUI(state.ui);
-    }
-
-    // Restore project path
-    if (state.currentProject) {
-      projectStore.setCurrentPath(state.currentProject);
-    }
-
-    // Restore tabs
-    if (state.tabs && state.tabs.length > 0) {
-      tabStore.restoreState(state.tabs, state.activeTabId);
-    } else if (state.currentProject) {
-      // If project is open but no tabs, open a default terminal
-      tabStore.addTerminalTab();
-    }
-
-    // Restore window geometry (only for main window, other windows get geometry at creation)
-    if (restoreGeometry && state.geometry) {
-      await restoreWindowGeometry(state.geometry);
-    }
-  }
-
-  /**
-   * Check if window state should be restored (not closed and has data)
-   */
-  function shouldRestoreWindow(win: Omit<PersistedWindowState, 'label'> | null): boolean {
-    if (!win) return false;
-    if (win.closed) return false;
-    // Must have either project or tabs
-    return win.tabs.length > 0 || win.currentProject !== null;
-  }
-
-  /**
-   * Restore session - main window restores all windows
-   */
-  async function restoreSession() {
-    const session = await loadMultiWindowSession();
-    if (!session) {
-      return;
-    }
-
-    // Filter out closed and empty windows
-    const otherWindowsData = (session.otherWindows || []).filter(shouldRestoreWindow);
-
-    // Clear other windows to start fresh
-    await clearOtherWindows();
-
-    // Restore main window state (including geometry)
-    if (session.mainWindow) {
-      await restoreWindowState(session.mainWindow, true);
-    }
-
-    // Create and restore other windows (with new sequential indices)
-    for (let i = 0; i < otherWindowsData.length; i++) {
-      const winState = otherWindowsData[i];
-      try {
-        // Create window with geometry and index via URL parameter
-        const geometry = winState.geometry;
-        await invoke('create_window', {
-          x: geometry?.x ?? null,
-          y: geometry?.y ?? null,
-          width: geometry?.width ?? null,
-          height: geometry?.height ?? null,
-          windowIndex: i,
-        });
-        // Send state to the new window after a short delay
-        setTimeout(async () => {
-          await emit('restore-window-state', { index: i, state: winState });
-        }, 500);
-      } catch (error) {
-        console.error('Failed to create window:', error);
-      }
-    }
-
-    // Set next index for new windows created at runtime
-    nextWindowIndex = otherWindowsData.length;
-  }
 
   async function handleOpenDirectory() {
     const selected = await open({
@@ -290,8 +65,7 @@
 
       await projectStore.openProject(selected);
       // Open a default terminal tab for the new project
-      const { tabs } = tabStore.getStateForPersistence();
-      if (tabs.length === 0) {
+      if (get(tabStore).tabs.length === 0) {
         tabStore.addTerminalTab();
       }
     }
@@ -414,11 +188,9 @@
       e.preventDefault();
       try {
         if (windowLabel === 'main') {
-          const indexToAssign = nextWindowIndex;
-          nextWindowIndex++;
-          await invoke('create_window', { windowIndex: indexToAssign });
+          await invoke('create_window', {});
         } else {
-          // Delegate to main window so it can assign a proper windowIndex
+          // Delegate to main window to avoid duplicate handling
           await emit('menu-new-window', {});
         }
       } catch (error) {
@@ -488,69 +260,18 @@
     windowLabel = currentWindow.label;
     const isMainWindow = windowLabel === 'main';
 
-    // Auto-save when tab state changes (debounced)
-    let saveTimeout: ReturnType<typeof setTimeout> | null = null;
-    let isRestoring = true;
-
-    // Listen for state restore event and index assignment (for non-main windows)
-    let unlistenRestore: (() => void) | null = null;
-    let unlistenAssignIndex: (() => void) | null = null;
+    // Listen for app-quitting event (for non-main windows to skip worktree cleanup)
     let unlistenAppQuitting: (() => void) | null = null;
     if (!isMainWindow) {
-      // Listen for state restore (when app starts)
-      unlistenRestore = await listen<{ index: number; state: Omit<PersistedWindowState, 'label'> }>(
-        'restore-window-state',
-        async (event) => {
-          // Receive index and state
-          windowIndex = event.payload.index;
-          await restoreWindowState({ ...event.payload.state, label: windowLabel });
-        }
-      );
-      // Listen for index assignment (when created at runtime)
-      unlistenAssignIndex = await listen<{ index: number }>('assign-window-index', (event) => {
-        // Only accept if we don't have an index yet
-        if (windowIndex === -1) {
-          windowIndex = event.payload.index;
-        }
-      });
-      // Listen for app-quitting event: report state to main window (don't write to store directly)
-      unlistenAppQuitting = await listen('app-quitting', async () => {
+      unlistenAppQuitting = await listen('app-quitting', () => {
         isAppQuitting = true;
-        try {
-          const state = await getCurrentWindowState();
-          if (windowIndex >= 0) {
-            await eventService.emit('window-state-report', {
-              index: windowIndex,
-              state: {
-                currentProject: state.currentProject,
-                tabs: state.tabs,
-                activeTabId: state.activeTabId,
-                ui: state.ui,
-                geometry: state.geometry,
-              },
-            });
-          }
-        } catch {
-          // Ignore errors during shutdown
-        }
       });
-    }
-
-    // Restore session (main window only)
-    if (isMainWindow) {
-      await restoreSession();
     }
 
     // Handle URL parameters
     const params = new URLSearchParams(window.location.search);
 
-    // Read windowIndex from URL parameter (reliable, no race condition)
-    const windowIndexParam = params.get('windowIndex');
-    if (windowIndexParam && !isMainWindow) {
-      windowIndex = parseInt(windowIndexParam, 10);
-    }
-
-    // Handle ?project= URL parameter (for worktree windows)
+    // Handle ?project= URL parameter (for worktree windows and open-recent)
     const projectParam = params.get('project');
     if (projectParam) {
       const decodedPath = decodeURIComponent(projectParam);
@@ -566,16 +287,13 @@
       }
 
       // Register this window with the project path (for focus_or_create_window)
-      // Note: Windows created via create_window are already registered in the backend,
-      // but we register again here to ensure the mapping exists
       try {
         await windowService.registerWindow(windowLabel, decodedPath);
       } catch (e) {
         console.error('Failed to register window:', e);
       }
 
-      const { tabs } = tabStore.getStateForPersistence();
-      if (tabs.length === 0) {
+      if (get(tabStore).tabs.length === 0) {
         tabStore.addTerminalTab();
       }
     }
@@ -603,48 +321,29 @@
 
     window.addEventListener('keydown', handleKeyDown);
 
-    // Wait a bit before enabling auto-save, then save state
-    setTimeout(() => {
-      isRestoring = false;
-      // Save state for all windows that have meaningful data
-      saveCurrentWindowState();
-    }, 1500);
-
-    // Debounced save function
-    const debouncedSave = () => {
-      if (isRestoring) return;
-
-      if (saveTimeout) {
-        clearTimeout(saveTimeout);
-      }
-      saveTimeout = setTimeout(() => {
-        saveCurrentWindowState();
-      }, 500);
-    };
-
-    // Auto-save when tab state changes
-    const unsubscribeTabStore = tabStore.subscribe(debouncedSave);
-
-    // Auto-save when project changes (for new windows opening projects)
+    // Refresh worktree info when project changes
     const unsubscribeProjectStore = projectStore.subscribe((state) => {
-      debouncedSave();
-      // Refresh worktree info when project changes
       if (state.currentPath) {
         worktreeStore.refresh(state.currentPath);
       }
     });
 
     // Auto-save settings when they change (main window only)
+    let settingsSaveReady = false;
     let unsubscribeSettingsStore: (() => void) | null = null;
     if (isMainWindow) {
+      // Delay enabling settings save to avoid saving the initial restore
+      setTimeout(() => {
+        settingsSaveReady = true;
+      }, 500);
       unsubscribeSettingsStore = settingsStore.subscribe((state) => {
-        if (!isRestoring) {
+        if (settingsSaveReady) {
           saveSettings(state);
         }
       });
     }
 
-    // Save state before window closes
+    // Handle window close
     const unlistenCloseRequested = await currentWindow.onCloseRequested(async (event) => {
       // Check for running terminal commands before closing
       const state = get(tabStore);
@@ -670,43 +369,11 @@
 
       event.preventDefault();
 
-      // Main window: collect states from all non-main windows, then save in one write
+      // Main window: signal non-main windows that app is quitting
       if (isMainWindow) {
-        const nonMainCount = nextWindowIndex;
-        // eslint-disable-next-line svelte/prefer-svelte-reactivity -- local non-reactive collection in event handler
-        const collectedStates = new Map<number, Omit<PersistedWindowState, 'label'>>();
-
-        let resolveCollection: (() => void) | null = null;
-        const collectionPromise = new Promise<void>((resolve) => {
-          resolveCollection = resolve;
-        });
-
-        const unlistenReport = await eventService.listen<{
-          index: number;
-          state: Omit<PersistedWindowState, 'label'>;
-        }>('window-state-report', (event) => {
-          collectedStates.set(event.payload.index, event.payload.state);
-          if (collectedStates.size >= nonMainCount && resolveCollection) {
-            resolveCollection();
-          }
-        });
-
-        // Notify non-main windows to report their state
         await eventService.emit('app-quitting', {});
-
-        // Wait for all reports or timeout
-        if (nonMainCount > 0) {
-          await Promise.race([
-            collectionPromise,
-            new Promise<void>((resolve) => setTimeout(resolve, 500)),
-          ]);
-        }
-
-        unlistenReport();
-
-        // Save all states in one write
-        const mainState = await getCurrentWindowState();
-        await saveFullSession(mainState, collectedStates);
+        // Brief delay to let non-main windows receive the signal
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
 
       // For worktree windows, automatically delete the worktree (skip when app is quitting)
@@ -714,14 +381,12 @@
         const currentPath = projectStore.getCurrentPath();
         if (currentPath) {
           try {
-            // Get fresh worktree context directly from Tauri (don't rely on store state)
             const worktreeContext = await worktreeService.getContext(currentPath);
             if (
               worktreeContext?.is_worktree &&
               worktreeContext?.main_repo_path &&
               worktreeContext?.worktree_name
             ) {
-              // Remove worktree using main repo path and internal worktree name
               await worktreeService.remove(
                 worktreeContext.main_repo_path,
                 worktreeContext.worktree_name
@@ -729,13 +394,13 @@
 
               // Release port assignments for this worktree
               try {
-                const settings = await loadProjectSettings(worktreeContext.main_repo_path);
-                if (settings.portConfig) {
-                  settings.portConfig = portIsolationService.removeWorktreeAssignments(
-                    settings.portConfig,
+                const projectSettings = await loadProjectSettings(worktreeContext.main_repo_path);
+                if (projectSettings.portConfig) {
+                  projectSettings.portConfig = portIsolationService.removeWorktreeAssignments(
+                    projectSettings.portConfig,
                     worktreeContext.worktree_name
                   );
-                  await saveProjectSettings(worktreeContext.main_repo_path, settings);
+                  await saveProjectSettings(worktreeContext.main_repo_path, projectSettings);
                 }
               } catch (portError) {
                 console.error('Failed to release port assignments:', portError);
@@ -750,20 +415,6 @@
         }
       }
 
-      try {
-        if (isMainWindow) {
-          // Main window already saved all states via saveFullSession above
-        } else if (windowIndex >= 0) {
-          // Non-main window: save state, then mark as closed only if not quitting
-          await saveCurrentWindowState();
-          if (!isAppQuitting) {
-            await removeOtherWindow(windowIndex);
-          }
-        }
-      } catch (error) {
-        console.error('Failed to handle window close:', error);
-      }
-
       // Unregister window from the registry
       try {
         await windowService.unregisterWindow(windowLabel);
@@ -774,32 +425,18 @@
       await currentWindow.destroy();
     });
 
-    // Save on visibility change
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        saveCurrentWindowState();
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    // Save when window is resized or moved (debounced)
-    const unlistenResized = await currentWindow.onResized(debouncedSave);
-    const unlistenMoved = await currentWindow.onMoved(debouncedSave);
-
     // Listen for menu events from Rust
     const unlistenMenu = await listen('menu-open', () => {
       handleOpenDirectory();
     });
 
     // Listen for menu-new-window event from Rust menu handler
-    // Only the main window handles this to assign proper windowIndex
+    // Only the main window handles this to avoid creating duplicate windows
     let unlistenMenuNewWindow: (() => void) | null = null;
     if (isMainWindow) {
       unlistenMenuNewWindow = await listen('menu-new-window', async () => {
         try {
-          const indexToAssign = nextWindowIndex;
-          nextWindowIndex++;
-          await invoke('create_window', { windowIndex: indexToAssign });
+          await invoke('create_window', {});
         } catch (error) {
           console.error('Failed to create window from menu:', error);
         }
@@ -807,7 +444,6 @@
     }
 
     // Listen for menu-open-recent event from Rust menu handler
-    // Opens in a new window (or focuses existing) to avoid overwriting the current project
     const unlistenOpenRecent = await listen<string>('menu-open-recent', async (event) => {
       const path = event.payload;
       if (path) {
@@ -827,19 +463,12 @@
     performanceService.markStartupPhase('app-mount-complete');
 
     return () => {
-      if (saveTimeout) clearTimeout(saveTimeout);
-      unsubscribeTabStore();
       unsubscribeProjectStore();
       unsubscribeSettingsStore?.();
-      unlistenRestore?.();
-      unlistenAssignIndex?.();
       unlistenAppQuitting?.();
       unlistenWorktreeRemoved();
       window.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
       unlistenCloseRequested();
-      unlistenResized();
-      unlistenMoved();
       unlistenMenu();
       unlistenMenuNewWindow?.();
       unlistenOpenRecent();

@@ -105,55 +105,6 @@ describe('appStore', () => {
     });
   });
 
-  describe('getUIForPersistence', () => {
-    it('should return UI state for persistence', () => {
-      appStore.setSidebarWidth(250);
-      appStore.hideSidebar();
-
-      const ui = appStore.getUIForPersistence();
-
-      expect(ui).toEqual({
-        sidebarWidth: 250,
-        showSidebar: false,
-        sidebarMode: 'explorer',
-      });
-    });
-  });
-
-  describe('restoreUI', () => {
-    it('should restore UI state from persistence', () => {
-      appStore.restoreUI({
-        sidebarWidth: 300,
-        showSidebar: false,
-        sidebarMode: 'changes',
-      });
-
-      const state = get(appStore);
-      expect(state.sidebarWidth).toBe(300);
-      expect(state.showSidebar).toBe(false);
-      // sidebarMode should always be 'explorer' regardless of persisted value
-      expect(state.sidebarMode).toBe('explorer');
-    });
-
-    it('should clamp sidebar width on restore', () => {
-      appStore.restoreUI({
-        sidebarWidth: 500,
-        showSidebar: true,
-        sidebarMode: 'explorer',
-      });
-
-      expect(get(appStore).sidebarWidth).toBe(400);
-
-      appStore.restoreUI({
-        sidebarWidth: 100,
-        showSidebar: true,
-        sidebarMode: 'explorer',
-      });
-
-      expect(get(appStore).sidebarWidth).toBe(160);
-    });
-  });
-
   describe('reset', () => {
     it('should reset to initial state', () => {
       appStore.setSidebarWidth(300);

@@ -1,5 +1,4 @@
 import { writable, derived, get } from 'svelte/store';
-import type { PersistedTab, PersistedPane } from '@/lib/services/persistenceService';
 
 // Terminal pane types for split support
 export interface TerminalPaneLeaf {
@@ -256,40 +255,6 @@ function updatePaneSizesInTree(
   };
 }
 
-/**
- * Convert a runtime TerminalPane to a PersistedPane (strip terminalId)
- * @internal Exported for testing purposes
- */
-export function paneToPersistedPane(pane: TerminalPane): PersistedPane {
-  if (pane.type === 'terminal') {
-    return { type: 'terminal', id: pane.id };
-  }
-  return {
-    type: 'split',
-    id: pane.id,
-    direction: pane.direction,
-    children: pane.children.map(paneToPersistedPane),
-    sizes: [...pane.sizes],
-  };
-}
-
-/**
- * Convert a PersistedPane back to a runtime TerminalPane (set terminalId to null)
- * @internal Exported for testing purposes
- */
-export function persistedPaneToPane(persisted: PersistedPane): TerminalPane {
-  if (persisted.type === 'terminal') {
-    return { type: 'terminal', id: persisted.id, terminalId: null, cwd: persisted.cwd || null };
-  }
-  return {
-    type: 'split',
-    id: persisted.id || generateSplitId(), // Generate ID for backwards compatibility
-    direction: persisted.direction,
-    children: persisted.children.map(persistedPaneToPane),
-    sizes: [...persisted.sizes],
-  };
-}
-
 export interface TabState {
   tabs: Tab[];
   activeTabId: string | null;
@@ -441,80 +406,6 @@ function createTabStore() {
     getActiveTab: () => {
       const state = get({ subscribe });
       return state.tabs.find((t) => t.id === state.activeTabId) || null;
-    },
-
-    /**
-     * Get current state for persistence (convert to PersistedTab format)
-     */
-    getStateForPersistence: (): { tabs: PersistedTab[]; activeTabId: string | null } => {
-      const state = get({ subscribe });
-      const persistedTabs: PersistedTab[] = state.tabs.map((tab) => ({
-        id: tab.id,
-        type: 'terminal' as const,
-        title: tab.title,
-        rootPane: paneToPersistedPane(tab.rootPane),
-      }));
-      return {
-        tabs: persistedTabs,
-        activeTabId: state.activeTabId,
-      };
-    },
-
-    /**
-     * Restore state from persistence
-     */
-    restoreState: (persistedTabs: PersistedTab[], activeTabId: string | null) => {
-      const tabs: Tab[] = [];
-
-      for (const pTab of persistedTabs) {
-        if (pTab.type === 'terminal') {
-          // Restore pane tree if available, otherwise create a single pane (backwards compatibility)
-          const rootPane = pTab.rootPane
-            ? persistedPaneToPane(pTab.rootPane)
-            : { type: 'terminal' as const, id: generatePaneId(), terminalId: null };
-          tabs.push({
-            id: pTab.id,
-            type: 'terminal',
-            title: pTab.title || 'Terminal',
-            rootPane,
-          });
-        }
-      }
-
-      // Update nextId to avoid ID collisions
-      const maxNumericId = tabs
-        .map((t) => {
-          const match = t.id.match(/^tab-(\d+)$/);
-          return match ? parseInt(match[1], 10) : 0;
-        })
-        .reduce((max, id) => Math.max(max, id), 0);
-      nextId = maxNumericId + 1;
-
-      // Update nextPaneId to avoid ID collisions
-      const maxPaneId = tabs
-        .flatMap((t) => getAllPaneIds(t.rootPane))
-        .map((id) => {
-          const match = id.match(/^pane-(\d+)$/);
-          // v8 ignore next -- defensive fallback: generatePaneId() always returns pane-{number} format
-          return match ? parseInt(match[1], 10) : /* v8 ignore next */ 0;
-        })
-        .reduce((max, id) => Math.max(max, id), 0);
-      nextPaneId = maxPaneId + 1;
-
-      // Update nextSplitId to avoid ID collisions
-      const maxSplitId = tabs
-        .flatMap((t) => getAllSplitIds(t.rootPane))
-        .map((id) => {
-          const match = id.match(/^split-(\d+)$/);
-          return match ? parseInt(match[1], 10) : 0;
-        })
-        .reduce((max, id) => Math.max(max, id), 0);
-      nextSplitId = maxSplitId + 1;
-
-      set({
-        tabs,
-        activeTabId: activeTabId && tabs.find((t) => t.id === activeTabId) ? activeTabId : null,
-      });
     },
 
     reset: () => set(initialState),
