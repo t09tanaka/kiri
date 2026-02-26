@@ -45,6 +45,8 @@
   let dragOverThrottleTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingDragPosition: { x: number; y: number } | null = null;
   let lastDragOverTarget: string | null = null;
+  // Offset from window origin to webview content (title bar height) in physical pixels
+  let windowContentOffset = { x: 0, y: 0 };
 
   // Extract project name from rootPath
   const projectName = $derived(rootPath ? rootPath.split('/').pop() || rootPath : null);
@@ -212,7 +214,12 @@
   }
 
   function processDragOver(position: { x: number; y: number }) {
-    const element = document.elementFromPoint(position.x, position.y);
+    // Convert Tauri window coordinates (physical pixels, including title bar)
+    // to viewport coordinates (CSS pixels, relative to webview content area)
+    const scale = window.devicePixelRatio || 1;
+    const viewportX = (position.x - windowContentOffset.x) / scale;
+    const viewportY = (position.y - windowContentOffset.y) / scale;
+    const element = document.elementFromPoint(viewportX, viewportY);
     if (!element) {
       dragDropStore.setDropTarget(null);
       handleAutoExpandOnTargetChange(null);
@@ -269,6 +276,13 @@
   }
 
   async function setupDragDropListeners() {
+    // Cache window content offset (title bar height) for coordinate conversion
+    try {
+      windowContentOffset = await eventService.getWindowContentOffset();
+    } catch {
+      windowContentOffset = { x: 0, y: 0 };
+    }
+
     // Use window-scoped listeners to only handle drag events for THIS window
     unlistenDragEnter = await eventService.listenCurrentWindow<DragPayload>(
       'tauri://drag-enter',
