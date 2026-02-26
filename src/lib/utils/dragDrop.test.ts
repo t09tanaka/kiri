@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getParentDirectory, resolveDropTarget } from './dragDrop';
+import { getParentDirectory, isDescendantOf, resolveDropTarget } from './dragDrop';
 
 describe('getParentDirectory', () => {
   it('should return parent directory for a file path', () => {
@@ -22,6 +22,27 @@ describe('getParentDirectory', () => {
 
   it('should handle trailing slashes', () => {
     expect(getParentDirectory('/project/src/')).toBe('/project');
+  });
+});
+
+describe('isDescendantOf', () => {
+  it('returns true for direct child', () => {
+    expect(isDescendantOf('/a/b', '/a')).toBe(true);
+  });
+  it('returns true for deeply nested descendant', () => {
+    expect(isDescendantOf('/a/b/c/d', '/a')).toBe(true);
+  });
+  it('returns false for same path', () => {
+    expect(isDescendantOf('/a', '/a')).toBe(false);
+  });
+  it('returns false for parent', () => {
+    expect(isDescendantOf('/a', '/a/b')).toBe(false);
+  });
+  it('returns false for sibling', () => {
+    expect(isDescendantOf('/a/c', '/a/b')).toBe(false);
+  });
+  it('returns false for prefix-similar paths', () => {
+    expect(isDescendantOf('/project-backup/file', '/project')).toBe(false);
   });
 });
 

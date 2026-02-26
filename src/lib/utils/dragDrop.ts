@@ -16,6 +16,14 @@ function isUnderRoot(path: string, rootPath: string): boolean {
 }
 
 /**
+ * Check if targetPath is a descendant of ancestorPath (not equal).
+ */
+export function isDescendantOf(targetPath: string, ancestorPath: string): boolean {
+  if (targetPath === ancestorPath) return false;
+  return targetPath.startsWith(ancestorPath + '/');
+}
+
+/**
  * Resolve the drop target directory from the hovered element's data attributes.
  * - If hovering over a directory, returns that directory path.
  * - If hovering over a file, returns its parent directory.
