@@ -611,6 +611,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
     flex: 1;
+    position: relative;
+    top: -2px;
   }
 
   .directory .name {
