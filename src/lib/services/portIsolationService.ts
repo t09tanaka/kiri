@@ -27,7 +27,8 @@ export interface PortAssignment {
 
 export interface PortAllocationResult {
   assignments: PortAssignment[];
-  next_port: number;
+  worktree_index: number;
+  overflow_warnings: string[];
 }
 
 // Re-export persistence types for convenience
@@ -35,10 +36,7 @@ export type { PersistencePortConfig as PortConfig };
 export type { PersistencePortAssignment };
 export type { PersistenceWorktreePortAssignment as WorktreePortAssignment };
 
-// Default port range (100 ports per project)
-export const DEFAULT_PORT_RANGE_START = 20000;
-export const DEFAULT_PORT_BLOCK_SIZE = 100;
-export const DEFAULT_PORT_RANGE_END = DEFAULT_PORT_RANGE_START + DEFAULT_PORT_BLOCK_SIZE - 1;
+export const PORT_OFFSET_STEP = 100;
 
 // Default target files for port isolation
 export const DEFAULT_TARGET_FILES = [
@@ -99,8 +97,8 @@ export const portIsolationService = {
   /**
    * Allocate unique ports for the given port sources (Tauri command wrapper)
    */
-  allocatePorts: (ports: PortSource[], startPort: number): Promise<PortAllocationResult> =>
-    invoke('allocate_worktree_ports', { ports, startPort }),
+  allocatePorts: (ports: PortSource[], worktreeIndex: number): Promise<PortAllocationResult> =>
+    invoke('allocate_worktree_ports', { ports, worktreeIndex }),
 
   /**
    * Copy files with port transformation
@@ -198,81 +196,88 @@ export const portIsolationService = {
    */
   createDefaultConfig: (): PersistencePortConfig => ({
     enabled: true,
-    portRangeStart: DEFAULT_PORT_RANGE_START,
-    portRangeEnd: DEFAULT_PORT_RANGE_END,
     worktreeAssignments: {},
     targetFiles: [...DEFAULT_TARGET_FILES],
   }),
 
   /**
-   * Get all ports currently in use by existing worktrees
+   * Get all worktree indices currently in use by existing worktrees.
+   * The index is derived from: (assignedValue - originalValue) / 100
    */
-  getUsedPorts: (config: PersistencePortConfig): Set<number> => {
-    const usedPorts = new Set<number>();
-    // Handle case where worktreeAssignments is undefined (old config format)
+  getUsedWorktreeIndices: (config: PersistencePortConfig): Set<number> => {
+    const indices = new Set<number>();
     if (!config.worktreeAssignments) {
-      return usedPorts;
+      return indices;
     }
     for (const assignment of Object.values(config.worktreeAssignments)) {
-      for (const port of assignment.assignments) {
-        usedPorts.add(port.assignedValue);
+      if (assignment.assignments.length > 0) {
+        const first = assignment.assignments[0];
+        const index = (first.assignedValue - first.originalValue) / PORT_OFFSET_STEP;
+        if (Number.isInteger(index) && index > 0) {
+          indices.add(index);
+        }
       }
     }
-    return usedPorts;
+    return indices;
   },
 
   /**
-   * Allocate ports avoiding those already used by other worktrees.
-   * Ports with the same original port_value (e.g., .env PORT=3000 and compose COMPOSE:3000)
-   * will be assigned the same new port value.
+   * Get the next available worktree index (smallest positive integer not in use)
    */
-  allocatePortsAvoidingUsed: (
+  getNextWorktreeIndex: (config: PersistencePortConfig): number => {
+    const used = portIsolationService.getUsedWorktreeIndices(config);
+    let index = 1;
+    while (used.has(index)) {
+      index++;
+    }
+    return index;
+  },
+
+  /**
+   * Allocate ports using offset strategy: original_port + (worktree_index * 100).
+   * The next available worktree index is automatically determined.
+   * Ports with the same original port_value get the same assigned value.
+   * Returns assignments, the worktree index used, and any overflow warnings.
+   */
+  allocatePortsWithOffset: (
     ports: PortSource[],
     config: PersistencePortConfig
-  ): PortAssignment[] => {
-    const usedPorts = portIsolationService.getUsedPorts(config);
+  ): { assignments: PortAssignment[]; worktreeIndex: number; overflowWarnings: string[] } => {
+    const worktreeIndex = portIsolationService.getNextWorktreeIndex(config);
+    const offset = worktreeIndex * PORT_OFFSET_STEP;
     const assignments: PortAssignment[] = [];
+    const overflowWarnings: string[] = [];
     const assignedByOriginalValue = new Map<number, number>();
 
-    let nextAvailable = config.portRangeStart;
-
     for (const port of ports) {
-      // If the same original port value was already assigned, reuse it
-      const existingAssignment = assignedByOriginalValue.get(port.port_value);
-      if (existingAssignment !== undefined) {
+      const existing = assignedByOriginalValue.get(port.port_value);
+      if (existing !== undefined) {
         assignments.push({
           variable_name: port.variable_name,
           original_value: port.port_value,
-          assigned_value: existingAssignment,
+          assigned_value: existing,
         });
         continue;
       }
 
-      // Find next available port that's not in use
-      while (usedPorts.has(nextAvailable) && nextAvailable <= config.portRangeEnd) {
-        nextAvailable++;
-      }
+      const assigned = port.port_value + offset;
 
-      if (nextAvailable > config.portRangeEnd) {
-        console.error('Port range exhausted');
-        break;
+      if (assigned > 65535) {
+        overflowWarnings.push(
+          `${port.variable_name}=${port.port_value}: ${assigned} exceeds max port 65535`
+        );
+        continue;
       }
 
       assignments.push({
         variable_name: port.variable_name,
         original_value: port.port_value,
-        assigned_value: nextAvailable,
+        assigned_value: assigned,
       });
-
-      // Track assignment by original value for reuse
-      assignedByOriginalValue.set(port.port_value, nextAvailable);
-
-      // Mark this port as used and move to next
-      usedPorts.add(nextAvailable);
-      nextAvailable++;
+      assignedByOriginalValue.set(port.port_value, assigned);
     }
 
-    return assignments;
+    return { assignments, worktreeIndex, overflowWarnings };
   },
 
   /**

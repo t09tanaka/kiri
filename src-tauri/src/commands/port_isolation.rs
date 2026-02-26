@@ -12,9 +12,6 @@ const ENV_URL_PORT_PATTERN: &str = r"^([A-Z][A-Z0-9_]*_URL)=\S+://(?:[^:@/]+(?::
 const DOCKERFILE_EXPOSE_PATTERN: &str = r"^EXPOSE\s+(\d+)";
 const COMPOSE_PORT_PATTERN: &str = r#"^\s*-\s*["']?(\d+):(\d+)["']?"#;
 
-// Port range for allocation
-const PORT_RANGE_START: u16 = 20000;
-const PORT_RANGE_END: u16 = 39999;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortAssignment {
@@ -41,7 +38,8 @@ pub struct DetectedPorts {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortAllocationResult {
     pub assignments: Vec<PortAssignment>,
-    pub next_port: u16,
+    pub worktree_index: u16,
+    pub overflow_warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -275,25 +273,23 @@ pub fn detect_all_ports(dir_path: String) -> Result<DetectedPorts, String> {
     })
 }
 
-/// Allocate unique ports for the given detected ports
+/// Allocate ports using offset-based strategy: original_port + (worktree_index * 100)
 pub fn allocate_ports(
     ports: &[PortSource],
-    start_port: u16,
+    worktree_index: u16,
 ) -> Result<PortAllocationResult, String> {
-    if start_port < PORT_RANGE_START || start_port > PORT_RANGE_END {
-        return Err(format!(
-            "Start port must be between {} and {}",
-            PORT_RANGE_START, PORT_RANGE_END
-        ));
+    if worktree_index == 0 {
+        return Err("Worktree index must be greater than 0".to_string());
     }
 
+    let offset = worktree_index as u32 * 100;
     let mut assignments = Vec::new();
-    let mut next_port = start_port;
-    let mut seen_vars: HashMap<String, u16> = HashMap::new();
+    let mut overflow_warnings = Vec::new();
+    let mut seen_values: HashMap<u16, u16> = HashMap::new();
 
     for port_source in ports {
-        // Skip if we've already assigned this variable
-        if let Some(&assigned_port) = seen_vars.get(&port_source.variable_name) {
+        // If same original port value was already assigned, reuse it
+        if let Some(&assigned_port) = seen_values.get(&port_source.port_value) {
             assignments.push(PortAssignment {
                 variable_name: port_source.variable_name.clone(),
                 original_value: port_source.port_value,
@@ -302,14 +298,18 @@ pub fn allocate_ports(
             continue;
         }
 
-        // Check if we have room for more ports
-        if next_port > PORT_RANGE_END {
-            return Err("Port range exhausted".to_string());
+        let new_port = port_source.port_value as u32 + offset;
+
+        if new_port > 65535 {
+            overflow_warnings.push(format!(
+                "{}={}: {} exceeds max port 65535",
+                port_source.variable_name, port_source.port_value, new_port
+            ));
+            continue;
         }
 
-        let assigned_port = next_port;
-        seen_vars.insert(port_source.variable_name.clone(), assigned_port);
-        next_port += 1;
+        let assigned_port = new_port as u16;
+        seen_values.insert(port_source.port_value, assigned_port);
 
         assignments.push(PortAssignment {
             variable_name: port_source.variable_name.clone(),
@@ -320,7 +320,8 @@ pub fn allocate_ports(
 
     Ok(PortAllocationResult {
         assignments,
-        next_port,
+        worktree_index,
+        overflow_warnings,
     })
 }
 
@@ -821,17 +822,16 @@ services:
             },
         ];
 
-        let result = allocate_ports(&ports, 20000).unwrap();
+        let result = allocate_ports(&ports, 2).unwrap();
         assert_eq!(result.assignments.len(), 3);
-        // Only 2 unique variable names, so next_port should be 20002
-        assert_eq!(result.next_port, 20002);
+        assert_eq!(result.worktree_index, 2);
 
         // Both COMPOSE:5433 entries should get the same assigned value
-        assert_eq!(result.assignments[0].assigned_value, 20000);
-        assert_eq!(result.assignments[1].assigned_value, 20000);
+        assert_eq!(result.assignments[0].assigned_value, 5633); // 5433 + 200
+        assert_eq!(result.assignments[1].assigned_value, 5633);
 
-        // COMPOSE:8080 gets a different assigned value
-        assert_eq!(result.assignments[2].assigned_value, 20001);
+        // COMPOSE:8080 gets offset too
+        assert_eq!(result.assignments[2].assigned_value, 8280); // 8080 + 200
     }
 
     #[test]
@@ -851,17 +851,18 @@ services:
             },
         ];
 
-        let result = allocate_ports(&ports, 20000).unwrap();
+        let result = allocate_ports(&ports, 1).unwrap();
         assert_eq!(result.assignments.len(), 2);
-        assert_eq!(result.next_port, 20002);
+        assert_eq!(result.worktree_index, 1);
+        assert!(result.overflow_warnings.is_empty());
 
         assert_eq!(result.assignments[0].variable_name, "PORT");
         assert_eq!(result.assignments[0].original_value, 3000);
-        assert_eq!(result.assignments[0].assigned_value, 20000);
+        assert_eq!(result.assignments[0].assigned_value, 3100);
 
         assert_eq!(result.assignments[1].variable_name, "DB_PORT");
         assert_eq!(result.assignments[1].original_value, 5432);
-        assert_eq!(result.assignments[1].assigned_value, 20001);
+        assert_eq!(result.assignments[1].assigned_value, 5532);
     }
 
     #[test]
@@ -881,21 +882,65 @@ services:
             },
         ];
 
-        let result = allocate_ports(&ports, 20000).unwrap();
+        let result = allocate_ports(&ports, 1).unwrap();
         assert_eq!(result.assignments.len(), 2);
-        assert_eq!(result.next_port, 20001); // Only one unique port allocated
+        assert_eq!(result.worktree_index, 1);
 
         // Both should get the same assigned value
-        assert_eq!(result.assignments[0].assigned_value, 20000);
-        assert_eq!(result.assignments[1].assigned_value, 20000);
+        assert_eq!(result.assignments[0].assigned_value, 3100);
+        assert_eq!(result.assignments[1].assigned_value, 3100);
     }
 
     #[test]
-    fn test_allocate_ports_invalid_start() {
+    fn test_allocate_ports_invalid_index() {
         let ports = vec![];
-        let result = allocate_ports(&ports, 100);
+        let result = allocate_ports(&ports, 0);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("must be between"));
+        assert!(result.unwrap_err().contains("must be greater than 0"));
+    }
+
+    #[test]
+    fn test_allocate_ports_overflow() {
+        let ports = vec![
+            PortSource {
+                file_path: ".env".to_string(),
+                variable_name: "PORT".to_string(),
+                port_value: 3000,
+                line_number: 1,
+            },
+            PortSource {
+                file_path: ".env".to_string(),
+                variable_name: "HIGH_PORT".to_string(),
+                port_value: 65500,
+                line_number: 2,
+            },
+        ];
+
+        let result = allocate_ports(&ports, 1).unwrap();
+        // PORT=3000 should be assigned (3100)
+        assert_eq!(result.assignments.len(), 1);
+        assert_eq!(result.assignments[0].assigned_value, 3100);
+        // HIGH_PORT=65500 should produce an overflow warning
+        assert_eq!(result.overflow_warnings.len(), 1);
+        assert!(result.overflow_warnings[0].contains("65500"));
+        assert!(result.overflow_warnings[0].contains("65535"));
+    }
+
+    #[test]
+    fn test_allocate_ports_higher_index() {
+        let ports = vec![
+            PortSource {
+                file_path: ".env".to_string(),
+                variable_name: "PORT".to_string(),
+                port_value: 3000,
+                line_number: 1,
+            },
+        ];
+
+        let result = allocate_ports(&ports, 5).unwrap();
+        assert_eq!(result.assignments.len(), 1);
+        assert_eq!(result.assignments[0].assigned_value, 3500); // 3000 + 500
+        assert_eq!(result.worktree_index, 5);
     }
 
     #[test]

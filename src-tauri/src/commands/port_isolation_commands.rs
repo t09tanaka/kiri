@@ -9,9 +9,9 @@ pub fn detect_ports(dir_path: String) -> Result<DetectedPorts, String> {
 #[tauri::command]
 pub fn allocate_worktree_ports(
     ports: Vec<PortSource>,
-    start_port: u16,
+    worktree_index: u16,
 ) -> Result<PortAllocationResult, String> {
-    super::port_isolation::allocate_ports(&ports, start_port)
+    super::port_isolation::allocate_ports(&ports, worktree_index)
 }
 
 #[tauri::command]

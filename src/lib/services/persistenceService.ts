@@ -98,8 +98,6 @@ export interface WorktreePortAssignment {
  */
 export interface PortConfig {
   enabled: boolean;
-  portRangeStart: number;
-  portRangeEnd: number;
   worktreeAssignments: Record<string, WorktreePortAssignment>;
   targetFiles: string[]; // File patterns to process (default: ['.env*', 'docker-compose.yml'])
   disabledTargetFiles?: string[]; // Target files that are disabled (not processed)

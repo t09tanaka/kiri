@@ -24,8 +24,6 @@ function makeEmptyDetected(): DetectedPorts {
 function makeDefaultConfig(overrides: Partial<PortConfig> = {}): PortConfig {
   return {
     enabled: true,
-    portRangeStart: 20000,
-    portRangeEnd: 20099,
     worktreeAssignments: {},
     targetFiles: ['**/.env*'],
     ...overrides,
@@ -224,26 +222,123 @@ describe('portIsolationService', () => {
     });
   });
 
-  describe('allocatePortsAvoidingUsed', () => {
-    it('should allocate sequential ports for different port values', () => {
+  describe('getUsedWorktreeIndices', () => {
+    it('should return empty set when no worktree assignments', () => {
+      const config = makeDefaultConfig();
+      const result = portIsolationService.getUsedWorktreeIndices(config);
+      expect(result.size).toBe(0);
+    });
+
+    it('should return empty set when worktreeAssignments is undefined', () => {
+      const config = makeDefaultConfig({ worktreeAssignments: undefined as never });
+      const result = portIsolationService.getUsedWorktreeIndices(config);
+      expect(result.size).toBe(0);
+    });
+
+    it('should derive index from assignments (assignedValue - originalValue) / 100', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+        },
+      });
+      const result = portIsolationService.getUsedWorktreeIndices(config);
+      expect(result.size).toBe(1);
+      expect(result.has(1)).toBe(true);
+    });
+
+    it('should handle multiple worktrees with different indices', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+          'feature-b': {
+            worktreeName: 'feature-b',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3300 }],
+          },
+        },
+      });
+      const result = portIsolationService.getUsedWorktreeIndices(config);
+      expect(result.size).toBe(2);
+      expect(result.has(1)).toBe(true);
+      expect(result.has(3)).toBe(true);
+    });
+
+    it('should skip worktrees with empty assignments', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [],
+          },
+        },
+      });
+      const result = portIsolationService.getUsedWorktreeIndices(config);
+      expect(result.size).toBe(0);
+    });
+  });
+
+  describe('getNextWorktreeIndex', () => {
+    it('should return 1 when no worktrees exist', () => {
+      const config = makeDefaultConfig();
+      expect(portIsolationService.getNextWorktreeIndex(config)).toBe(1);
+    });
+
+    it('should return 2 when index 1 is used', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+        },
+      });
+      expect(portIsolationService.getNextWorktreeIndex(config)).toBe(2);
+    });
+
+    it('should reuse gaps (return 2 when 1 and 3 are used)', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+          'feature-c': {
+            worktreeName: 'feature-c',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3300 }],
+          },
+        },
+      });
+      expect(portIsolationService.getNextWorktreeIndex(config)).toBe(2);
+    });
+  });
+
+  describe('allocatePortsWithOffset', () => {
+    it('should allocate ports with offset for first worktree (index 1)', () => {
       const config = makeDefaultConfig();
       const ports: PortSource[] = [
         makePortSource({ variable_name: 'PORT', port_value: 3000 }),
         makePortSource({ variable_name: 'DB_PORT', port_value: 5432 }),
       ];
 
-      const result = portIsolationService.allocatePortsAvoidingUsed(ports, config);
+      const result = portIsolationService.allocatePortsWithOffset(ports, config);
 
-      expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({
+      expect(result.worktreeIndex).toBe(1);
+      expect(result.assignments).toHaveLength(2);
+      expect(result.overflowWarnings).toHaveLength(0);
+      expect(result.assignments[0]).toEqual({
         variable_name: 'PORT',
         original_value: 3000,
-        assigned_value: 20000,
+        assigned_value: 3100,
       });
-      expect(result[1]).toEqual({
+      expect(result.assignments[1]).toEqual({
         variable_name: 'DB_PORT',
         original_value: 5432,
-        assigned_value: 20001,
+        assigned_value: 5532,
       });
     });
 
@@ -264,15 +359,15 @@ describe('portIsolationService', () => {
         }),
       ];
 
-      const result = portIsolationService.allocatePortsAvoidingUsed(ports, config);
+      const result = portIsolationService.allocatePortsWithOffset(ports, config);
 
-      expect(result).toHaveLength(4);
+      expect(result.assignments).toHaveLength(4);
       // PORT=3000 and COMPOSE:3000 should get the same assigned_value
-      expect(result[0].assigned_value).toBe(20000);
-      expect(result[2].assigned_value).toBe(20000);
+      expect(result.assignments[0].assigned_value).toBe(3100);
+      expect(result.assignments[2].assigned_value).toBe(3100);
       // DB_PORT=5432 and COMPOSE:5432 should get the same assigned_value
-      expect(result[1].assigned_value).toBe(20001);
-      expect(result[3].assigned_value).toBe(20001);
+      expect(result.assignments[1].assigned_value).toBe(5532);
+      expect(result.assignments[3].assigned_value).toBe(5532);
     });
 
     it('should work with only compose ports', () => {
@@ -290,29 +385,29 @@ describe('portIsolationService', () => {
         }),
       ];
 
-      const result = portIsolationService.allocatePortsAvoidingUsed(ports, config);
+      const result = portIsolationService.allocatePortsWithOffset(ports, config);
 
-      expect(result).toHaveLength(2);
-      expect(result[0]).toEqual({
+      expect(result.assignments).toHaveLength(2);
+      expect(result.assignments[0]).toEqual({
         variable_name: 'COMPOSE:3000',
         original_value: 3000,
-        assigned_value: 20000,
+        assigned_value: 3100,
       });
-      expect(result[1]).toEqual({
+      expect(result.assignments[1]).toEqual({
         variable_name: 'COMPOSE:5432',
         original_value: 5432,
-        assigned_value: 20001,
+        assigned_value: 5532,
       });
     });
 
-    it('should skip used ports from existing worktrees', () => {
+    it('should use next available index when worktrees exist', () => {
       const config = makeDefaultConfig({
         worktreeAssignments: {
           'feature-a': {
             worktreeName: 'feature-a',
             assignments: [
-              { variableName: 'PORT', originalValue: 3000, assignedValue: 20000 },
-              { variableName: 'DB_PORT', originalValue: 5432, assignedValue: 20001 },
+              { variableName: 'PORT', originalValue: 3000, assignedValue: 3100 },
+              { variableName: 'DB_PORT', originalValue: 5432, assignedValue: 5532 },
             ],
           },
         },
@@ -326,30 +421,54 @@ describe('portIsolationService', () => {
         }),
       ];
 
-      const result = portIsolationService.allocatePortsAvoidingUsed(ports, config);
+      const result = portIsolationService.allocatePortsWithOffset(ports, config);
 
-      expect(result).toHaveLength(2);
-      // Should skip 20000 and 20001 (used by feature-a)
-      expect(result[0].assigned_value).toBe(20002);
-      // COMPOSE:3000 should reuse the same assignment as PORT since same port_value
-      expect(result[1].assigned_value).toBe(20002);
+      expect(result.worktreeIndex).toBe(2);
+      expect(result.assignments).toHaveLength(2);
+      // index 2 means offset = 200
+      expect(result.assignments[0].assigned_value).toBe(3200);
+      expect(result.assignments[1].assigned_value).toBe(3200);
     });
 
-    it('should handle port range exhaustion', () => {
+    it('should reuse gap indices when worktrees are deleted', () => {
       const config = makeDefaultConfig({
-        portRangeStart: 20000,
-        portRangeEnd: 20000,
         worktreeAssignments: {
-          'feature-a': {
-            worktreeName: 'feature-a',
-            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 20000 }],
+          // index 1 was deleted (gap)
+          'feature-b': {
+            worktreeName: 'feature-b',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3200 }],
+          },
+          'feature-c': {
+            worktreeName: 'feature-c',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3300 }],
           },
         },
       });
-      const ports: PortSource[] = [makePortSource({ variable_name: 'NEW_PORT', port_value: 8080 })];
+      const ports: PortSource[] = [makePortSource({ variable_name: 'PORT', port_value: 3000 })];
 
-      const result = portIsolationService.allocatePortsAvoidingUsed(ports, config);
-      expect(result).toHaveLength(0);
+      const result = portIsolationService.allocatePortsWithOffset(ports, config);
+
+      // Should reuse index 1 (the gap)
+      expect(result.worktreeIndex).toBe(1);
+      expect(result.assignments[0].assigned_value).toBe(3100);
+    });
+
+    it('should produce overflow warnings for ports exceeding 65535', () => {
+      const config = makeDefaultConfig();
+      const ports: PortSource[] = [
+        makePortSource({ variable_name: 'PORT', port_value: 3000 }),
+        makePortSource({ variable_name: 'HIGH_PORT', port_value: 65500 }),
+      ];
+
+      const result = portIsolationService.allocatePortsWithOffset(ports, config);
+
+      // PORT=3000 should be assigned (3100)
+      expect(result.assignments).toHaveLength(1);
+      expect(result.assignments[0].assigned_value).toBe(3100);
+      // HIGH_PORT=65500 should produce an overflow warning
+      expect(result.overflowWarnings).toHaveLength(1);
+      expect(result.overflowWarnings[0]).toContain('65500');
+      expect(result.overflowWarnings[0]).toContain('65535');
     });
 
     it('should handle mixed env and compose ports where compose appears first', () => {
@@ -363,12 +482,37 @@ describe('portIsolationService', () => {
         makePortSource({ variable_name: 'PORT', port_value: 3000 }),
       ];
 
-      const result = portIsolationService.allocatePortsAvoidingUsed(ports, config);
+      const result = portIsolationService.allocatePortsWithOffset(ports, config);
 
-      expect(result).toHaveLength(2);
+      expect(result.assignments).toHaveLength(2);
       // Both should get the same assigned_value regardless of order
-      expect(result[0].assigned_value).toBe(20000);
-      expect(result[1].assigned_value).toBe(20000);
+      expect(result.assignments[0].assigned_value).toBe(3100);
+      expect(result.assignments[1].assigned_value).toBe(3100);
+    });
+
+    it('should use higher index for 3rd worktree', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+          'feature-b': {
+            worktreeName: 'feature-b',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3200 }],
+          },
+        },
+      });
+      const ports: PortSource[] = [
+        makePortSource({ variable_name: 'PORT', port_value: 3000 }),
+        makePortSource({ variable_name: 'DB_PORT', port_value: 5473 }),
+      ];
+
+      const result = portIsolationService.allocatePortsWithOffset(ports, config);
+
+      expect(result.worktreeIndex).toBe(3);
+      expect(result.assignments[0].assigned_value).toBe(3300);
+      expect(result.assignments[1].assigned_value).toBe(5773);
     });
   });
 
