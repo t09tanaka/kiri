@@ -203,31 +203,34 @@ pub fn move_path(source: String, target_dir: String) -> Result<String, String> {
         return Err(format!("Target path is not a directory: {}", target_dir));
     }
 
+    // Canonicalize target directory once for both checks
+    let canon_target = target_dir_path
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve target path: {}", e))?;
+
     // Prevent moving to same directory (source's parent == target_dir)
     if let Some(parent) = source_path.parent() {
-        if let (Ok(canon_parent), Ok(canon_target)) =
-            (parent.canonicalize(), target_dir_path.canonicalize())
-        {
-            if canon_parent == canon_target {
-                return Err(format!(
-                    "Item is already in the target directory: {}",
-                    target_dir
-                ));
-            }
+        let canon_parent = parent
+            .canonicalize()
+            .map_err(|e| format!("Failed to resolve source parent path: {}", e))?;
+        if canon_parent == canon_target {
+            return Err(format!(
+                "Item is already in the target directory: {}",
+                source
+            ));
         }
     }
 
     // Prevent moving directory into its own descendant
     if source_path.is_dir() {
-        if let (Ok(canon_source), Ok(canon_target)) =
-            (source_path.canonicalize(), target_dir_path.canonicalize())
-        {
-            if canon_target.starts_with(&canon_source) {
-                return Err(format!(
-                    "Cannot move a directory into its own subdirectory: {} -> {}",
-                    source, target_dir
-                ));
-            }
+        let canon_source = source_path
+            .canonicalize()
+            .map_err(|e| format!("Failed to resolve source path: {}", e))?;
+        if canon_target.starts_with(&canon_source) {
+            return Err(format!(
+                "Cannot move a directory into its own subdirectory: {} -> {}",
+                source, target_dir
+            ));
         }
     }
 
@@ -249,7 +252,11 @@ pub fn move_path(source: String, target_dir: String) -> Result<String, String> {
     if source_path.is_dir() {
         std::fs::create_dir(&final_path)
             .map_err(|e| format!("Failed to create directory: {}", e))?;
-        copy_directory_contents(source_path, &final_path)?;
+        if let Err(e) = copy_directory_contents(source_path, &final_path) {
+            // Clean up partial copy
+            let _ = std::fs::remove_dir_all(&final_path);
+            return Err(e);
+        }
         std::fs::remove_dir_all(source_path)
             .map_err(|e| format!("Failed to remove source directory after copy: {}", e))?;
     } else {
