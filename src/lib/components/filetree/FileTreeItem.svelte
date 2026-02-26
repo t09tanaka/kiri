@@ -303,6 +303,24 @@
     }
   }
 
+  function handleInternalDragStart(event: MouseEvent) {
+    // Only left mouse button
+    if (event.button !== 0) return;
+    // Don't start drag on context menu or keyboard modifiers
+    if (event.ctrlKey || event.metaKey || event.shiftKey) return;
+
+    window.dispatchEvent(
+      new CustomEvent('filetree-mousedown', {
+        detail: {
+          path: entry.path,
+          isDir: entry.is_dir,
+          startX: event.clientX,
+          startY: event.clientY,
+        },
+      })
+    );
+  }
+
   // Refresh children when refreshKey changes and directory is expanded
   $effect(() => {
     if (refreshKey > 0 && expanded && entry.is_dir) {
@@ -321,6 +339,7 @@
 {#if !isDeleted}
   <div
     class="tree-item-container"
+    class:dragging-source={$isDragging && $draggedPaths.includes(entry.path)}
     role="treeitem"
     aria-selected={isSelected}
     tabindex={isSelected ? 0 : -1}
@@ -339,6 +358,7 @@
       onclick={isPending ? undefined : handleClick}
       onkeydown={isPending ? undefined : handleKeyDown}
       oncontextmenu={isPending ? undefined : handleContextMenu}
+      onmousedown={isPending ? undefined : handleInternalDragStart}
       title={isPending ? 'Copying...' : entry.path}
       disabled={isPending}
     >
@@ -488,6 +508,10 @@
 <style>
   .tree-item-container {
     width: 100%;
+  }
+
+  .tree-item-container.dragging-source {
+    opacity: 0.4;
   }
 
   .tree-item {

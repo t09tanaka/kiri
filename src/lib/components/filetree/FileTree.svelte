@@ -15,7 +15,7 @@
   } from '@/lib/stores/dragDropStore';
   import { toastStore } from '@/lib/stores/toastStore';
   import { Skeleton } from '@/lib/components/ui';
-  import { resolveDropTarget } from '@/lib/utils/dragDrop';
+  import { resolveDropTarget, getParentDirectory, isDescendantOf } from '@/lib/utils/dragDrop';
 
   interface Props {
     rootPath?: string;
@@ -52,6 +52,13 @@
   // with the actual element positions in the viewport.
   let dragYOffset = 0;
   let dragOffsetCalibrated = false;
+
+  // Internal drag state (mouse-based, for moving files within tree)
+  let internalDragSource: { path: string; isDir: boolean } | null = null;
+  let internalDragStartPos: { x: number; y: number } | null = null;
+  let isInternalDragging = false;
+  const DRAG_THRESHOLD = 5;
+  let ghostElement: HTMLDivElement | null = null;
 
   // Extract project name from rootPath
   const projectName = $derived(rootPath ? rootPath.split('/').pop() || rootPath : null);
@@ -314,6 +321,140 @@
     }
   }
 
+  // --- Internal drag-and-drop (mouse-based file move) ---
+
+  function handleInternalMouseDownEvent(event: Event) {
+    const customEvent = event as CustomEvent;
+    const { path, isDir, startX, startY } = customEvent.detail;
+    internalDragSource = { path, isDir };
+    internalDragStartPos = { x: startX, y: startY };
+    isInternalDragging = false;
+    document.addEventListener('mousemove', handleInternalMouseMove);
+    document.addEventListener('mouseup', handleInternalMouseUp);
+  }
+
+  function handleInternalMouseMove(event: MouseEvent) {
+    if (!internalDragSource || !internalDragStartPos) return;
+
+    const dx = event.clientX - internalDragStartPos.x;
+    const dy = event.clientY - internalDragStartPos.y;
+
+    if (!isInternalDragging) {
+      if (Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) return;
+      isInternalDragging = true;
+      dragDropStore.startDrag([internalDragSource.path]);
+      createGhostElement(internalDragSource.path);
+    }
+
+    updateGhostPosition(event.clientX, event.clientY);
+
+    // Resolve drop target using existing infrastructure
+    const element = document.elementFromPoint(event.clientX, event.clientY);
+    if (!element) {
+      dragDropStore.setDropTarget(null);
+      handleAutoExpandOnTargetChange(null);
+      updateGhostValidity(false);
+      return;
+    }
+
+    const treeItem = element.closest('[data-drop-path]') as HTMLElement | null;
+    if (!treeItem) {
+      dragDropStore.setDropTarget(null);
+      handleAutoExpandOnTargetChange(null);
+      updateGhostValidity(false);
+      return;
+    }
+
+    const path = treeItem.dataset.dropPath ?? null;
+    const isDir = treeItem.dataset.dropIsDir === 'true';
+    const targetDir = resolveDropTarget(path, isDir, rootPath);
+
+    const isValid = isValidMoveTarget(targetDir);
+    if (isValid) {
+      dragDropStore.setDropTarget(targetDir);
+      handleAutoExpandOnTargetChange(targetDir);
+    } else {
+      dragDropStore.setDropTarget(null);
+      handleAutoExpandOnTargetChange(null);
+    }
+    updateGhostValidity(isValid);
+  }
+
+  function isValidMoveTarget(targetDir: string | null): boolean {
+    if (!targetDir || !internalDragSource) return false;
+    const sourcePath = internalDragSource.path;
+    const sourceParent = getParentDirectory(sourcePath);
+    if (targetDir === sourceParent) return false;
+    if (internalDragSource.isDir && isDescendantOf(targetDir, sourcePath)) return false;
+    if (targetDir === sourcePath) return false;
+    return true;
+  }
+
+  function createGhostElement(sourcePath: string) {
+    const name = sourcePath.split('/').pop() || sourcePath;
+    ghostElement = document.createElement('div');
+    ghostElement.className = 'drag-ghost';
+    ghostElement.textContent = name;
+    document.body.appendChild(ghostElement);
+  }
+
+  function updateGhostPosition(x: number, y: number) {
+    if (!ghostElement) return;
+    ghostElement.style.left = `${x + 12}px`;
+    ghostElement.style.top = `${y - 10}px`;
+  }
+
+  function updateGhostValidity(valid: boolean) {
+    if (!ghostElement) return;
+    ghostElement.classList.toggle('invalid', !valid);
+  }
+
+  function removeGhostElement() {
+    if (ghostElement) {
+      ghostElement.remove();
+      ghostElement = null;
+    }
+  }
+
+  async function handleInternalMouseUp() {
+    document.removeEventListener('mousemove', handleInternalMouseMove);
+    document.removeEventListener('mouseup', handleInternalMouseUp);
+
+    if (!isInternalDragging || !internalDragSource) {
+      cleanupInternalDrag();
+      return;
+    }
+
+    const targetDir = $dropTargetPath;
+    const sourcePath = internalDragSource.path;
+
+    if (targetDir && isValidMoveTarget(targetDir)) {
+      try {
+        await dragDropService.moveToDirectory(sourcePath, targetDir);
+      } catch (e) {
+        toastStore.error(`Move failed: ${String(e)}`);
+      }
+    }
+
+    cleanupInternalDrag();
+  }
+
+  function cleanupInternalDrag() {
+    removeGhostElement();
+    dragDropStore.endDrag();
+    internalDragSource = null;
+    internalDragStartPos = null;
+    isInternalDragging = false;
+  }
+
+  function handleDragKeyDown(event: KeyboardEvent) {
+    if (event.key === 'Escape' && isInternalDragging) {
+      document.removeEventListener('mousemove', handleInternalMouseMove);
+      document.removeEventListener('mouseup', handleInternalMouseUp);
+      cleanupInternalDrag();
+    }
+  }
+
   async function setupDragDropListeners() {
     // Use window-scoped listeners to only handle drag events for THIS window
     unlistenDragEnter = await eventService.listenCurrentWindow<DragPayload>(
@@ -380,11 +521,15 @@
       setupWatcher(rootPath);
     }
     setupDragDropListeners();
+    window.addEventListener('filetree-mousedown', handleInternalMouseDownEvent);
+    window.addEventListener('keydown', handleDragKeyDown);
   });
 
   onDestroy(() => {
     cleanupWatcher();
     cleanupDragDropListeners();
+    window.removeEventListener('filetree-mousedown', handleInternalMouseDownEvent);
+    window.removeEventListener('keydown', handleDragKeyDown);
   });
 
   // Reload when rootPath changes
@@ -738,5 +883,25 @@
 
   .file-tree.drag-active::before {
     background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.15), transparent);
+  }
+
+  :global(.drag-ghost) {
+    position: fixed;
+    pointer-events: none;
+    z-index: 10000;
+    padding: 4px 8px;
+    background: var(--bg-tertiary, #1c2333);
+    border: 1px solid var(--border-glow, rgba(125, 211, 252, 0.3));
+    border-radius: 4px;
+    color: var(--text-primary, #e6edf3);
+    font-size: 12px;
+    font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+    white-space: nowrap;
+    opacity: 0.9;
+  }
+
+  :global(.drag-ghost.invalid) {
+    border-color: var(--text-error, #f87171);
+    opacity: 0.5;
   }
 </style>
