@@ -540,6 +540,54 @@ pub fn transform_generic_content(content: &str, assignments: &[PortAssignment]) 
     result
 }
 
+/// Transform docker-compose content, replacing only host-side ports in port mappings.
+/// Container-internal ports (right side of host:container) are preserved.
+pub fn transform_compose_content(content: &str, assignments: &[PortAssignment]) -> String {
+    let re = Regex::new(COMPOSE_PORT_PATTERN).unwrap();
+    // Extended pattern to also capture optional /protocol suffix
+    let re_full = Regex::new(r#"^(\s*-\s*["']?)(\d+):(\d+)(/\w+)?(["']?)(.*)$"#).unwrap();
+
+    let mut result_lines: Vec<String> = Vec::new();
+
+    for line in content.lines() {
+        // Check if this line is a port mapping
+        if re.is_match(line) {
+            if let Some(caps) = re_full.captures(line) {
+                let prefix = caps.get(1).map_or("", |m| m.as_str());
+                let host_port_str = caps.get(2).map_or("", |m| m.as_str());
+                let container_port = caps.get(3).map_or("", |m| m.as_str());
+                let protocol = caps.get(4).map_or("", |m| m.as_str());
+                let suffix_quote = caps.get(5).map_or("", |m| m.as_str());
+                let trailing = caps.get(6).map_or("", |m| m.as_str());
+
+                if let Ok(host_port) = host_port_str.parse::<u16>() {
+                    // Find matching assignment for this host port
+                    let new_host_port = assignments
+                        .iter()
+                        .find(|a| a.original_value == host_port)
+                        .map(|a| a.assigned_value)
+                        .unwrap_or(host_port);
+
+                    result_lines.push(format!(
+                        "{}{}:{}{}{}{}",
+                        prefix, new_host_port, container_port, protocol, suffix_quote, trailing
+                    ));
+                    continue;
+                }
+            }
+        }
+        // Non-port-mapping lines pass through unchanged
+        result_lines.push(line.to_string());
+    }
+
+    // Preserve trailing newline if original had one
+    let mut result = result_lines.join("\n");
+    if content.ends_with('\n') {
+        result.push('\n');
+    }
+    result
+}
+
 /// Check if a file is a docker-compose file
 pub fn is_compose_file(path: &Path) -> bool {
     path.file_name()
@@ -1830,5 +1878,124 @@ DATABASE_URL=postgres://user:pass@localhost:5432/mydb
         assert!(!is_compose_file(Path::new("package.json")));
         assert!(!is_compose_file(Path::new("Dockerfile")));
         assert!(!is_compose_file(Path::new("my-compose.yml")));
+    }
+
+    #[test]
+    fn test_transform_compose_content_host_only() {
+        let content = r#"services:
+  web:
+    ports:
+      - "3000:3000"
+      - "5432:5432"
+  db:
+    ports:
+      - "6379:6379"
+"#;
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "COMPOSE:3000".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            },
+            PortAssignment {
+                variable_name: "COMPOSE:5432".to_string(),
+                original_value: 5432,
+                assigned_value: 5532,
+            },
+        ];
+
+        let result = transform_compose_content(content, &assignments);
+
+        // Host port should be transformed, container port should be fixed
+        assert!(result.contains("3100:3000"), "Expected 3100:3000, got:\n{}", result);
+        assert!(result.contains("5532:5432"), "Expected 5532:5432, got:\n{}", result);
+        // Unmatched port mapping should remain unchanged
+        assert!(result.contains("6379:6379"));
+        // Non-port lines should be unchanged
+        assert!(result.contains("services:"));
+        assert!(result.contains("  web:"));
+    }
+
+    #[test]
+    fn test_transform_compose_content_unquoted_ports() {
+        let content = "services:\n  web:\n    ports:\n      - 8080:8080\n";
+
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:8080".to_string(),
+            original_value: 8080,
+            assigned_value: 8180,
+        }];
+
+        let result = transform_compose_content(content, &assignments);
+        assert!(result.contains("8180:8080"), "Expected 8180:8080, got:\n{}", result);
+    }
+
+    #[test]
+    fn test_transform_compose_content_single_quoted_ports() {
+        let content = "services:\n  web:\n    ports:\n      - '5432:5432'\n";
+
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:5432".to_string(),
+            original_value: 5432,
+            assigned_value: 5532,
+        }];
+
+        let result = transform_compose_content(content, &assignments);
+        assert!(result.contains("5532:5432"), "Expected 5532:5432, got:\n{}", result);
+    }
+
+    #[test]
+    fn test_transform_compose_content_with_protocol() {
+        let content = "services:\n  web:\n    ports:\n      - \"5432:5432/tcp\"\n";
+
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:5432".to_string(),
+            original_value: 5432,
+            assigned_value: 5532,
+        }];
+
+        let result = transform_compose_content(content, &assignments);
+        assert!(result.contains("5532:5432/tcp"), "Expected 5532:5432/tcp, got:\n{}", result);
+    }
+
+    #[test]
+    fn test_transform_compose_content_no_matching_assignment() {
+        let content = "services:\n  web:\n    ports:\n      - \"9999:9999\"\n";
+
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:3000".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = transform_compose_content(content, &assignments);
+        // No matching assignment, so port mapping should remain unchanged
+        assert!(result.contains("9999:9999"));
+    }
+
+    #[test]
+    fn test_transform_compose_content_preserves_comments() {
+        let content = r#"services:
+  web:
+    ports:
+      # Main web port
+      - "3000:3000"
+      # Database port
+      - "5432:5432"
+"#;
+
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:3000".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = transform_compose_content(content, &assignments);
+        assert!(result.contains("# Main web port"));
+        assert!(result.contains("# Database port"));
+        assert!(result.contains("3100:3000"));
+        // 5432 has no assignment, should stay unchanged
+        assert!(result.contains("5432:5432"));
     }
 }
