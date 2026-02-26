@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
   import { fileService } from '@/lib/services/fileService';
   import type { FileEntry } from './types';
   import {
@@ -9,7 +10,12 @@
   } from '@/lib/stores/gitStore';
   import { getFileIconInfo, getFolderColor } from '@/lib/utils/fileIcons';
   import ContextMenu, { type MenuItem } from '@/lib/components/ui/ContextMenu.svelte';
-  import { dragDropStore, isDragging, dropTargetPath } from '@/lib/stores/dragDropStore';
+  import {
+    dragDropStore,
+    isDragging,
+    dropTargetPath,
+    draggedPaths,
+  } from '@/lib/stores/dragDropStore';
   import FileTreeItem from './FileTreeItem.svelte';
 
   interface Props {
@@ -89,6 +95,68 @@
 
   // Drop target detection
   const isDropTarget = $derived($isDragging && entry.is_dir && $dropTargetPath === entry.path);
+
+  // True when this file's parent directory is the current drop target
+  const isDropTargetChild = $derived(
+    $isDragging &&
+      !entry.is_dir &&
+      $dropTargetPath !== null &&
+      entry.path.startsWith($dropTargetPath + '/') &&
+      !entry.path.slice($dropTargetPath.length + 1).includes('/')
+  );
+
+  // Preview entries for this directory during drag
+  const previewEntries = $derived.by(() => {
+    if (!$isDragging || !entry.is_dir || $dropTargetPath !== entry.path) return [];
+    if (!expanded) return [];
+
+    return $draggedPaths.map((sourcePath) => {
+      const name = sourcePath.split('/').pop() || sourcePath;
+      return {
+        name,
+        path: `${entry.path}/${name}`,
+        is_dir: false,
+        is_hidden: name.startsWith('.'),
+        is_gitignored: false,
+        is_pending: true,
+      } satisfies FileEntry;
+    });
+  });
+
+  function sortEntries(items: FileEntry[]): FileEntry[] {
+    return [...items].sort((a, b) => {
+      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    });
+  }
+
+  const displayChildren = $derived.by(() => {
+    if (previewEntries.length === 0) return children;
+    const previewPaths = new Set(previewEntries.map((e) => e.path));
+    const filtered = children.filter((e) => !previewPaths.has(e.path));
+    return sortEntries([...filtered, ...previewEntries]);
+  });
+
+  // Auto-expand listener for drag hover
+  let autoExpandHandler: ((e: Event) => void) | null = null;
+
+  onMount(() => {
+    if (entry.is_dir) {
+      autoExpandHandler = (e: Event) => {
+        const detail = (e as CustomEvent).detail;
+        if (detail.path === entry.path && !expanded) {
+          toggleExpand();
+        }
+      };
+      window.addEventListener('drag-auto-expand', autoExpandHandler);
+    }
+  });
+
+  onDestroy(() => {
+    if (autoExpandHandler) {
+      window.removeEventListener('drag-auto-expand', autoExpandHandler);
+    }
+  });
 
   async function toggleExpand() {
     if (!entry.is_dir) return;
@@ -292,6 +360,7 @@
       class:gitignored={entry.is_gitignored}
       class:directory={entry.is_dir}
       class:drop-target={isDropTarget}
+      class:drop-target-child={isDropTargetChild}
       class:pending={isPending}
       style="padding-left: {paddingLeft}px"
       onclick={isPending ? undefined : handleClick}
@@ -396,7 +465,7 @@
             />
           </div>
         {/if}
-        {#each children as child, index (child.path)}
+        {#each displayChildren as child, index (child.path)}
           <div class="child-wrapper" style="--child-index: {index}">
             <FileTreeItem
               entry={child}
@@ -818,5 +887,15 @@
 
   .new-folder-input::placeholder {
     color: var(--text-muted);
+  }
+
+  /* Drop target child (file whose parent is the drop target) */
+  .tree-item.drop-target-child {
+    background: rgba(125, 211, 252, 0.04);
+  }
+
+  .tree-item.drop-target-child .name {
+    color: var(--accent-color);
+    opacity: 0.7;
   }
 </style>
