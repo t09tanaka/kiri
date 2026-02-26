@@ -45,8 +45,13 @@
   let dragOverThrottleTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingDragPosition: { x: number; y: number } | null = null;
   let lastDragOverTarget: string | null = null;
-  // Offset from window origin to webview content (title bar height) in physical pixels
-  let windowContentOffset = { x: 0, y: 0 };
+  // Y offset to correct Tauri drag coordinates to viewport coordinates.
+  // On macOS, drag event positions include the title bar area even though
+  // Tauri APIs report innerPosition == outerPosition (fullSizeContentView).
+  // We calibrate this on the first drag event by comparing the Tauri position
+  // with the actual element positions in the viewport.
+  let dragYOffset = 0;
+  let dragOffsetCalibrated = false;
 
   // Extract project name from rootPath
   const projectName = $derived(rootPath ? rootPath.split('/').pop() || rootPath : null);
@@ -213,12 +218,46 @@
     }
   }
 
+  /**
+   * Calibrate the Y offset between Tauri drag coordinates and viewport coordinates.
+   * On macOS with fullSizeContentView, Tauri drag positions include the title bar
+   * height (~28px) that the standard APIs don't report. We detect this by finding
+   * the closest tree item to the reported position and measuring the discrepancy.
+   */
+  function calibrateDragOffset(position: { x: number; y: number }) {
+    // Find the element at the raw position
+    const rawElement = document.elementFromPoint(position.x, position.y);
+    if (!rawElement) return;
+
+    const rawItem = rawElement.closest('[data-drop-path]') as HTMLElement | null;
+    if (!rawItem) return;
+
+    // Get the center Y of this element
+    const rect = rawItem.getBoundingClientRect();
+    const centerY = rect.top + rect.height / 2;
+
+    // The offset is how much we need to shift to align with the element center
+    // If position.y is above the center, the offset is negative (shift up)
+    // We use the difference between the raw position and where it "should" be
+    // to hit the nearest element's center
+    const diff = position.y - centerY;
+
+    // Only calibrate if the offset is reasonable (0-60px range, typical title bar)
+    if (diff >= 0 && diff <= 60) {
+      dragYOffset = diff;
+      dragOffsetCalibrated = true;
+    }
+  }
+
   function processDragOver(position: { x: number; y: number }) {
-    // Convert Tauri window coordinates (physical pixels, including title bar)
-    // to viewport coordinates (CSS pixels, relative to webview content area)
-    const scale = window.devicePixelRatio || 1;
-    const viewportX = (position.x - windowContentOffset.x) / scale;
-    const viewportY = (position.y - windowContentOffset.y) / scale;
+    // Calibrate offset on the first usable drag event
+    if (!dragOffsetCalibrated) {
+      calibrateDragOffset(position);
+    }
+
+    // Apply the calibrated offset to correct for title bar / coordinate mismatch
+    const viewportX = position.x;
+    const viewportY = position.y - dragYOffset;
     const element = document.elementFromPoint(viewportX, viewportY);
     if (!element) {
       dragDropStore.setDropTarget(null);
@@ -276,13 +315,6 @@
   }
 
   async function setupDragDropListeners() {
-    // Cache window content offset (title bar height) for coordinate conversion
-    try {
-      windowContentOffset = await eventService.getWindowContentOffset();
-    } catch {
-      windowContentOffset = { x: 0, y: 0 };
-    }
-
     // Use window-scoped listeners to only handle drag events for THIS window
     unlistenDragEnter = await eventService.listenCurrentWindow<DragPayload>(
       'tauri://drag-enter',
@@ -337,6 +369,8 @@
     }
     pendingDragPosition = null;
     lastDragOverTarget = null;
+    dragYOffset = 0;
+    dragOffsetCalibrated = false;
     dragDropStore.endDrag();
   }
 

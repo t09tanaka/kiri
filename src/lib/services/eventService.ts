@@ -22,17 +22,6 @@ export const eventService = {
    * Emit a Tauri event
    */
   emit: <T>(event: string, payload: T): Promise<void> => emit(event, payload),
-
-  /**
-   * Get the offset from window origin to webview content origin (in physical pixels).
-   * Accounts for the title bar and any window chrome.
-   */
-  getWindowContentOffset: async (): Promise<{ x: number; y: number }> => {
-    const win = getCurrentWindow();
-    const inner = await win.innerPosition();
-    const outer = await win.outerPosition();
-    return { x: inner.x - outer.x, y: inner.y - outer.y };
-  },
 };
 
 // Re-export types for convenience
