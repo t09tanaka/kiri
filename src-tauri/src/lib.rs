@@ -3,7 +3,7 @@ mod commands;
 use commands::{
     allocate_worktree_ports, apply_compose_isolation, clear_performance_timings, close_terminal,
     get_foreground_process_name, get_terminal_cwd, get_terminal_process_info,
-    copy_files_to_worktree, copy_files_with_ports, copy_paths_to_directory, create_directory,
+    copy_files_to_worktree, copy_files_with_ports, copy_paths_to_directory, create_directory, move_path,
     create_terminal, create_window, create_worktree, delete_path, detect_compose_files,
     detect_package_manager, detect_package_managers, detect_ports, fetch_remote,
     focus_or_create_window, get_all_git_diffs, get_behind_ahead_count, get_branch_ahead_count,
@@ -88,6 +88,7 @@ pub fn run() {
             clear_performance_timings,
             // Drag and drop
             copy_paths_to_directory,
+            move_path,
             // Port isolation
             detect_ports,
             allocate_worktree_ports,

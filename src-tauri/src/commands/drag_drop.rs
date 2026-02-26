@@ -183,6 +183,85 @@ pub fn copy_paths_to_directory(
     })
 }
 
+/// Move a file or directory to a target directory.
+/// Tries fs::rename first (fast, same filesystem), falls back to copy + delete.
+#[tauri::command]
+pub fn move_path(source: String, target_dir: String) -> Result<String, String> {
+    let source_path = Path::new(&source);
+    let target_dir_path = Path::new(&target_dir);
+
+    // Validate source exists
+    if !source_path.exists() {
+        return Err(format!("Source path does not exist: {}", source));
+    }
+
+    // Validate target_dir exists and is a directory
+    if !target_dir_path.exists() {
+        return Err(format!("Target directory does not exist: {}", target_dir));
+    }
+    if !target_dir_path.is_dir() {
+        return Err(format!("Target path is not a directory: {}", target_dir));
+    }
+
+    // Prevent moving to same directory (source's parent == target_dir)
+    if let Some(parent) = source_path.parent() {
+        if let (Ok(canon_parent), Ok(canon_target)) =
+            (parent.canonicalize(), target_dir_path.canonicalize())
+        {
+            if canon_parent == canon_target {
+                return Err(format!(
+                    "Item is already in the target directory: {}",
+                    target_dir
+                ));
+            }
+        }
+    }
+
+    // Prevent moving directory into its own descendant
+    if source_path.is_dir() {
+        if let (Ok(canon_source), Ok(canon_target)) =
+            (source_path.canonicalize(), target_dir_path.canonicalize())
+        {
+            if canon_target.starts_with(&canon_source) {
+                return Err(format!(
+                    "Cannot move a directory into its own subdirectory: {} -> {}",
+                    source, target_dir
+                ));
+            }
+        }
+    }
+
+    // Determine the final name, handling conflicts
+    let file_name = source_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "Invalid source file name".to_string())?;
+
+    let unique_name = generate_unique_name(file_name, target_dir_path);
+    let final_path = target_dir_path.join(&unique_name);
+
+    // Try fs::rename first (fast, same filesystem)
+    if std::fs::rename(source_path, &final_path).is_ok() {
+        return Ok(final_path.to_string_lossy().to_string());
+    }
+
+    // Fall back to copy + delete for cross-device moves
+    if source_path.is_dir() {
+        std::fs::create_dir(&final_path)
+            .map_err(|e| format!("Failed to create directory: {}", e))?;
+        copy_directory_contents(source_path, &final_path)?;
+        std::fs::remove_dir_all(source_path)
+            .map_err(|e| format!("Failed to remove source directory after copy: {}", e))?;
+    } else {
+        std::fs::copy(source_path, &final_path)
+            .map_err(|e| format!("Failed to copy file: {}", e))?;
+        std::fs::remove_file(source_path)
+            .map_err(|e| format!("Failed to remove source file after copy: {}", e))?;
+    }
+
+    Ok(final_path.to_string_lossy().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,5 +559,146 @@ mod tests {
         assert!(result.is_ok());
         assert!(target_dir.path().join("mydir").exists());
         assert!(target_dir.path().join("mydir").join("file.txt").exists());
+    }
+
+    #[test]
+    fn test_move_path_file() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let source_file = source_dir.path().join("test.txt");
+        fs::write(&source_file, "hello world").unwrap();
+
+        let result = move_path(
+            source_file.to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_ok());
+        let final_path = result.unwrap();
+        assert!(Path::new(&final_path).exists());
+        assert!(!source_file.exists(), "Source file should be removed after move");
+        assert_eq!(
+            fs::read_to_string(&final_path).unwrap(),
+            "hello world"
+        );
+    }
+
+    #[test]
+    fn test_move_path_directory() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let subdir = source_dir.path().join("mydir");
+        fs::create_dir(&subdir).unwrap();
+        fs::write(subdir.join("file.txt"), "content").unwrap();
+        fs::create_dir(subdir.join("nested")).unwrap();
+        fs::write(subdir.join("nested").join("deep.txt"), "deep").unwrap();
+
+        let result = move_path(
+            subdir.to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_ok());
+        let final_path = result.unwrap();
+        assert!(Path::new(&final_path).exists());
+        assert!(!subdir.exists(), "Source directory should be removed after move");
+        assert!(Path::new(&final_path).join("file.txt").exists());
+        assert!(Path::new(&final_path).join("nested").join("deep.txt").exists());
+    }
+
+    #[test]
+    fn test_move_path_name_conflict() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let source_file = source_dir.path().join("test.txt");
+        fs::write(&source_file, "source content").unwrap();
+        fs::write(target_dir.path().join("test.txt"), "existing content").unwrap();
+
+        let result = move_path(
+            source_file.to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_ok());
+        let final_path = result.unwrap();
+        assert!(final_path.contains("test (1).txt"));
+        assert!(!source_file.exists(), "Source file should be removed after move");
+        // Original should not be overwritten
+        assert_eq!(
+            fs::read_to_string(target_dir.path().join("test.txt")).unwrap(),
+            "existing content"
+        );
+        assert_eq!(
+            fs::read_to_string(&final_path).unwrap(),
+            "source content"
+        );
+    }
+
+    #[test]
+    fn test_move_path_into_descendant_rejected() {
+        let dir = tempdir().unwrap();
+
+        let parent = dir.path().join("parent");
+        let child = parent.join("child");
+        fs::create_dir_all(&child).unwrap();
+
+        let result = move_path(
+            parent.to_string_lossy().to_string(),
+            child.to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Cannot move"), "Error should mention 'Cannot move', got: {}", err);
+    }
+
+    #[test]
+    fn test_move_path_to_same_directory_rejected() {
+        let dir = tempdir().unwrap();
+
+        let source_file = dir.path().join("test.txt");
+        fs::write(&source_file, "content").unwrap();
+
+        let result = move_path(
+            source_file.to_string_lossy().to_string(),
+            dir.path().to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("already in"), "Error should mention 'already in', got: {}", err);
+    }
+
+    #[test]
+    fn test_move_path_nonexistent_source() {
+        let target_dir = tempdir().unwrap();
+
+        let result = move_path(
+            "/nonexistent/path/file.txt".to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("does not exist"), "Error should mention 'does not exist', got: {}", err);
+    }
+
+    #[test]
+    fn test_move_path_nonexistent_target() {
+        let source_dir = tempdir().unwrap();
+        let source_file = source_dir.path().join("test.txt");
+        fs::write(&source_file, "content").unwrap();
+
+        let result = move_path(
+            source_file.to_string_lossy().to_string(),
+            "/nonexistent/target/directory".to_string(),
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("does not exist"), "Error should mention 'does not exist', got: {}", err);
     }
 }
