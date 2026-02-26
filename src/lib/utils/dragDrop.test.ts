@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getParentDirectory } from './dragDrop';
+import { getParentDirectory, resolveDropTarget } from './dragDrop';
 
 describe('getParentDirectory', () => {
   it('should return parent directory for a file path', () => {
@@ -22,5 +22,27 @@ describe('getParentDirectory', () => {
 
   it('should handle trailing slashes', () => {
     expect(getParentDirectory('/project/src/')).toBe('/project');
+  });
+});
+
+describe('resolveDropTarget', () => {
+  it('should return directory path when hovering over a directory', () => {
+    expect(resolveDropTarget('/project/src', true, '/project')).toBe('/project/src');
+  });
+
+  it('should return parent directory when hovering over a file', () => {
+    expect(resolveDropTarget('/project/src/app.ts', false, '/project')).toBe('/project/src');
+  });
+
+  it('should return rootPath when hovering over a root-level file', () => {
+    expect(resolveDropTarget('/project/README.md', false, '/project')).toBe('/project');
+  });
+
+  it('should return null when path is null (no element found)', () => {
+    expect(resolveDropTarget(null, false, '/project')).toBe(null);
+  });
+
+  it('should clamp to rootPath when parent is above rootPath', () => {
+    expect(resolveDropTarget('/other/file.txt', false, '/project')).toBe('/project');
   });
 });
