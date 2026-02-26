@@ -37,6 +37,13 @@ export const fileService = {
   deletePath: (path: string): Promise<void> => invoke('delete_path', { path }),
 
   /**
+   * Move file or directory to target directory
+   * @returns Final path of the moved item
+   */
+  movePath: (source: string, targetDir: string): Promise<string> =>
+    invoke('move_path', { source, targetDir }),
+
+  /**
    * Create directory (supports nested paths like "test/opt")
    * @param parentPath - Parent directory path
    * @param name - New directory name (can include slashes for nested creation)

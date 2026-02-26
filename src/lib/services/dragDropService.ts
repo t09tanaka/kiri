@@ -24,4 +24,14 @@ export const dragDropService = {
       sourcePaths,
       targetDir,
     }),
+
+  /**
+   * Move a file/directory to a target directory
+   * @returns Final path of the moved item
+   */
+  moveToDirectory: (sourcePath: string, targetDir: string): Promise<string> =>
+    invoke('move_path', {
+      source: sourcePath,
+      targetDir,
+    }),
 };
