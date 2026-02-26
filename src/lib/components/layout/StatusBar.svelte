@@ -477,7 +477,7 @@
     font-weight: 500;
     color: var(--text-secondary);
     position: relative;
-    top: 2px;
+    top: 0px;
   }
 
   .shortcut-key {
