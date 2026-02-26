@@ -283,6 +283,8 @@
     tabindex={isSelected ? 0 : -1}
     onmouseenter={handleDragMouseEnter}
     onmouseleave={handleDragMouseLeave}
+    data-drop-path={entry.path}
+    data-drop-is-dir={entry.is_dir}
   >
     <button
       class="tree-item"
