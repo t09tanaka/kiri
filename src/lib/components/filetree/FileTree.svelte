@@ -15,6 +15,7 @@
   } from '@/lib/stores/dragDropStore';
   import { toastStore } from '@/lib/stores/toastStore';
   import { Skeleton } from '@/lib/components/ui';
+  import { resolveDropTarget } from '@/lib/utils/dragDrop';
 
   interface Props {
     rootPath?: string;
@@ -40,6 +41,9 @@
   let unlistenDragEnter: UnlistenFn | null = null;
   let unlistenDragDrop: UnlistenFn | null = null;
   let unlistenDragLeave: UnlistenFn | null = null;
+  let unlistenDragOver: UnlistenFn | null = null;
+  let dragOverThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastDragOverTarget: string | null = null;
 
   // Extract project name from rootPath
   const projectName = $derived(rootPath ? rootPath.split('/').pop() || rootPath : null);
@@ -206,6 +210,52 @@
     }
   }
 
+  function handleDragOver(position: { x: number; y: number }) {
+    // Throttle to ~60fps
+    if (dragOverThrottleTimer) return;
+    dragOverThrottleTimer = setTimeout(() => {
+      dragOverThrottleTimer = null;
+    }, 16);
+
+    const element = document.elementFromPoint(position.x, position.y);
+    if (!element) {
+      dragDropStore.setDropTarget(null);
+      handleAutoExpandOnTargetChange(null);
+      return;
+    }
+
+    const treeItem = element.closest('[data-drop-path]') as HTMLElement | null;
+    if (!treeItem) {
+      dragDropStore.setDropTarget(null);
+      handleAutoExpandOnTargetChange(null);
+      return;
+    }
+
+    const path = treeItem.dataset.dropPath ?? null;
+    const isDir = treeItem.dataset.dropIsDir === 'true';
+    const targetDir = resolveDropTarget(path, isDir, rootPath);
+
+    dragDropStore.setDropTarget(targetDir);
+    handleAutoExpandOnTargetChange(targetDir);
+  }
+
+  function handleAutoExpandOnTargetChange(targetDir: string | null) {
+    if (targetDir === lastDragOverTarget) return;
+
+    // Clear timer for previous target
+    if (lastDragOverTarget) {
+      dragDropStore.clearHoverTimer(lastDragOverTarget);
+    }
+    lastDragOverTarget = targetDir;
+
+    // Start timer for new target directory (not root - root is always "expanded")
+    if (targetDir && targetDir !== rootPath) {
+      dragDropStore.startHoverTimer(targetDir, () => {
+        window.dispatchEvent(new CustomEvent('drag-auto-expand', { detail: { path: targetDir } }));
+      });
+    }
+  }
+
   async function setupDragDropListeners() {
     // Use window-scoped listeners to only handle drag events for THIS window
     unlistenDragEnter = await eventService.listenCurrentWindow<DragPayload>(
@@ -229,6 +279,13 @@
     unlistenDragLeave = await eventService.listenCurrentWindow('tauri://drag-leave', () => {
       dragDropStore.endDrag();
     });
+
+    unlistenDragOver = await eventService.listenCurrentWindow<DragPayload>(
+      'tauri://drag-over',
+      (event) => {
+        handleDragOver(event.payload.position);
+      }
+    );
   }
 
   function cleanupDragDropListeners() {
@@ -244,6 +301,15 @@
       unlistenDragLeave();
       unlistenDragLeave = null;
     }
+    if (unlistenDragOver) {
+      unlistenDragOver();
+      unlistenDragOver = null;
+    }
+    if (dragOverThrottleTimer) {
+      clearTimeout(dragOverThrottleTimer);
+      dragOverThrottleTimer = null;
+    }
+    lastDragOverTarget = null;
     dragDropStore.endDrag();
   }
 
