@@ -588,6 +588,14 @@ pub fn transform_compose_content(content: &str, assignments: &[PortAssignment]) 
     result
 }
 
+/// Check if a file is an .env file
+pub fn is_env_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.starts_with(".env"))
+        .unwrap_or(false)
+}
+
 /// Check if a file is a docker-compose file
 pub fn is_compose_file(path: &Path) -> bool {
     path.file_name()
@@ -623,15 +631,8 @@ pub fn copy_files_with_port_transformation(
     let mut transformed_files = Vec::new();
     let mut errors = Vec::new();
 
-    // Helper to check if file is an .env file
-    fn is_env_file(path: &Path) -> bool {
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .map(|n| n.starts_with(".env"))
-            .unwrap_or(false)
-    }
-
     // Helper to copy a single file with optional transformation
+    #[allow(clippy::too_many_arguments)]
     fn copy_file_with_transform(
         path: &Path,
         source: &Path,
@@ -663,6 +664,8 @@ pub fn copy_files_with_port_transformation(
                     Ok(content) => {
                         let transformed = if is_env_file(&target_file) {
                             transform_env_content(&content, assignments).content
+                        } else if is_compose_file(&target_file) {
+                            transform_compose_content(&content, assignments)
                         } else {
                             transform_generic_content(&content, assignments)
                         };
@@ -717,6 +720,9 @@ pub fn copy_files_with_port_transformation(
                     let transformed = if is_env_file(path) {
                         // Use specialized .env transformation (preserves variable names)
                         transform_env_content(&content, assignments).content
+                    } else if is_compose_file(path) {
+                        // Use compose-specific transformation (host-side only)
+                        transform_compose_content(&content, assignments)
                     } else {
                         // Use generic port number replacement
                         transform_generic_content(&content, assignments)
@@ -755,6 +761,7 @@ pub fn copy_files_with_port_transformation(
     }
 
     // Helper to recursively copy directory
+    #[allow(clippy::too_many_arguments)]
     fn copy_directory_recursive(
         dir: &Path,
         source: &Path,
@@ -1204,7 +1211,8 @@ API_URL=http://localhost:8080
 
         let result = transform_generic_content(content, &assignments);
 
-        // Both host and container port should be replaced
+        // Generic transform replaces all occurrences (used for non-compose files)
+        // For compose files, transform_compose_content is used instead (host-only)
         assert!(result.contains("20000:20000"));
         assert!(result.contains("20001:20001"));
         // Unchanged ports should remain
@@ -1640,8 +1648,9 @@ DATABASE_URL=postgres://user:pass@localhost:5432/mydb
 
         // Verify docker-compose.yml was transformed with new ports
         let transformed = fs::read_to_string(target_dir.path().join("docker-compose.yml")).unwrap();
-        assert!(transformed.contains("3100:3100"), "Expected 3100:3100, got: {}", transformed);
-        assert!(transformed.contains("5532:5532"), "Expected 5532:5532, got: {}", transformed);
+        // Now uses compose-specific transform: only host ports change
+        assert!(transformed.contains("3100:3000"), "Expected 3100:3000, got: {}", transformed);
+        assert!(transformed.contains("5532:5432"), "Expected 5532:5432, got: {}", transformed);
     }
 
     #[test]
@@ -1997,5 +2006,94 @@ DATABASE_URL=postgres://user:pass@localhost:5432/mydb
         assert!(result.contains("3100:3000"));
         // 5432 has no assignment, should stay unchanged
         assert!(result.contains("5432:5432"));
+    }
+
+    #[test]
+    fn test_copy_files_with_port_transformation_compose_host_only() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create source docker-compose.yml
+        fs::write(
+            source_dir.path().join("docker-compose.yml"),
+            "services:\n  db:\n    ports:\n      - \"5432:5432\"\n      - \"3000:3000\"\n",
+        )
+        .unwrap();
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "COMPOSE:5432".to_string(),
+                original_value: 5432,
+                assigned_value: 5532,
+            },
+            PortAssignment {
+                variable_name: "COMPOSE:3000".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            },
+        ];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["docker-compose.yml".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 1);
+        assert!(result.errors.is_empty());
+
+        // Verify host ports are transformed but container ports are fixed
+        let content = fs::read_to_string(target_dir.path().join("docker-compose.yml")).unwrap();
+        assert!(content.contains("5532:5432"), "Expected 5532:5432, got:\n{}", content);
+        assert!(content.contains("3100:3000"), "Expected 3100:3000, got:\n{}", content);
+    }
+
+    #[test]
+    fn test_copy_files_compose_in_place_transform() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let compose_content = "services:\n  db:\n    ports:\n      - \"5432:5432\"\n";
+
+        // Create file in both source and target (simulates git-tracked file in worktree)
+        fs::write(source_dir.path().join("docker-compose.yml"), compose_content).unwrap();
+        fs::write(target_dir.path().join("docker-compose.yml"), compose_content).unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:5432".to_string(),
+            original_value: 5432,
+            assigned_value: 5532,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["docker-compose.yml".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        // Should be transformed in-place (file already existed)
+        assert_eq!(result.transformed_files.len(), 1);
+        assert!(result.errors.is_empty());
+
+        let content = fs::read_to_string(target_dir.path().join("docker-compose.yml")).unwrap();
+        assert!(content.contains("5532:5432"), "Expected 5532:5432, got:\n{}", content);
+    }
+
+    #[test]
+    fn test_transform_compose_content_asymmetric_ports() {
+        let content = "services:\n  web:\n    ports:\n      - \"8080:3000\"\n";
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:8080".to_string(),
+            original_value: 8080,
+            assigned_value: 8180,
+        }];
+        let result = transform_compose_content(content, &assignments);
+        // Only host port changes; container port stays as 3000
+        assert!(result.contains("8180:3000"), "Expected 8180:3000, got:\n{}", result);
+        assert!(!result.contains("8180:3100"), "Container port should not change");
     }
 }
