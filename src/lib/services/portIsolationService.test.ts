@@ -18,7 +18,7 @@ function makePortSource(overrides: Partial<PortSource> = {}): PortSource {
 }
 
 function makeEmptyDetected(): DetectedPorts {
-  return { env_ports: [], dockerfile_ports: [], compose_ports: [] };
+  return { env_ports: [], dockerfile_ports: [], compose_ports: [], script_ports: [] };
 }
 
 function makeDefaultConfig(overrides: Partial<PortConfig> = {}): PortConfig {
@@ -154,11 +154,11 @@ describe('portIsolationService', () => {
 
     it('should not include dockerfile ports', () => {
       const detected: DetectedPorts = {
+        ...makeEmptyDetected(),
         env_ports: [makePortSource({ variable_name: 'PORT', port_value: 3000 })],
         dockerfile_ports: [
           makePortSource({ variable_name: 'EXPOSE', port_value: 3000, file_path: 'Dockerfile' }),
         ],
-        compose_ports: [],
       };
       const result = portIsolationService.getAllUniquePorts(detected);
       expect(result).toHaveLength(1);

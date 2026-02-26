@@ -359,7 +359,11 @@
    */
   function isPortTransformable(variableName: string): boolean {
     if (!detectedPorts || !portConfig) return true;
-    const allSources = [...detectedPorts.env_ports, ...detectedPorts.compose_ports];
+    const allSources = [
+      ...detectedPorts.env_ports,
+      ...detectedPorts.compose_ports,
+      ...detectedPorts.script_ports,
+    ];
     return portIsolationService.isPortTransformable(
       variableName,
       allSources,
@@ -409,7 +413,11 @@
 
   function getPortSourceFiles(variableName: string): string[] {
     if (!detectedPorts) return [];
-    const allPorts = [...detectedPorts.env_ports, ...detectedPorts.compose_ports];
+    const allPorts = [
+      ...detectedPorts.env_ports,
+      ...detectedPorts.compose_ports,
+      ...detectedPorts.script_ports,
+    ];
     const prefix = projectPath.endsWith('/') ? projectPath : `${projectPath}/`;
     return allPorts
       .filter((p) => p.variable_name === variableName)

@@ -17,6 +17,7 @@ export interface DetectedPorts {
   env_ports: PortSource[];
   dockerfile_ports: PortSource[];
   compose_ports: PortSource[];
+  script_ports: PortSource[];
 }
 
 export interface PortAssignment {
@@ -47,6 +48,7 @@ export const DEFAULT_TARGET_FILES = [
   '**/docker-compose.*.yaml',
   '**/compose.yml',
   '**/compose.yaml',
+  '**/package.json',
 ];
 
 /**
@@ -139,12 +141,26 @@ export const portIsolationService = {
   },
 
   /**
-   * Get all unique ports from both env and compose sources
+   * Get all unique script ports (deduplicated by variable name)
+   */
+  getUniqueScriptPorts: (detected: DetectedPorts): PortSource[] => {
+    const seen = new Map<string, PortSource>();
+    for (const port of detected.script_ports) {
+      if (!seen.has(port.variable_name)) {
+        seen.set(port.variable_name, port);
+      }
+    }
+    return Array.from(seen.values());
+  },
+
+  /**
+   * Get all unique ports from env, compose, and script sources
    */
   getAllUniquePorts: (detected: DetectedPorts): PortSource[] => {
     return [
       ...portIsolationService.getUniqueEnvPorts(detected),
       ...portIsolationService.getUniqueComposePorts(detected),
+      ...portIsolationService.getUniqueScriptPorts(detected),
     ];
   },
 
@@ -153,6 +169,13 @@ export const portIsolationService = {
    */
   isComposePort: (variableName: string): boolean => {
     return variableName.startsWith('COMPOSE:');
+  },
+
+  /**
+   * Check if a variable name represents a script port (has "SCRIPT:" prefix)
+   */
+  isScriptPort: (variableName: string): boolean => {
+    return variableName.startsWith('SCRIPT:');
   },
 
   /**
@@ -187,7 +210,8 @@ export const portIsolationService = {
     return (
       detected.env_ports.length > 0 ||
       detected.dockerfile_ports.length > 0 ||
-      detected.compose_ports.length > 0
+      detected.compose_ports.length > 0 ||
+      detected.script_ports.length > 0
     );
   },
 

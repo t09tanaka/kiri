@@ -11,6 +11,8 @@ const ENV_PORT_PATTERN: &str = r"^([A-Z_]*PORT[A-Z_]*)=(\d+)";
 const ENV_URL_PORT_PATTERN: &str = r"^([A-Z][A-Z0-9_]*_URL)=\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:(\d+)";
 const DOCKERFILE_EXPOSE_PATTERN: &str = r"^EXPOSE\s+(\d+)";
 const COMPOSE_PORT_PATTERN: &str = r#"^\s*-\s*["']?(\d+):(\d+)["']?"#;
+// Pattern for port flags in package.json scripts: -p PORT, --port PORT, --port=PORT
+const SCRIPT_PORT_PATTERN: &str = r"(?:--port[= ]|-p )(\d+)";
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +35,7 @@ pub struct DetectedPorts {
     pub env_ports: Vec<PortSource>,
     pub dockerfile_ports: Vec<PortSource>,
     pub compose_ports: Vec<PortSource>,
+    pub script_ports: Vec<PortSource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +161,52 @@ pub fn detect_ports_in_compose(content: &str, file_path: &str) -> Vec<PortSource
     ports
 }
 
+/// Detect port flags in package.json scripts content
+/// Matches patterns like: -p 3000, --port 8080, --port=3000
+pub fn detect_ports_in_package_json(content: &str, file_path: &str) -> Vec<PortSource> {
+    let re = Regex::new(SCRIPT_PORT_PATTERN).unwrap();
+    let mut ports = Vec::new();
+
+    // Parse JSON to find "scripts" section
+    let parsed: Result<serde_json::Value, _> = serde_json::from_str(content);
+    let scripts = match parsed {
+        Ok(ref val) => val.get("scripts").and_then(|s| s.as_object()),
+        Err(_) => return ports,
+    };
+
+    let Some(scripts) = scripts else {
+        return ports;
+    };
+
+    // Search for port patterns in each script value
+    for (_key, value) in scripts {
+        if let Some(script_str) = value.as_str() {
+            for caps in re.captures_iter(script_str) {
+                if let Some(port_str) = caps.get(1) {
+                    if let Ok(port) = port_str.as_str().parse::<u16>() {
+                        // Find line number by searching the raw content
+                        let line_number = content
+                            .lines()
+                            .enumerate()
+                            .find(|(_, line)| line.contains(script_str))
+                            .map(|(i, _)| (i + 1) as u32)
+                            .unwrap_or(0);
+
+                        ports.push(PortSource {
+                            file_path: file_path.to_string(),
+                            variable_name: format!("SCRIPT:{}", port),
+                            port_value: port,
+                            line_number,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    ports
+}
+
 /// Scan a directory for all .env* files and detect ports
 pub fn scan_env_files_for_ports(dir: &Path) -> Vec<PortSource> {
     let mut all_ports = Vec::new();
@@ -254,6 +303,38 @@ pub fn scan_compose_for_ports(dir: &Path) -> Vec<PortSource> {
     all_ports
 }
 
+/// Scan a directory for all package.json files and detect ports in scripts
+pub fn scan_package_json_for_ports(dir: &Path) -> Vec<PortSource> {
+    let mut all_ports = Vec::new();
+    let pattern = dir.join("**/package.json").to_string_lossy().to_string();
+
+    let options = MatchOptions {
+        require_literal_leading_dot: true,
+        ..Default::default()
+    };
+
+    if let Ok(entries) = glob_with(&pattern, options) {
+        for entry in entries.flatten() {
+            if entry.is_file() {
+                // Skip node_modules
+                if entry
+                    .components()
+                    .any(|c| c.as_os_str() == "node_modules")
+                {
+                    continue;
+                }
+                if let Ok(content) = fs::read_to_string(&entry) {
+                    let file_path = entry.to_string_lossy().to_string();
+                    let ports = detect_ports_in_package_json(&content, &file_path);
+                    all_ports.extend(ports);
+                }
+            }
+        }
+    }
+
+    all_ports
+}
+
 /// Detect all ports in a directory
 pub fn detect_all_ports(dir_path: String) -> Result<DetectedPorts, String> {
     let dir = Path::new(&dir_path);
@@ -265,11 +346,13 @@ pub fn detect_all_ports(dir_path: String) -> Result<DetectedPorts, String> {
     let env_ports = scan_env_files_for_ports(dir);
     let dockerfile_ports = scan_dockerfile_for_ports(dir);
     let compose_ports = scan_compose_for_ports(dir);
+    let script_ports = scan_package_json_for_ports(dir);
 
     Ok(DetectedPorts {
         env_ports,
         dockerfile_ports,
         compose_ports,
+        script_ports,
     })
 }
 
@@ -1277,6 +1360,7 @@ CMD ["node", "index.js"]
             }],
             dockerfile_ports: vec![],
             compose_ports: vec![],
+            script_ports: vec![],
         };
 
         let json = serde_json::to_string(&detected).unwrap();
@@ -1578,5 +1662,144 @@ DATABASE_URL=postgres://user:pass@localhost:5432/mydb
         let values: Vec<u16> = ports.iter().map(|p| p.port_value).collect();
         assert!(values.contains(&3000));
         assert!(values.contains(&8080));
+    }
+
+    #[test]
+    fn test_detect_ports_in_package_json_basic() {
+        let content = r#"{
+  "name": "my-app",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "start": "node server.js --port 8080",
+    "build": "next build"
+  }
+}"#;
+
+        let ports = detect_ports_in_package_json(content, "package.json");
+        assert_eq!(ports.len(), 2);
+
+        assert_eq!(ports[0].variable_name, "SCRIPT:3000");
+        assert_eq!(ports[0].port_value, 3000);
+
+        assert_eq!(ports[1].variable_name, "SCRIPT:8080");
+        assert_eq!(ports[1].port_value, 8080);
+    }
+
+    #[test]
+    fn test_detect_ports_in_package_json_port_equals() {
+        let content = r#"{
+  "scripts": {
+    "dev": "vite --port=5173"
+  }
+}"#;
+
+        let ports = detect_ports_in_package_json(content, "package.json");
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].variable_name, "SCRIPT:5173");
+        assert_eq!(ports[0].port_value, 5173);
+    }
+
+    #[test]
+    fn test_detect_ports_in_package_json_no_scripts() {
+        let content = r#"{
+  "name": "my-app",
+  "version": "1.0.0"
+}"#;
+
+        let ports = detect_ports_in_package_json(content, "package.json");
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_detect_ports_in_package_json_no_ports_in_scripts() {
+        let content = r#"{
+  "scripts": {
+    "build": "next build",
+    "lint": "eslint ."
+  }
+}"#;
+
+        let ports = detect_ports_in_package_json(content, "package.json");
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_detect_ports_in_package_json_invalid_json() {
+        let content = "not valid json";
+        let ports = detect_ports_in_package_json(content, "package.json");
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_scan_package_json_for_ports() {
+        let dir = tempdir().unwrap();
+
+        let content = r#"{
+  "scripts": {
+    "dev": "next dev -p 3000"
+  }
+}"#;
+        fs::write(dir.path().join("package.json"), content).unwrap();
+
+        let ports = scan_package_json_for_ports(dir.path());
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].variable_name, "SCRIPT:3000");
+        assert_eq!(ports[0].port_value, 3000);
+    }
+
+    #[test]
+    fn test_scan_package_json_for_ports_subdirectories() {
+        let dir = tempdir().unwrap();
+
+        // Root package.json
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"dev": "next dev -p 3000"}}"#,
+        )
+        .unwrap();
+
+        // Subdirectory package.json
+        let sub = dir.path().join("packages/api");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(
+            sub.join("package.json"),
+            r#"{"scripts": {"start": "node index.js --port 8080"}}"#,
+        )
+        .unwrap();
+
+        // node_modules should be skipped
+        let nm = dir.path().join("node_modules/some-package");
+        fs::create_dir_all(&nm).unwrap();
+        fs::write(
+            nm.join("package.json"),
+            r#"{"scripts": {"dev": "serve -p 9999"}}"#,
+        )
+        .unwrap();
+
+        let ports = scan_package_json_for_ports(dir.path());
+        assert_eq!(ports.len(), 2);
+
+        let values: Vec<u16> = ports.iter().map(|p| p.port_value).collect();
+        assert!(values.contains(&3000));
+        assert!(values.contains(&8080));
+        // 9999 from node_modules should NOT be detected
+        assert!(!values.contains(&9999));
+    }
+
+    #[test]
+    fn test_detect_all_ports_includes_script_ports() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"dev": "next dev -p 3000"}}"#,
+        )
+        .unwrap();
+
+        let result = detect_all_ports(dir.path().to_string_lossy().to_string()).unwrap();
+
+        assert_eq!(result.env_ports.len(), 1);
+        assert_eq!(result.script_ports.len(), 1);
+        assert_eq!(result.script_ports[0].variable_name, "SCRIPT:3000");
     }
 }
