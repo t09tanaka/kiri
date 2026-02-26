@@ -540,6 +540,18 @@ pub fn transform_generic_content(content: &str, assignments: &[PortAssignment]) 
     result
 }
 
+/// Check if a file is a docker-compose file
+pub fn is_compose_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|name| {
+            let lower = name.to_lowercase();
+            (lower.starts_with("docker-compose") || lower == "compose.yml" || lower == "compose.yaml")
+                && (lower.ends_with(".yml") || lower.ends_with(".yaml"))
+        })
+        .unwrap_or(false)
+}
+
 /// Copy files with port transformation
 pub fn copy_files_with_port_transformation(
     source_path: String,
@@ -1801,5 +1813,22 @@ DATABASE_URL=postgres://user:pass@localhost:5432/mydb
         assert_eq!(result.env_ports.len(), 1);
         assert_eq!(result.script_ports.len(), 1);
         assert_eq!(result.script_ports[0].variable_name, "SCRIPT:3000");
+    }
+
+    #[test]
+    fn test_is_compose_file() {
+        assert!(is_compose_file(Path::new("docker-compose.yml")));
+        assert!(is_compose_file(Path::new("docker-compose.yaml")));
+        assert!(is_compose_file(Path::new("docker-compose.dev.yml")));
+        assert!(is_compose_file(Path::new("docker-compose.prod.yaml")));
+        assert!(is_compose_file(Path::new("compose.yml")));
+        assert!(is_compose_file(Path::new("compose.yaml")));
+        assert!(is_compose_file(Path::new("/some/path/docker-compose.yml")));
+        assert!(is_compose_file(Path::new("/some/path/compose.yaml")));
+        assert!(!is_compose_file(Path::new(".env")));
+        assert!(!is_compose_file(Path::new("config.json")));
+        assert!(!is_compose_file(Path::new("package.json")));
+        assert!(!is_compose_file(Path::new("Dockerfile")));
+        assert!(!is_compose_file(Path::new("my-compose.yml")));
     }
 }
