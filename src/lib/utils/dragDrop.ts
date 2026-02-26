@@ -39,3 +39,19 @@ export function resolveDropTarget(
   const parent = getParentDirectory(path);
   return isUnderRoot(parent, rootPath) ? parent : rootPath;
 }
+
+/**
+ * Check if targetDir is a valid move destination for the given source.
+ */
+export function isValidMoveTarget(
+  targetDir: string | null,
+  sourcePath: string,
+  isSourceDir: boolean
+): boolean {
+  if (!targetDir) return false;
+  const sourceParent = getParentDirectory(sourcePath);
+  if (targetDir === sourceParent) return false;
+  if (isSourceDir && isDescendantOf(targetDir, sourcePath)) return false;
+  if (targetDir === sourcePath) return false;
+  return true;
+}

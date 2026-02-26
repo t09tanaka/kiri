@@ -15,7 +15,7 @@
   } from '@/lib/stores/dragDropStore';
   import { toastStore } from '@/lib/stores/toastStore';
   import { Skeleton } from '@/lib/components/ui';
-  import { resolveDropTarget, getParentDirectory, isDescendantOf } from '@/lib/utils/dragDrop';
+  import { resolveDropTarget, isValidMoveTarget } from '@/lib/utils/dragDrop';
 
   interface Props {
     rootPath?: string;
@@ -59,6 +59,7 @@
   let isInternalDragging = false;
   const DRAG_THRESHOLD = 5;
   let ghostElement: HTMLDivElement | null = null;
+  let internalDragRafId: number | null = null;
 
   // Extract project name from rootPath
   const projectName = $derived(rootPath ? rootPath.split('/').pop() || rootPath : null);
@@ -344,12 +345,24 @@
       isInternalDragging = true;
       dragDropStore.startDrag([internalDragSource.path]);
       createGhostElement(internalDragSource.path);
+      document.body.classList.add('internal-dragging');
     }
 
+    // Always update ghost position for smooth visuals
     updateGhostPosition(event.clientX, event.clientY);
 
-    // Resolve drop target using existing infrastructure
-    const element = document.elementFromPoint(event.clientX, event.clientY);
+    // Throttle drop target resolution with rAF
+    if (internalDragRafId !== null) return;
+    const clientX = event.clientX;
+    const clientY = event.clientY;
+    internalDragRafId = requestAnimationFrame(() => {
+      internalDragRafId = null;
+      resolveInternalDropTarget(clientX, clientY);
+    });
+  }
+
+  function resolveInternalDropTarget(clientX: number, clientY: number) {
+    const element = document.elementFromPoint(clientX, clientY);
     if (!element) {
       dragDropStore.setDropTarget(null);
       handleAutoExpandOnTargetChange(null);
@@ -369,7 +382,9 @@
     const isDir = treeItem.dataset.dropIsDir === 'true';
     const targetDir = resolveDropTarget(path, isDir, rootPath);
 
-    const isValid = isValidMoveTarget(targetDir);
+    const isValid = internalDragSource
+      ? isValidMoveTarget(targetDir, internalDragSource.path, internalDragSource.isDir)
+      : false;
     if (isValid) {
       dragDropStore.setDropTarget(targetDir);
       handleAutoExpandOnTargetChange(targetDir);
@@ -378,16 +393,6 @@
       handleAutoExpandOnTargetChange(null);
     }
     updateGhostValidity(isValid);
-  }
-
-  function isValidMoveTarget(targetDir: string | null): boolean {
-    if (!targetDir || !internalDragSource) return false;
-    const sourcePath = internalDragSource.path;
-    const sourceParent = getParentDirectory(sourcePath);
-    if (targetDir === sourceParent) return false;
-    if (internalDragSource.isDir && isDescendantOf(targetDir, sourcePath)) return false;
-    if (targetDir === sourcePath) return false;
-    return true;
   }
 
   function createGhostElement(sourcePath: string) {
@@ -428,7 +433,11 @@
     const targetDir = $dropTargetPath;
     const sourcePath = internalDragSource.path;
 
-    if (targetDir && isValidMoveTarget(targetDir)) {
+    if (
+      targetDir &&
+      internalDragSource &&
+      isValidMoveTarget(targetDir, internalDragSource.path, internalDragSource.isDir)
+    ) {
       try {
         await dragDropService.moveToDirectory(sourcePath, targetDir);
       } catch (e) {
@@ -440,7 +449,12 @@
   }
 
   function cleanupInternalDrag() {
+    if (internalDragRafId !== null) {
+      cancelAnimationFrame(internalDragRafId);
+      internalDragRafId = null;
+    }
     removeGhostElement();
+    document.body.classList.remove('internal-dragging');
     dragDropStore.endDrag();
     internalDragSource = null;
     internalDragStartPos = null;
@@ -526,6 +540,12 @@
   });
 
   onDestroy(() => {
+    // Clean up internal drag if in progress
+    if (isInternalDragging || internalDragSource) {
+      document.removeEventListener('mousemove', handleInternalMouseMove);
+      document.removeEventListener('mouseup', handleInternalMouseUp);
+      cleanupInternalDrag();
+    }
     cleanupWatcher();
     cleanupDragDropListeners();
     window.removeEventListener('filetree-mousedown', handleInternalMouseDownEvent);
@@ -903,5 +923,10 @@
   :global(.drag-ghost.invalid) {
     border-color: var(--text-error, #f87171);
     opacity: 0.5;
+  }
+
+  :global(body.internal-dragging) {
+    user-select: none;
+    -webkit-user-select: none;
   }
 </style>

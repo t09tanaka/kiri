@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { getParentDirectory, isDescendantOf, resolveDropTarget } from './dragDrop';
+import {
+  getParentDirectory,
+  isDescendantOf,
+  resolveDropTarget,
+  isValidMoveTarget,
+} from './dragDrop';
 
 describe('getParentDirectory', () => {
   it('should return parent directory for a file path', () => {
@@ -77,5 +82,26 @@ describe('resolveDropTarget', () => {
 
   it('should not match adjacent root names for directories', () => {
     expect(resolveDropTarget('/project-backup/dir', true, '/project')).toBe('/project');
+  });
+});
+
+describe('isValidMoveTarget', () => {
+  it('returns false for null target', () => {
+    expect(isValidMoveTarget(null, '/a/file.txt', false)).toBe(false);
+  });
+  it('returns false for same directory (source parent)', () => {
+    expect(isValidMoveTarget('/a', '/a/file.txt', false)).toBe(false);
+  });
+  it('returns true for different directory', () => {
+    expect(isValidMoveTarget('/b', '/a/file.txt', false)).toBe(true);
+  });
+  it('returns false for self-drop (dir onto itself)', () => {
+    expect(isValidMoveTarget('/a/dir', '/a/dir', true)).toBe(false);
+  });
+  it('returns false for descendant drop', () => {
+    expect(isValidMoveTarget('/a/dir/child', '/a/dir', true)).toBe(false);
+  });
+  it('allows moving dir to non-descendant', () => {
+    expect(isValidMoveTarget('/b', '/a/dir', true)).toBe(true);
   });
 });
