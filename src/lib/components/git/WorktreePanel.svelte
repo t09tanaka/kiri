@@ -1021,10 +1021,12 @@
           } else {
             copyResult = await worktreeService.copyFiles(currentProjectPath, wt.path, allPatterns);
           }
-          const detail =
-            copyResult.copied_files.length > 0
-              ? `${copyResult.copied_files.length} files copied`
-              : 'No files to copy';
+          const copiedCount = copyResult.copied_files.length;
+          const transformedCount = copyResult.transformed_files?.length ?? 0;
+          const parts: string[] = [];
+          if (copiedCount > 0) parts.push(`${copiedCount} files copied`);
+          if (transformedCount > 0) parts.push(`${transformedCount} files transformed`);
+          const detail = parts.length > 0 ? parts.join(', ') : 'No files to copy';
           updateTask('copy', 'completed', detail);
           if (copyResult.errors.length > 0) {
             console.error('Copy errors:', copyResult.errors);

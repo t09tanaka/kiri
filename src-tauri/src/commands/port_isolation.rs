@@ -477,6 +477,7 @@ pub fn copy_files_with_port_transformation(
 
     let mut copied_files = Vec::new();
     let mut skipped_files = Vec::new();
+    let mut transformed_files = Vec::new();
     let mut errors = Vec::new();
 
     // Helper to check if file is an .env file
@@ -495,6 +496,7 @@ pub fn copy_files_with_port_transformation(
         assignments: &[PortAssignment],
         copied_files: &mut Vec<String>,
         skipped_files: &mut Vec<String>,
+        transformed_files: &mut Vec<String>,
         errors: &mut Vec<String>,
     ) {
         let relative = match path.strip_prefix(source) {
@@ -511,7 +513,44 @@ pub fn copy_files_with_port_transformation(
         let target_file = target.join(relative);
 
         if target_file.exists() {
-            skipped_files.push(relative.to_string_lossy().to_string());
+            if !assignments.is_empty() {
+                // File already exists (e.g., git-tracked docker-compose.yml in worktree)
+                // but we have port assignments to apply — transform in-place
+                match fs::read_to_string(&target_file) {
+                    Ok(content) => {
+                        let transformed = if is_env_file(&target_file) {
+                            transform_env_content(&content, assignments).content
+                        } else {
+                            transform_generic_content(&content, assignments)
+                        };
+
+                        if transformed != content {
+                            if let Err(e) = fs::write(&target_file, transformed) {
+                                errors.push(format!(
+                                    "Failed to write transformed file {}: {}",
+                                    target_file.display(),
+                                    e
+                                ));
+                                return;
+                            }
+                            transformed_files
+                                .push(relative.to_string_lossy().to_string());
+                        } else {
+                            skipped_files
+                                .push(relative.to_string_lossy().to_string());
+                        }
+                    }
+                    Err(e) => {
+                        errors.push(format!(
+                            "Failed to read existing file {}: {}",
+                            target_file.display(),
+                            e
+                        ));
+                    }
+                }
+            } else {
+                skipped_files.push(relative.to_string_lossy().to_string());
+            }
             return;
         }
 
@@ -580,6 +619,7 @@ pub fn copy_files_with_port_transformation(
         assignments: &[PortAssignment],
         copied_files: &mut Vec<String>,
         skipped_files: &mut Vec<String>,
+        transformed_files: &mut Vec<String>,
         errors: &mut Vec<String>,
     ) {
         if let Ok(entries) = fs::read_dir(dir) {
@@ -593,6 +633,7 @@ pub fn copy_files_with_port_transformation(
                         assignments,
                         copied_files,
                         skipped_files,
+                        transformed_files,
                         errors,
                     );
                 } else if path.is_file() {
@@ -603,6 +644,7 @@ pub fn copy_files_with_port_transformation(
                         assignments,
                         copied_files,
                         skipped_files,
+                        transformed_files,
                         errors,
                     );
                 }
@@ -627,6 +669,7 @@ pub fn copy_files_with_port_transformation(
                                     &assignments,
                                     &mut copied_files,
                                     &mut skipped_files,
+                                    &mut transformed_files,
                                     &mut errors,
                                 );
                             } else if path.is_file() {
@@ -637,6 +680,7 @@ pub fn copy_files_with_port_transformation(
                                     &assignments,
                                     &mut copied_files,
                                     &mut skipped_files,
+                                    &mut transformed_files,
                                     &mut errors,
                                 );
                             }
@@ -656,6 +700,7 @@ pub fn copy_files_with_port_transformation(
     Ok(super::git_worktree::CopyResult {
         copied_files,
         skipped_files,
+        transformed_files,
         errors,
     })
 }
@@ -1407,6 +1452,76 @@ DATABASE_URL=postgres://user:pass@localhost:5432/mydb
         let values: Vec<u16> = ports.iter().map(|p| p.port_value).collect();
         assert!(values.contains(&3000));
         assert!(values.contains(&8080));
+    }
+
+    #[test]
+    fn test_copy_files_with_port_transformation_existing_files() {
+        // Bug: docker-compose files are git-tracked and already exist in worktree
+        // after `git worktree add`. The copy function used to skip existing files,
+        // even when port assignments need to be applied.
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create source docker-compose.yml
+        let compose_content = "services:\n  web:\n    ports:\n      - \"3000:3000\"\n  db:\n    ports:\n      - \"5432:5432\"\n";
+        fs::write(source_dir.path().join("docker-compose.yml"), compose_content).unwrap();
+
+        // Simulate git worktree: docker-compose.yml already exists in target (git-tracked)
+        fs::write(target_dir.path().join("docker-compose.yml"), compose_content).unwrap();
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "COMPOSE:3000".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            },
+            PortAssignment {
+                variable_name: "COMPOSE:5432".to_string(),
+                original_value: 5432,
+                assigned_value: 5532,
+            },
+        ];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["docker-compose.yml".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        // The file should be transformed in-place, not skipped
+        assert!(result.errors.is_empty());
+        assert_eq!(result.transformed_files.len(), 1);
+
+        // Verify docker-compose.yml was transformed with new ports
+        let transformed = fs::read_to_string(target_dir.path().join("docker-compose.yml")).unwrap();
+        assert!(transformed.contains("3100:3100"), "Expected 3100:3100, got: {}", transformed);
+        assert!(transformed.contains("5532:5532"), "Expected 5532:5532, got: {}", transformed);
+    }
+
+    #[test]
+    fn test_copy_files_existing_no_assignments_still_skipped() {
+        // When there are no assignments, existing files should still be skipped (no transformation needed)
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let content = "PORT=3000\n";
+        fs::write(source_dir.path().join(".env"), content).unwrap();
+        fs::write(target_dir.path().join(".env"), content).unwrap();
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string()],
+            vec![], // No assignments
+        )
+        .unwrap();
+
+        // File should be skipped since no assignments and file exists
+        assert_eq!(result.skipped_files.len(), 1);
+        assert!(result.copied_files.is_empty());
+        assert!(result.transformed_files.is_empty());
     }
 
     #[test]

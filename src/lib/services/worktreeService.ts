@@ -25,6 +25,7 @@ export interface BranchInfo {
 export interface CopyResult {
   copied_files: string[];
   skipped_files: string[];
+  transformed_files: string[];
   errors: string[];
 }
 

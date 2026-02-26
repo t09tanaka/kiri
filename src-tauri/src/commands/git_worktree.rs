@@ -34,6 +34,7 @@ pub struct BranchInfo {
 pub struct CopyResult {
     pub copied_files: Vec<String>,
     pub skipped_files: Vec<String>,
+    pub transformed_files: Vec<String>,
     pub errors: Vec<String>,
 }
 
@@ -555,6 +556,7 @@ pub fn copy_files_to_worktree(
     Ok(CopyResult {
         copied_files,
         skipped_files,
+        transformed_files: vec![],
         errors,
     })
 }
@@ -1368,6 +1370,7 @@ mod tests {
         let result = CopyResult {
             copied_files: vec!["file1.txt".to_string(), "file2.txt".to_string()],
             skipped_files: vec!["existing.txt".to_string()],
+            transformed_files: vec![],
             errors: vec![],
         };
         assert_eq!(result.copied_files.len(), 2);
