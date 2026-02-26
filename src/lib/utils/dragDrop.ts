@@ -9,6 +9,13 @@ export function getParentDirectory(filePath: string): string {
 }
 
 /**
+ * Check if a path is under (or equal to) the root path.
+ */
+function isUnderRoot(path: string, rootPath: string): boolean {
+  return path === rootPath || path.startsWith(rootPath + '/');
+}
+
+/**
  * Resolve the drop target directory from the hovered element's data attributes.
  * - If hovering over a directory, returns that directory path.
  * - If hovering over a file, returns its parent directory.
@@ -20,7 +27,7 @@ export function resolveDropTarget(
   rootPath: string
 ): string | null {
   if (path === null) return null;
-  if (isDir) return path;
+  if (isDir) return isUnderRoot(path, rootPath) ? path : rootPath;
   const parent = getParentDirectory(path);
-  return parent.startsWith(rootPath) ? parent : rootPath;
+  return isUnderRoot(parent, rootPath) ? parent : rootPath;
 }

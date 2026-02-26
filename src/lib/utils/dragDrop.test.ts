@@ -45,4 +45,16 @@ describe('resolveDropTarget', () => {
   it('should clamp to rootPath when parent is above rootPath', () => {
     expect(resolveDropTarget('/other/file.txt', false, '/project')).toBe('/project');
   });
+
+  it('should clamp directory outside rootPath to rootPath', () => {
+    expect(resolveDropTarget('/other/dir', true, '/project')).toBe('/project');
+  });
+
+  it('should not match adjacent root names with startsWith', () => {
+    expect(resolveDropTarget('/project-backup/file.txt', false, '/project')).toBe('/project');
+  });
+
+  it('should not match adjacent root names for directories', () => {
+    expect(resolveDropTarget('/project-backup/dir', true, '/project')).toBe('/project');
+  });
 });

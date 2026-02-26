@@ -10,12 +10,7 @@
   } from '@/lib/stores/gitStore';
   import { getFileIconInfo, getFolderColor } from '@/lib/utils/fileIcons';
   import ContextMenu, { type MenuItem } from '@/lib/components/ui/ContextMenu.svelte';
-  import {
-    dragDropStore,
-    isDragging,
-    dropTargetPath,
-    draggedPaths,
-  } from '@/lib/stores/dragDropStore';
+  import { isDragging, dropTargetPath, draggedPaths } from '@/lib/stores/dragDropStore';
   import FileTreeItem from './FileTreeItem.svelte';
 
   interface Props {
@@ -321,26 +316,6 @@
         });
     }
   });
-
-  // Drag and drop handlers
-  function handleDragMouseEnter() {
-    if (!$isDragging || !entry.is_dir) return;
-
-    dragDropStore.setDropTarget(entry.path);
-
-    // Start auto-expand timer if directory is collapsed
-    if (!expanded) {
-      dragDropStore.startHoverTimer(entry.path, () => {
-        toggleExpand();
-      });
-    }
-  }
-
-  function handleDragMouseLeave() {
-    if (!$isDragging || !entry.is_dir) return;
-
-    dragDropStore.clearHoverTimer(entry.path);
-  }
 </script>
 
 {#if !isDeleted}
@@ -349,8 +324,6 @@
     role="treeitem"
     aria-selected={isSelected}
     tabindex={isSelected ? 0 : -1}
-    onmouseenter={handleDragMouseEnter}
-    onmouseleave={handleDragMouseLeave}
     data-drop-path={entry.path}
     data-drop-is-dir={entry.is_dir}
   >

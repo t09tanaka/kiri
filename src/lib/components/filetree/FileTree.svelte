@@ -43,6 +43,7 @@
   let unlistenDragLeave: UnlistenFn | null = null;
   let unlistenDragOver: UnlistenFn | null = null;
   let dragOverThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingDragPosition: { x: number; y: number } | null = null;
   let lastDragOverTarget: string | null = null;
 
   // Extract project name from rootPath
@@ -210,13 +211,7 @@
     }
   }
 
-  function handleDragOver(position: { x: number; y: number }) {
-    // Throttle to ~60fps
-    if (dragOverThrottleTimer) return;
-    dragOverThrottleTimer = setTimeout(() => {
-      dragOverThrottleTimer = null;
-    }, 16);
-
+  function processDragOver(position: { x: number; y: number }) {
     const element = document.elementFromPoint(position.x, position.y);
     if (!element) {
       dragDropStore.setDropTarget(null);
@@ -237,6 +232,23 @@
 
     dragDropStore.setDropTarget(targetDir);
     handleAutoExpandOnTargetChange(targetDir);
+  }
+
+  function handleDragOver(position: { x: number; y: number }) {
+    pendingDragPosition = position;
+    if (dragOverThrottleTimer) return;
+
+    // Process immediately on first event
+    processDragOver(position);
+    pendingDragPosition = null;
+
+    dragOverThrottleTimer = setTimeout(() => {
+      dragOverThrottleTimer = null;
+      if (pendingDragPosition) {
+        processDragOver(pendingDragPosition);
+        pendingDragPosition = null;
+      }
+    }, 16);
   }
 
   function handleAutoExpandOnTargetChange(targetDir: string | null) {
@@ -309,6 +321,7 @@
       clearTimeout(dragOverThrottleTimer);
       dragOverThrottleTimer = null;
     }
+    pendingDragPosition = null;
     lastDragOverTarget = null;
     dragDropStore.endDrag();
   }
