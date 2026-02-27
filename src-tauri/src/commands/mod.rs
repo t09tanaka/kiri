@@ -1,3 +1,4 @@
+pub mod cloudflare_tunnel;
 pub mod drag_drop;
 pub mod file;
 pub mod file_io;
@@ -43,4 +44,5 @@ pub use port_isolation_commands::*;
 pub use compose_isolation_commands::*;
 pub use git_history_commands::*;
 pub use remote_access_commands::*;
+pub use cloudflare_tunnel::*;
 pub use window::*;
