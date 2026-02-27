@@ -36,6 +36,11 @@ impl WindowRegistry {
     pub fn get_label_for_path(&self, path: &str) -> Option<&String> {
         self.path_to_label.get(path)
     }
+
+    /// Get all registered project paths
+    pub fn get_all_paths(&self) -> Vec<String> {
+        self.path_to_label.keys().cloned().collect()
+    }
 }
 
 pub type WindowRegistryState = Arc<Mutex<WindowRegistry>>;
@@ -252,5 +257,34 @@ mod tests {
     #[test]
     fn test_window_title_with_single_segment() {
         assert_eq!(window_title(Some("my-project")), "my-project — kiri");
+    }
+
+    #[test]
+    fn test_registry_get_all_paths_empty() {
+        let registry = WindowRegistry::new();
+        assert!(registry.get_all_paths().is_empty());
+    }
+
+    #[test]
+    fn test_registry_get_all_paths_returns_registered_paths() {
+        let mut registry = WindowRegistry::new();
+        registry.register("window-1", "/path/a");
+        registry.register("window-2", "/path/b");
+        registry.register("window-3", "/path/c");
+
+        let mut paths = registry.get_all_paths();
+        paths.sort();
+        assert_eq!(paths, vec!["/path/a", "/path/b", "/path/c"]);
+    }
+
+    #[test]
+    fn test_registry_get_all_paths_excludes_unregistered() {
+        let mut registry = WindowRegistry::new();
+        registry.register("window-1", "/path/a");
+        registry.register("window-2", "/path/b");
+        registry.unregister_by_label("window-1");
+
+        let paths = registry.get_all_paths();
+        assert_eq!(paths, vec!["/path/b"]);
     }
 }

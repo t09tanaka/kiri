@@ -62,6 +62,7 @@ pub type RemoteServerStateType = Arc<Mutex<RemoteServerState>>;
 /// cannot be bound.
 #[tauri::command]
 pub async fn start_remote_server(
+    app: tauri::AppHandle,
     state: tauri::State<'_, RemoteServerStateType>,
     port: u16,
 ) -> Result<(), String> {
@@ -85,9 +86,15 @@ pub async fn start_remote_server(
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
+    let app_clone = app.clone();
     let handle = tokio::spawn(async move {
-        if let Err(e) =
-            super::remote_access::start_server(listener, shutdown_rx, live_token).await
+        if let Err(e) = super::remote_access::start_server(
+            listener,
+            shutdown_rx,
+            live_token,
+            Some(app_clone),
+        )
+        .await
         {
             log::error!("Remote server error: {}", e);
         }

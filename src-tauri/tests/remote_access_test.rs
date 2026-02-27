@@ -24,7 +24,7 @@ async fn start_test_server() -> (
 
     let token = Arc::new(RwLock::new(TEST_TOKEN.to_string()));
     let handle = tokio::spawn(async move {
-        app_lib::commands::remote_access::start_server(listener, shutdown_rx, token)
+        app_lib::commands::remote_access::start_server(listener, shutdown_rx, token, None)
             .await
             .unwrap();
     });
@@ -238,7 +238,7 @@ async fn test_live_token_update_takes_effect_immediately() {
     let live_token_clone = live_token.clone();
 
     let _handle = tokio::spawn(async move {
-        app_lib::commands::remote_access::start_server(listener, shutdown_rx, live_token_clone)
+        app_lib::commands::remote_access::start_server(listener, shutdown_rx, live_token_clone, None)
             .await
             .unwrap();
     });
@@ -280,6 +280,117 @@ async fn test_live_token_update_takes_effect_immediately() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
+
+    shutdown_tx.send(()).unwrap();
+}
+
+// ── Project endpoints ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_projects_endpoint_requires_auth() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let client = reqwest::Client::new();
+
+    // GET /api/projects without token should return 401
+    let resp = client
+        .get(format!("http://127.0.0.1:{}/api/projects", port))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn test_projects_endpoint_returns_503_without_app_handle() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let client = reqwest::Client::new();
+
+    // GET /api/projects with valid token but no AppHandle returns 503
+    let resp = client
+        .get(format!("http://127.0.0.1:{}/api/projects", port))
+        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn test_open_project_endpoint_requires_auth() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let client = reqwest::Client::new();
+
+    // POST /api/projects/open without token should return 401
+    let resp = client
+        .post(format!("http://127.0.0.1:{}/api/projects/open", port))
+        .json(&serde_json::json!({ "path": "/tmp/test" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn test_open_project_endpoint_returns_503_without_app_handle() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let client = reqwest::Client::new();
+
+    // POST /api/projects/open with valid token but no AppHandle returns 503
+    let resp = client
+        .post(format!("http://127.0.0.1:{}/api/projects/open", port))
+        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
+        .json(&serde_json::json!({ "path": "/tmp/test" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn test_close_project_endpoint_requires_auth() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let client = reqwest::Client::new();
+
+    // POST /api/projects/close without token should return 401
+    let resp = client
+        .post(format!("http://127.0.0.1:{}/api/projects/close", port))
+        .json(&serde_json::json!({ "path": "/tmp/test" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn test_close_project_endpoint_returns_503_without_app_handle() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let client = reqwest::Client::new();
+
+    // POST /api/projects/close with valid token but no AppHandle returns 503
+    let resp = client
+        .post(format!("http://127.0.0.1:{}/api/projects/close", port))
+        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
+        .json(&serde_json::json!({ "path": "/tmp/test" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
 
     shutdown_tx.send(()).unwrap();
 }
