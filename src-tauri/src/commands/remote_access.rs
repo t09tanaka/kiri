@@ -25,7 +25,7 @@ use tokio::sync::{oneshot, RwLock};
 /// Shared application state passed to handlers and middleware.
 #[derive(Clone)]
 pub struct AppState {
-    /// The bearer token required to access protected endpoints.
+    /// The path-prefix token required to access protected endpoints.
     pub(crate) auth_token: Arc<RwLock<String>>,
     /// Optional Tauri AppHandle for accessing app state (None in integration tests).
     pub(crate) app_handle: Option<tauri::AppHandle>,
@@ -337,7 +337,7 @@ fn strip_token_prefix<'a>(path: &'a str, expected_token: &str) -> Option<&'a str
 
     // rest is either "/" or "/something..."
     // When path was "/abc-123" (no trailing slash), rest is already "/"
-    Some(if rest.is_empty() { "/" } else { rest })
+    Some(rest)
 }
 
 // ── Router & Server ──────────────────────────────────────────────
