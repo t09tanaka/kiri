@@ -31,23 +31,27 @@ pub fn create_router() -> Router {
     Router::new().route("/api/health", get(health_handler))
 }
 
-/// Start the HTTP server on the given port.
+/// Start the HTTP server on a pre-bound listener.
+///
+/// The caller is responsible for binding the `TcpListener` so that
+/// port-conflict errors are reported eagerly rather than inside the
+/// spawned task.
 ///
 /// The server runs until a signal is received on `shutdown_rx`,
 /// at which point it performs a graceful shutdown.
 ///
 /// # Errors
 ///
-/// Returns an error if the server fails to bind to the address
-/// or encounters a runtime error.
+/// Returns an error if the server encounters a runtime error.
 pub async fn start_server(
-    port: u16,
+    listener: tokio::net::TcpListener,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = create_router();
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    log::info!("Remote access server listening on {}", addr);
+    log::info!(
+        "Remote access server listening on {}",
+        listener.local_addr()?
+    );
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async {

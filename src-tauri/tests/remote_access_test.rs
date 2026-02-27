@@ -5,21 +5,22 @@
 
 #[tokio::test]
 async fn test_remote_server_starts_and_responds() {
-    // Find an available port by binding to port 0
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    // Bind to port 0 to get an available port — no TOCTOU race
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
     let port = listener.local_addr().unwrap().port();
-    drop(listener);
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     let server_handle = tokio::spawn(async move {
-        app_lib::commands::remote_access::start_server(port, shutdown_rx)
+        app_lib::commands::remote_access::start_server(listener, shutdown_rx)
             .await
             .unwrap();
     });
 
     // Wait for the server to be ready
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let client = reqwest::Client::new();
     let resp = client
@@ -40,19 +41,20 @@ async fn test_remote_server_starts_and_responds() {
 
 #[tokio::test]
 async fn test_remote_server_graceful_shutdown() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
     let port = listener.local_addr().unwrap().port();
-    drop(listener);
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     let server_handle = tokio::spawn(async move {
-        app_lib::commands::remote_access::start_server(port, shutdown_rx)
+        app_lib::commands::remote_access::start_server(listener, shutdown_rx)
             .await
             .unwrap();
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     // Verify server is running
     let client = reqwest::Client::new();
@@ -77,17 +79,18 @@ async fn test_remote_server_graceful_shutdown() {
 
 #[tokio::test]
 async fn test_health_endpoint_returns_correct_fields() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
     let port = listener.local_addr().unwrap().port();
-    drop(listener);
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     tokio::spawn(async move {
-        let _ = app_lib::commands::remote_access::start_server(port, shutdown_rx).await;
+        let _ = app_lib::commands::remote_access::start_server(listener, shutdown_rx).await;
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let client = reqwest::Client::new();
     let resp = client
@@ -111,17 +114,18 @@ async fn test_health_endpoint_returns_correct_fields() {
 
 #[tokio::test]
 async fn test_unknown_route_returns_404() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
     let port = listener.local_addr().unwrap().port();
-    drop(listener);
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
     tokio::spawn(async move {
-        let _ = app_lib::commands::remote_access::start_server(port, shutdown_rx).await;
+        let _ = app_lib::commands::remote_access::start_server(listener, shutdown_rx).await;
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let client = reqwest::Client::new();
     let resp = client
