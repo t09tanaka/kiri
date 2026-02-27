@@ -31,10 +31,10 @@
   // Tunnel token visibility
   let showTunnelToken = $state(false);
   let tunnelTokenInput = $state('');
+  let tunnelUrlInput = $state('');
 
   // Loading states
   let isTogglingServer = $state(false);
-  let isRevokingToken = $state(false);
   let isTogglingTunnel = $state(false);
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -94,29 +94,15 @@
     isGeneratingQr = true;
 
     try {
-      const data = await remoteAccessService.generateQrCode();
-      qrCodeData = data;
+      const port = parseInt(portInput, 10);
+      const tunnelUrl = store.tunnelRunning
+        ? store.tunnelUrl || tunnelUrlInput.trim() || undefined
+        : undefined;
+      qrCodeData = await remoteAccessService.generateQrCode(port, tunnelUrl);
     } catch (error) {
       toastStore.error('Failed to generate QR code: ' + String(error));
     } finally {
       isGeneratingQr = false;
-    }
-  }
-
-  async function handleRevokeToken() {
-    if (isRevokingToken || !settings) return;
-    isRevokingToken = true;
-
-    try {
-      const newToken = await remoteAccessService.regenerateToken();
-      settings.authToken = newToken;
-      await saveRemoteAccessSettings(settings);
-      qrCodeData = null;
-      toastStore.success('Authentication token revoked and regenerated');
-    } catch (error) {
-      toastStore.error('Failed to revoke token: ' + String(error));
-    } finally {
-      isRevokingToken = false;
     }
   }
 
@@ -128,19 +114,16 @@
       if (store.tunnelRunning) {
         await remoteAccessService.stopTunnel();
         remoteAccessStore.setTunnelRunning(false);
-        settings.cloudflare.enabled = false;
         toastStore.info('Cloudflare tunnel stopped');
       } else {
-        const token = tunnelTokenInput.trim();
-        if (!token) {
-          toastStore.error('Please enter a Cloudflare tunnel token');
-          isTogglingTunnel = false;
-          return;
+        const token = tunnelTokenInput.trim() || null;
+        const port = parseInt(portInput, 10);
+        const tunnelUrl = await remoteAccessService.startTunnel(token, port);
+        remoteAccessStore.setTunnelRunning(true, tunnelUrl ?? undefined);
+        if (token) {
+          settings.tunnelToken = token;
+          settings.tunnelUrl = tunnelUrlInput.trim() || null;
         }
-        await remoteAccessService.startTunnel(token);
-        remoteAccessStore.setTunnelRunning(true);
-        settings.cloudflare.enabled = true;
-        settings.cloudflare.tunnelToken = token;
         toastStore.success('Cloudflare tunnel started');
       }
       await saveRemoteAccessSettings(settings);
@@ -161,6 +144,11 @@
     tunnelTokenInput = target.value;
   }
 
+  function handleTunnelUrlChange(e: Event) {
+    const target = e.target as HTMLInputElement;
+    tunnelUrlInput = target.value;
+  }
+
   onMount(async () => {
     // Trigger enter animation on next frame
     requestAnimationFrame(() => {
@@ -173,7 +161,8 @@
       const loaded = await loadRemoteAccessSettings();
       settings = loaded;
       portInput = String(loaded.port);
-      tunnelTokenInput = loaded.cloudflare.tunnelToken ?? '';
+      tunnelTokenInput = loaded.tunnelToken ?? '';
+      tunnelUrlInput = loaded.tunnelUrl ?? '';
 
       // Sync store with persisted settings
       remoteAccessStore.setPort(loaded.port);
@@ -293,77 +282,45 @@
               autocapitalize="off"
             />
           </div>
-        </div>
 
-        <!-- Section 2: Authentication -->
-        <div class="section">
-          <div class="section-header">
-            <h3 class="section-title">Authentication</h3>
-            <span class="section-description">
-              Generate a QR code for mobile access or revoke the current token.
-            </span>
-          </div>
+          <!-- QR Code in Server Control -->
+          {#if store.serverRunning}
+            <div class="qr-section">
+              <button class="action-btn" onclick={handleGenerateQr} disabled={isGeneratingQr}>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="3" y="3" width="7" height="7"></rect>
+                  <rect x="14" y="3" width="7" height="7"></rect>
+                  <rect x="3" y="14" width="7" height="7"></rect>
+                  <rect x="14" y="14" width="7" height="7"></rect>
+                </svg>
+                {isGeneratingQr ? 'Generating...' : 'Show QR Code'}
+              </button>
 
-          <div class="auth-actions">
-            <button
-              class="action-btn"
-              onclick={handleGenerateQr}
-              disabled={isGeneratingQr || !store.serverRunning}
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <rect x="3" y="3" width="7" height="7"></rect>
-                <rect x="14" y="3" width="7" height="7"></rect>
-                <rect x="3" y="14" width="7" height="7"></rect>
-                <rect x="14" y="14" width="7" height="7"></rect>
-              </svg>
-              {isGeneratingQr ? 'Generating...' : 'Show QR Code'}
-            </button>
-
-            <button
-              class="action-btn revoke"
-              onclick={handleRevokeToken}
-              disabled={isRevokingToken || !store.serverRunning}
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <polyline points="23 4 23 10 17 10"></polyline>
-                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-              </svg>
-              {isRevokingToken ? 'Revoking...' : 'Revoke Token'}
-            </button>
-          </div>
-
-          {#if qrCodeData}
-            <div class="qr-container">
-              <img src={qrCodeData} alt="QR Code for remote access" class="qr-image" />
-              <span class="qr-hint">Scan with your mobile device to connect</span>
+              {#if qrCodeData}
+                <div class="qr-container">
+                  <img src={qrCodeData} alt="QR Code for remote access" class="qr-image" />
+                  <span class="qr-hint">Scan with your mobile device to connect</span>
+                </div>
+              {/if}
             </div>
           {/if}
         </div>
 
-        <!-- Section 3: Cloudflare Tunnel -->
+        <!-- Section 2: Cloudflare Tunnel -->
         <div class="section">
           <div class="section-header">
             <h3 class="section-title">Cloudflare Tunnel</h3>
             <span class="section-description">
-              Expose the server via a Cloudflare tunnel for external access.
+              Expose the server via Cloudflare Tunnel. Leave token empty for a Quick Tunnel.
             </span>
           </div>
 
@@ -392,6 +349,7 @@
           <div class="control-row">
             <div class="control-label">
               <span class="label-text">Tunnel Token</span>
+              <span class="optional-badge">optional</span>
             </div>
             <div class="token-input-wrapper">
               <input
@@ -400,7 +358,7 @@
                 value={tunnelTokenInput}
                 oninput={handleTunnelTokenChange}
                 disabled={store.tunnelRunning}
-                placeholder="Enter Cloudflare tunnel token"
+                placeholder="Quick Tunnel (no token)"
                 spellcheck="false"
                 autocomplete="off"
                 autocorrect="off"
@@ -448,9 +406,29 @@
             </div>
           </div>
 
+          {#if tunnelTokenInput.trim()}
+            <div class="control-row">
+              <div class="control-label">
+                <span class="label-text">Tunnel URL</span>
+              </div>
+              <input
+                type="text"
+                class="tunnel-url-input"
+                value={tunnelUrlInput}
+                oninput={handleTunnelUrlChange}
+                disabled={store.tunnelRunning}
+                placeholder="https://your-tunnel.example.com"
+                spellcheck="false"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+              />
+            </div>
+          {/if}
+
           {#if store.tunnelUrl}
             <div class="tunnel-url">
-              <span class="tunnel-url-label">Tunnel URL:</span>
+              <span class="tunnel-url-label">Active URL:</span>
               <code class="tunnel-url-value">{store.tunnelUrl}</code>
             </div>
           {/if}
@@ -651,6 +629,16 @@
     color: var(--text-primary);
   }
 
+  /* Optional Badge */
+  .optional-badge {
+    font-size: 10px;
+    color: var(--text-muted);
+    padding: 1px 6px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    opacity: 0.7;
+  }
+
   /* Status Indicator */
   .status-indicator {
     display: flex;
@@ -748,13 +736,16 @@
     cursor: not-allowed;
   }
 
-  /* Auth Actions */
-  .auth-actions {
+  /* QR Section */
+  .qr-section {
     display: flex;
-    gap: var(--space-2);
-    flex-wrap: wrap;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--border-subtle);
   }
 
+  /* Action Button */
   .action-btn {
     display: flex;
     align-items: center;
@@ -768,6 +759,7 @@
     font-weight: 500;
     cursor: pointer;
     transition: all var(--transition-fast);
+    width: fit-content;
   }
 
   .action-btn:hover:not(:disabled) {
@@ -777,16 +769,6 @@
   .action-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-  }
-
-  .action-btn.revoke {
-    background: rgba(248, 113, 113, 0.1);
-    border-color: rgba(248, 113, 113, 0.3);
-    color: #f87171;
-  }
-
-  .action-btn.revoke:hover:not(:disabled) {
-    background: rgba(248, 113, 113, 0.2);
   }
 
   /* QR Code */
@@ -866,7 +848,31 @@
     color: var(--text-secondary);
   }
 
-  /* Tunnel URL */
+  /* Tunnel URL Input */
+  .tunnel-url-input {
+    flex: 1;
+    max-width: 280px;
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: var(--font-mono);
+    outline: none;
+    transition: border-color var(--transition-fast);
+  }
+
+  .tunnel-url-input:focus {
+    border-color: var(--accent-color);
+  }
+
+  .tunnel-url-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* Tunnel URL Display */
   .tunnel-url {
     display: flex;
     align-items: center;
