@@ -2,13 +2,47 @@ import { Store } from '@tauri-apps/plugin-store';
 
 const STORE_PATH = 'kiri-settings.json';
 
+// ============================================================================
+// Startup Command
+// ============================================================================
+
+export type StartupCommand = 'none' | 'claude' | 'codex';
+
+export const DEFAULT_STARTUP_COMMAND: StartupCommand = 'none';
+
+export interface StartupCommandOption {
+  id: StartupCommand;
+  label: string;
+  command: string;
+}
+
+export const STARTUP_COMMANDS: StartupCommandOption[] = [
+  { id: 'none', label: 'None', command: '' },
+  { id: 'claude', label: 'Claude', command: 'claude' },
+  { id: 'codex', label: 'Codex', command: 'codex' },
+];
+
+/**
+ * Get the shell command string for a startup command setting
+ */
+export function getStartupCommandString(id: StartupCommand): string {
+  const cmd = STARTUP_COMMANDS.find((c) => c.id === id);
+  return cmd?.command ?? '';
+}
+
+// ============================================================================
+// Global Settings
+// ============================================================================
+
 // Global settings (shared across all windows)
 export interface PersistedSettings {
   fontSize: number;
+  startupCommand: StartupCommand;
 }
 
 const DEFAULT_SETTINGS: PersistedSettings = {
   fontSize: 13,
+  startupCommand: DEFAULT_STARTUP_COMMAND,
 };
 
 let store: Store | null = null;
@@ -35,6 +69,7 @@ export async function loadSettings(): Promise<PersistedSettings> {
 
     return {
       fontSize: settings.fontSize ?? DEFAULT_SETTINGS.fontSize,
+      startupCommand: settings.startupCommand ?? DEFAULT_SETTINGS.startupCommand,
     };
   } catch (error) {
     console.error('Failed to load settings:', error);
