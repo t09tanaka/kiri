@@ -77,6 +77,16 @@ pub struct TerminalStatus {
     pub cwd: Option<String>,
 }
 
+// ── Incoming client actions ──────────────────────────────────────
+
+/// Incoming action from a remote client via WebSocket.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "action", rename_all = "camelCase")]
+pub enum ClientAction {
+    OpenProject { path: String },
+    CloseProject { path: String },
+}
+
 // ── WebSocket status types ──────────────────────────────────────
 
 /// Payload pushed over the `/ws/status` WebSocket every tick.
@@ -200,13 +210,76 @@ async fn handle_status_ws(mut socket: WebSocket, state: AppState) {
             }
             msg = socket.recv() => {
                 match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Ok(action) = serde_json::from_str::<ClientAction>(&text) {
+                            handle_client_action(&state, action).await;
+                        }
+                    }
                     Some(Ok(Message::Close(_))) | None => break,
                     Some(Ok(Message::Ping(data))) => {
                         if socket.send(Message::Pong(data)).await.is_err() {
                             break;
                         }
                     }
-                    _ => {} // Ignore other messages
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// Handle an incoming client action.
+async fn handle_client_action(state: &AppState, action: ClientAction) {
+    let Some(app) = state.app_handle.as_ref() else {
+        return;
+    };
+
+    match action {
+        ClientAction::OpenProject { path } => {
+            use tauri::Manager;
+            let registry = app.state::<crate::commands::WindowRegistryState>();
+
+            // Check if project is already open — focus existing window
+            let existing_label = {
+                let reg = match registry.lock() {
+                    Ok(r) => r,
+                    Err(_) => return,
+                };
+                reg.get_label_for_path(&path).cloned()
+            };
+
+            if let Some(label) = existing_label {
+                if let Some(window) = app.get_webview_window(&label) {
+                    let _ = window.set_focus();
+                    return;
+                }
+            }
+
+            // Create new window
+            let _ = crate::commands::window::create_window_impl(
+                app,
+                Some(&registry),
+                None,
+                None,
+                None,
+                None,
+                Some(path),
+            );
+        }
+        ClientAction::CloseProject { path } => {
+            use tauri::Manager;
+            let registry = app.state::<crate::commands::WindowRegistryState>();
+            let label = {
+                let reg = match registry.lock() {
+                    Ok(r) => r,
+                    Err(_) => return,
+                };
+                reg.get_label_for_path(&path).cloned()
+            };
+
+            if let Some(label) = label {
+                if let Some(window) = app.get_webview_window(&label) {
+                    let _ = window.close();
                 }
             }
         }
@@ -651,6 +724,42 @@ mod tests {
     fn test_resolve_remote_ui_path_without_app_handle() {
         let path = resolve_remote_ui_path(None);
         assert_eq!(path, std::path::PathBuf::from("remote-ui"));
+    }
+
+    // ── ClientAction deserialization tests ────────────────────────
+
+    #[test]
+    fn test_client_action_open_project_deserialization() {
+        let json = r#"{"action":"openProject","path":"/Users/user/projects/kiri"}"#;
+        let action: ClientAction = serde_json::from_str(json).unwrap();
+        match action {
+            ClientAction::OpenProject { path } => assert_eq!(path, "/Users/user/projects/kiri"),
+            _ => panic!("Expected OpenProject"),
+        }
+    }
+
+    #[test]
+    fn test_client_action_close_project_deserialization() {
+        let json = r#"{"action":"closeProject","path":"/Users/user/projects/kiri"}"#;
+        let action: ClientAction = serde_json::from_str(json).unwrap();
+        match action {
+            ClientAction::CloseProject { path } => assert_eq!(path, "/Users/user/projects/kiri"),
+            _ => panic!("Expected CloseProject"),
+        }
+    }
+
+    #[test]
+    fn test_client_action_unknown_action_fails() {
+        let json = r#"{"action":"unknownAction","path":"/some/path"}"#;
+        let result = serde_json::from_str::<ClientAction>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_client_action_missing_path_fails() {
+        let json = r#"{"action":"openProject"}"#;
+        let result = serde_json::from_str::<ClientAction>(json);
+        assert!(result.is_err());
     }
 
     // ── strip_token_prefix tests ────────────────────────────────
