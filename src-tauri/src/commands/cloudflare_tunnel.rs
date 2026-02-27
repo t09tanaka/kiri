@@ -57,8 +57,12 @@ pub fn cloudflared_path() -> std::path::PathBuf {
 /// cloudflared prints lines like:
 /// `... | https://random-words.trycloudflare.com |`
 pub fn parse_quick_tunnel_url(line: &str) -> Option<String> {
-    let re_pattern = r"https://[a-zA-Z0-9-]+\.trycloudflare\.com";
-    let re = regex::Regex::new(re_pattern).ok()?;
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com\b")
+            .expect("hardcoded regex must be valid")
+    });
     re.find(line).map(|m| m.as_str().to_string())
 }
 
@@ -131,8 +135,20 @@ pub async fn start_cloudflare_tunnel(
                 .spawn()
                 .map_err(|e| format!("Failed to start cloudflared: {}", e))?;
 
-            // Parse the tunnel URL from stderr
-            let url = parse_tunnel_url_from_stderr(&mut child)?;
+            // Parse the tunnel URL from stderr in a blocking task
+            // to avoid blocking the Tokio async runtime.
+            let (child, url) = tokio::task::spawn_blocking(move || {
+                match parse_tunnel_url_from_stderr(&mut child) {
+                    Ok(url) => Ok((child, url)),
+                    Err(e) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        Err(e)
+                    }
+                }
+            })
+            .await
+            .map_err(|e| format!("Task join error: {}", e))??;
 
             tunnel.child = Some(child);
             tunnel.is_running = true;
