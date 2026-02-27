@@ -1,4 +1,4 @@
-mod commands;
+pub mod commands;
 
 use commands::{
     allocate_worktree_ports, apply_compose_isolation, clear_performance_timings, close_terminal,
@@ -13,8 +13,9 @@ use commands::{
     push_commits, read_directory, read_file, read_file_as_base64, record_command_timing, register_window,
     resize_terminal, remove_worktree, reveal_in_finder, run_init_command, search_content,
     search_files, setup_menu, start_watching, stop_all_watching,
-    stop_watching, unregister_window, write_terminal, TerminalState, WatcherState,
-    WindowRegistry, WindowRegistryState,
+    start_remote_server, stop_remote_server, is_remote_server_running,
+    stop_watching, unregister_window, write_terminal, RemoteServerState, RemoteServerStateType,
+    TerminalState, WatcherState, WindowRegistry, WindowRegistryState,
 };
 use std::sync::{Arc, Mutex};
 
@@ -28,6 +29,7 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(commands::TerminalManager::new())) as TerminalState)
         .manage(Arc::new(Mutex::new(commands::WatcherManager::new())) as WatcherState)
         .manage(Arc::new(Mutex::new(WindowRegistry::new())) as WindowRegistryState)
+        .manage(Arc::new(tokio::sync::Mutex::new(RemoteServerState::new())) as RemoteServerStateType)
         .setup(|app| {
             // Setup menu bar
             setup_menu(app)?;
@@ -104,6 +106,10 @@ pub fn run() {
             get_behind_ahead_count,
             get_branch_ahead_count,
             pull_commits,
+            // Remote access
+            start_remote_server,
+            stop_remote_server,
+            is_remote_server_running,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
