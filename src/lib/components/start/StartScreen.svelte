@@ -1,6 +1,12 @@
 <script lang="ts">
   import { dialogService } from '@/lib/services/dialogService';
+  import {
+    saveSettings,
+    STARTUP_COMMANDS,
+    type StartupCommand,
+  } from '@/lib/services/persistenceService';
   import { projectStore, recentProjects, type RecentProject } from '@/lib/stores/projectStore';
+  import { settingsStore, startupCommand } from '@/lib/stores/settingsStore';
   import { tabStore } from '@/lib/stores/tabStore';
   import RecentProjectItem from './RecentProjectItem.svelte';
   import { onMount } from 'svelte';
@@ -25,6 +31,11 @@
 
   function handleProjectRemove(project: RecentProject) {
     projectStore.removeProject(project.path);
+  }
+
+  function handleStartupCommandChange(command: StartupCommand) {
+    settingsStore.setStartupCommand(command);
+    saveSettings(settingsStore.getStateForPersistence());
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -142,6 +153,36 @@
         </span>
       </div>
     </button>
+
+    <div class="startup-command-section">
+      <span class="startup-label">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="4 17 10 11 4 5"></polyline>
+          <line x1="12" y1="19" x2="20" y2="19"></line>
+        </svg>
+        Startup Command
+      </span>
+      <div class="segment-control">
+        {#each STARTUP_COMMANDS as cmd (cmd.id)}
+          <button
+            class="segment-btn"
+            class:active={$startupCommand === cmd.id}
+            onclick={() => handleStartupCommandChange(cmd.id)}
+          >
+            {cmd.label}
+          </button>
+        {/each}
+      </div>
+    </div>
 
     {#if $recentProjects.length > 0}
       <section class="recent-section">
@@ -578,6 +619,74 @@
     color: var(--accent-color);
     transform: translateY(-1px);
     box-shadow: 0 3px 0 var(--bg-primary);
+  }
+
+  /* ===== Startup Command Section ===== */
+  .startup-command-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: var(--space-4);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-glass);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    transition: border-color var(--transition-normal);
+  }
+
+  .startup-command-section:hover {
+    border-color: var(--border-glow);
+  }
+
+  .startup-label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+
+  .startup-label svg {
+    color: var(--accent-color);
+    opacity: 0.6;
+  }
+
+  .segment-control {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-subtle);
+  }
+
+  .segment-btn {
+    padding: 6px 16px;
+    background: transparent;
+    border: none;
+    border-radius: calc(var(--radius-md) - 2px);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+  }
+
+  .segment-btn:hover:not(.active) {
+    color: var(--text-secondary);
+    background: rgba(125, 211, 252, 0.05);
+  }
+
+  .segment-btn.active {
+    background: var(--accent-subtle);
+    color: var(--accent-color);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   }
 
   /* ===== Recent Section ===== */
