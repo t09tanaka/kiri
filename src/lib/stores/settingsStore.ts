@@ -1,4 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
+import { DEFAULT_STARTUP_COMMAND, type StartupCommand } from '@/lib/services/persistenceService';
 
 // Font size constraints (VSCode-like)
 const MIN_FONT_SIZE = 8;
@@ -8,10 +9,12 @@ const ZOOM_STEP = 1;
 
 export interface SettingsState {
   fontSize: number;
+  startupCommand: StartupCommand;
 }
 
 const initialState: SettingsState = {
   fontSize: DEFAULT_FONT_SIZE,
+  startupCommand: DEFAULT_STARTUP_COMMAND,
 };
 
 function createSettingsStore() {
@@ -51,6 +54,16 @@ function createSettingsStore() {
     },
 
     /**
+     * Set startup command
+     */
+    setStartupCommand: (command: StartupCommand) => {
+      update((state) => ({
+        ...state,
+        startupCommand: command,
+      }));
+    },
+
+    /**
      * Set font size directly
      */
     setFontSize: (size: number) => {
@@ -82,6 +95,7 @@ function createSettingsStore() {
       update((current) => ({
         ...current,
         fontSize: state.fontSize ?? DEFAULT_FONT_SIZE,
+        startupCommand: state.startupCommand ?? DEFAULT_STARTUP_COMMAND,
       }));
     },
 
@@ -96,6 +110,7 @@ export const settingsStore = createSettingsStore();
 
 // Derived stores for convenience
 export const fontSize = derived(settingsStore, ($settings) => $settings.fontSize);
+export const startupCommand = derived(settingsStore, ($settings) => $settings.startupCommand);
 
 // Export constants for testing
 export const FONT_SIZE_CONSTRAINTS = {

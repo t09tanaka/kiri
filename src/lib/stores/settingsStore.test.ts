@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
-import { settingsStore, fontSize, FONT_SIZE_CONSTRAINTS } from './settingsStore';
+import { settingsStore, fontSize, startupCommand, FONT_SIZE_CONSTRAINTS } from './settingsStore';
 
 describe('settingsStore', () => {
   beforeEach(() => {
@@ -113,7 +113,7 @@ describe('settingsStore', () => {
     it('should return current state', () => {
       settingsStore.setFontSize(16);
       const state = settingsStore.getStateForPersistence();
-      expect(state).toEqual({ fontSize: 16 });
+      expect(state).toEqual({ fontSize: 16, startupCommand: 'none' });
     });
   });
 
@@ -146,6 +146,65 @@ describe('settingsStore', () => {
       expect(FONT_SIZE_CONSTRAINTS.MAX).toBe(32);
       expect(FONT_SIZE_CONSTRAINTS.DEFAULT).toBe(13);
       expect(FONT_SIZE_CONSTRAINTS.STEP).toBe(1);
+    });
+  });
+
+  describe('startupCommand', () => {
+    it('should have default value of none', () => {
+      const state = get(settingsStore);
+      expect(state.startupCommand).toBe('none');
+    });
+
+    it('should set startup command', () => {
+      settingsStore.setStartupCommand('claude');
+      const state = get(settingsStore);
+      expect(state.startupCommand).toBe('claude');
+    });
+
+    it('should set to codex', () => {
+      settingsStore.setStartupCommand('codex');
+      const state = get(settingsStore);
+      expect(state.startupCommand).toBe('codex');
+    });
+
+    it('should set back to none', () => {
+      settingsStore.setStartupCommand('claude');
+      settingsStore.setStartupCommand('none');
+      const state = get(settingsStore);
+      expect(state.startupCommand).toBe('none');
+    });
+
+    it('should be included in getStateForPersistence', () => {
+      settingsStore.setStartupCommand('claude');
+      const state = settingsStore.getStateForPersistence();
+      expect(state.startupCommand).toBe('claude');
+    });
+
+    it('should be restored from persisted state', () => {
+      settingsStore.restoreState({ startupCommand: 'codex' });
+      const state = get(settingsStore);
+      expect(state.startupCommand).toBe('codex');
+    });
+
+    it('should default to none when not in persisted state', () => {
+      settingsStore.restoreState({});
+      const state = get(settingsStore);
+      expect(state.startupCommand).toBe('none');
+    });
+
+    it('should reset to none on store reset', () => {
+      settingsStore.setStartupCommand('claude');
+      settingsStore.reset();
+      const state = get(settingsStore);
+      expect(state.startupCommand).toBe('none');
+    });
+  });
+
+  describe('derived store: startupCommand', () => {
+    it('should reflect current startup command', () => {
+      expect(get(startupCommand)).toBe('none');
+      settingsStore.setStartupCommand('claude');
+      expect(get(startupCommand)).toBe('claude');
     });
   });
 });
