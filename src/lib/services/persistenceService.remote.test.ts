@@ -39,10 +39,8 @@ describe('RemoteAccessSettings', () => {
         enabled: false,
         port: 9876,
         authToken: null,
-        cloudflare: {
-          enabled: false,
-          tunnelToken: null,
-        },
+        tunnelToken: null,
+        tunnelUrl: null,
       });
     });
   });
@@ -90,10 +88,8 @@ describe('RemoteAccessSettings', () => {
         enabled: true,
         port: 8080,
         authToken: 'my-secret-token',
-        cloudflare: {
-          enabled: true,
-          tunnelToken: 'cf-tunnel-token',
-        },
+        tunnelToken: 'cf-tunnel-token',
+        tunnelUrl: 'https://my-tunnel.example.com',
       };
       mockStore.get.mockResolvedValue(storedSettings);
 
@@ -111,25 +107,6 @@ describe('RemoteAccessSettings', () => {
       expect(result).toEqual(DEFAULT_REMOTE_ACCESS_SETTINGS);
     });
 
-    it('should fill missing cloudflare sub-fields with defaults for partial cloudflare config', async () => {
-      const { loadRemoteAccessSettings } = await importModule();
-      const partialCloudflareSettings = {
-        enabled: true,
-        port: 4000,
-        authToken: 'token',
-        cloudflare: {
-          enabled: true,
-          // tunnelToken is missing
-        },
-      };
-      mockStore.get.mockResolvedValue(partialCloudflareSettings);
-
-      const result = await loadRemoteAccessSettings();
-
-      expect(result.cloudflare.enabled).toBe(true);
-      expect(result.cloudflare.tunnelToken).toBeNull();
-    });
-
     it('should fill missing fields with defaults for partial stored settings', async () => {
       const { loadRemoteAccessSettings } = await importModule();
       // Simulate a scenario where only some fields are stored (e.g., from an older version)
@@ -144,10 +121,53 @@ describe('RemoteAccessSettings', () => {
       expect(result.enabled).toBe(true);
       expect(result.port).toBe(3000);
       expect(result.authToken).toBeNull();
-      expect(result.cloudflare).toEqual({
-        enabled: false,
-        tunnelToken: null,
+      expect(result.tunnelToken).toBeNull();
+      expect(result.tunnelUrl).toBeNull();
+    });
+
+    it('should migrate from old CloudflareConfig format', async () => {
+      const { loadRemoteAccessSettings } = await importModule();
+      // Old format with nested cloudflare object
+      const oldFormatSettings = {
+        enabled: true,
+        port: 9876,
+        authToken: 'token-123',
+        cloudflare: {
+          enabled: true,
+          tunnelToken: 'old-cf-tunnel-token',
+        },
+      };
+      mockStore.get.mockResolvedValue(oldFormatSettings);
+
+      const result = await loadRemoteAccessSettings();
+
+      expect(result).toEqual({
+        enabled: true,
+        port: 9876,
+        authToken: 'token-123',
+        tunnelToken: 'old-cf-tunnel-token',
+        tunnelUrl: null,
       });
+    });
+
+    it('should prefer top-level tunnelToken over nested cloudflare.tunnelToken during migration', async () => {
+      const { loadRemoteAccessSettings } = await importModule();
+      // Mixed format: both top-level and nested
+      const mixedSettings = {
+        enabled: true,
+        port: 9876,
+        authToken: null,
+        tunnelToken: 'new-token',
+        cloudflare: {
+          enabled: true,
+          tunnelToken: 'old-token',
+        },
+      };
+      mockStore.get.mockResolvedValue(mixedSettings);
+
+      const result = await loadRemoteAccessSettings();
+
+      expect(result.tunnelToken).toBe('new-token');
     });
   });
 
@@ -158,10 +178,8 @@ describe('RemoteAccessSettings', () => {
         enabled: true,
         port: 9876,
         authToken: 'test-token',
-        cloudflare: {
-          enabled: false,
-          tunnelToken: null,
-        },
+        tunnelToken: null,
+        tunnelUrl: null,
       };
 
       await saveRemoteAccessSettings(settings);
