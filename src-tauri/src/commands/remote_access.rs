@@ -49,6 +49,7 @@ pub struct HealthResponse {
 
 /// Response payload for the project list endpoint.
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectsResponse {
     pub open_projects: Vec<OpenProject>,
     pub recent_projects: Vec<RecentProject>,
@@ -56,6 +57,7 @@ pub struct ProjectsResponse {
 
 /// A currently open project with an active window.
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenProject {
     pub path: String,
     pub name: String,
@@ -123,6 +125,7 @@ pub async fn list_projects(
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
     // Get open projects from WindowRegistry
+    // NOTE: std::sync::Mutex -- keep lock scope minimal, never hold across await points
     let registry = app.state::<crate::commands::WindowRegistryState>();
     let open_paths = {
         let reg = registry.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -192,6 +195,27 @@ pub async fn open_project(
 
     let registry = app.state::<crate::commands::WindowRegistryState>();
 
+    // Check if project is already open
+    // NOTE: std::sync::Mutex -- keep lock scope minimal, never hold across await points
+    let existing_label = {
+        let reg = registry.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        reg.get_label_for_path(&req.path).cloned()
+    };
+
+    if let Some(label) = existing_label {
+        // Focus existing window
+        if let Some(window) = app.get_webview_window(&label) {
+            window
+                .set_focus()
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            return Ok(Json(serde_json::json!({
+                "success": true, "path": req.path, "action": "focused"
+            })));
+        }
+        // Window gone but registry stale -- fall through to create
+    }
+
+    // Create new window
     crate::commands::window::create_window_impl(
         app,
         Some(&registry),
@@ -203,9 +227,9 @@ pub async fn open_project(
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    Ok(Json(
-        serde_json::json!({ "success": true, "path": req.path }),
-    ))
+    Ok(Json(serde_json::json!({
+        "success": true, "path": req.path, "action": "opened"
+    })))
 }
 
 /// Handler for `POST /api/projects/close`.
@@ -223,6 +247,7 @@ pub async fn close_project(
         .as_ref()
         .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
 
+    // NOTE: std::sync::Mutex -- keep lock scope minimal, never hold across await points
     let registry = app.state::<crate::commands::WindowRegistryState>();
     let label = {
         let reg = registry.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -415,15 +440,15 @@ mod tests {
         };
 
         let json = serde_json::to_value(&response).unwrap();
-        assert_eq!(json["open_projects"][0]["path"], "/Users/user/projects/kiri");
-        assert_eq!(json["open_projects"][0]["name"], "kiri");
-        assert_eq!(json["open_projects"][0]["branch"], "main");
+        assert_eq!(json["openProjects"][0]["path"], "/Users/user/projects/kiri");
+        assert_eq!(json["openProjects"][0]["name"], "kiri");
+        assert_eq!(json["openProjects"][0]["branch"], "main");
         assert_eq!(
-            json["recent_projects"][0]["path"],
+            json["recentProjects"][0]["path"],
             "/Users/user/projects/old-project"
         );
-        assert_eq!(json["recent_projects"][0]["lastOpened"], 1700000000.0);
-        assert_eq!(json["recent_projects"][0]["gitBranch"], "develop");
+        assert_eq!(json["recentProjects"][0]["lastOpened"], 1700000000.0);
+        assert_eq!(json["recentProjects"][0]["gitBranch"], "develop");
     }
 
     #[test]
@@ -433,8 +458,8 @@ mod tests {
             recent_projects: vec![],
         };
         let json = serde_json::to_value(&response).unwrap();
-        assert!(json["open_projects"].as_array().unwrap().is_empty());
-        assert!(json["recent_projects"].as_array().unwrap().is_empty());
+        assert!(json["openProjects"].as_array().unwrap().is_empty());
+        assert!(json["recentProjects"].as_array().unwrap().is_empty());
     }
 
     #[test]
