@@ -80,6 +80,11 @@ pub struct TerminalStatus {
 // ── Incoming client actions ──────────────────────────────────────
 
 /// Incoming action from a remote client via WebSocket.
+///
+/// `rename_all = "camelCase"` affects both the `tag` discriminator and field
+/// names.  All current fields are single lowercase words (`path`) so the
+/// rename is a no-op for them; this note exists to prevent surprises if
+/// multi-word fields are added in the future.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "action", rename_all = "camelCase")]
 pub enum ClientAction {
@@ -189,8 +194,9 @@ pub async fn ws_handler(
     ws.on_upgrade(|socket| handle_status_ws(socket, state))
 }
 
-/// Drive the WebSocket connection: send status every 2 s, handle
-/// incoming ping/close frames.
+/// Drive the WebSocket connection: send status every 2 s and handle
+/// incoming frames -- ping/close control frames and `ClientAction`
+/// JSON messages (`openProject`, `closeProject`).
 async fn handle_status_ws(mut socket: WebSocket, state: AppState) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
 
@@ -211,8 +217,9 @@ async fn handle_status_ws(mut socket: WebSocket, state: AppState) {
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(action) = serde_json::from_str::<ClientAction>(&text) {
-                            handle_client_action(&state, action).await;
+                        match serde_json::from_str::<ClientAction>(&text) {
+                            Ok(action) => handle_client_action(&state, action).await,
+                            Err(e) => log::warn!("remote_access: ignoring unrecognized WS message: {e}"),
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => break,
@@ -236,6 +243,12 @@ async fn handle_client_action(state: &AppState, action: ClientAction) {
 
     match action {
         ClientAction::OpenProject { path } => {
+            // Canonicalize the path to prevent path-traversal attacks.
+            let canonical = match std::fs::canonicalize(&path) {
+                Ok(p) => p.to_string_lossy().into_owned(),
+                Err(_) => return, // path does not exist — ignore
+            };
+
             use tauri::Manager;
             let registry = app.state::<crate::commands::WindowRegistryState>();
 
@@ -245,13 +258,18 @@ async fn handle_client_action(state: &AppState, action: ClientAction) {
                     Ok(r) => r,
                     Err(_) => return,
                 };
-                reg.get_label_for_path(&path).cloned()
+                reg.get_label_for_path(&canonical).cloned()
             };
 
             if let Some(label) = existing_label {
                 if let Some(window) = app.get_webview_window(&label) {
                     let _ = window.set_focus();
                     return;
+                } else {
+                    // Window closed without being unregistered — purge the stale entry
+                    if let Ok(mut reg) = registry.lock() {
+                        reg.unregister_by_label(&label);
+                    }
                 }
             }
 
@@ -263,10 +281,16 @@ async fn handle_client_action(state: &AppState, action: ClientAction) {
                 None,
                 None,
                 None,
-                Some(path),
+                Some(canonical),
             );
         }
         ClientAction::CloseProject { path } => {
+            // Canonicalize the path before registry lookup.
+            let canonical = match std::fs::canonicalize(&path) {
+                Ok(p) => p.to_string_lossy().into_owned(),
+                Err(_) => return, // path does not exist — ignore
+            };
+
             use tauri::Manager;
             let registry = app.state::<crate::commands::WindowRegistryState>();
             let label = {
@@ -274,7 +298,7 @@ async fn handle_client_action(state: &AppState, action: ClientAction) {
                     Ok(r) => r,
                     Err(_) => return,
                 };
-                reg.get_label_for_path(&path).cloned()
+                reg.get_label_for_path(&canonical).cloned()
             };
 
             if let Some(label) = label {
@@ -298,7 +322,10 @@ fn collect_full_status(state: &AppState) -> Option<StatusUpdate> {
     // -- Open projects --
     let registry = app.state::<crate::commands::WindowRegistryState>();
     let open_paths = {
-        let reg = registry.lock().ok()?;
+        let reg = registry.lock().map_err(|e| {
+            log::error!("WindowRegistry mutex poisoned: {e}");
+            e
+        }).ok()?;
         reg.get_all_paths()
     };
 
@@ -324,7 +351,10 @@ fn collect_full_status(state: &AppState) -> Option<StatusUpdate> {
     // -- Terminals --
     let terminal_state = app.state::<crate::commands::TerminalState>();
     let terminal_snapshots: Vec<(u32, bool, Option<u32>)> = {
-        let mut manager = terminal_state.lock().ok()?;
+        let mut manager = terminal_state.lock().map_err(|e| {
+            log::error!("TerminalState mutex poisoned: {e}");
+            e
+        }).ok()?;
         manager
             .instances
             .iter_mut()
