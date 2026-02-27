@@ -4,6 +4,9 @@
 //! responds to health checks, enforces bearer-token authentication,
 //! and shuts down gracefully.
 
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
 const TEST_TOKEN: &str = "test-token-abc-123";
 
 /// Helper: start a server on an ephemeral port and return (port, shutdown_tx, handle).
@@ -19,14 +22,11 @@ async fn start_test_server() -> (
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
 
+    let token = Arc::new(RwLock::new(TEST_TOKEN.to_string()));
     let handle = tokio::spawn(async move {
-        app_lib::commands::remote_access::start_server(
-            listener,
-            shutdown_rx,
-            TEST_TOKEN.to_string(),
-        )
-        .await
-        .unwrap();
+        app_lib::commands::remote_access::start_server(listener, shutdown_rx, token)
+            .await
+            .unwrap();
     });
 
     // Wait for the server to be ready
@@ -219,6 +219,67 @@ async fn test_auth_required_for_api_routes_without_token() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 401);
+
+    shutdown_tx.send(()).unwrap();
+}
+
+// ── Live token update ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_live_token_update_takes_effect_immediately() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let live_token = Arc::new(RwLock::new(TEST_TOKEN.to_string()));
+    let live_token_clone = live_token.clone();
+
+    let _handle = tokio::spawn(async move {
+        app_lib::commands::remote_access::start_server(listener, shutdown_rx, live_token_clone)
+            .await
+            .unwrap();
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let client = reqwest::Client::new();
+
+    // Old token works
+    let resp = client
+        .post(format!("http://127.0.0.1:{}/api/auth/verify", port))
+        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+
+    // Update the live token
+    let new_token = "new-token-xyz-789";
+    {
+        let mut t = live_token.write().await;
+        *t = new_token.to_string();
+    }
+
+    // Old token no longer works
+    let resp = client
+        .post(format!("http://127.0.0.1:{}/api/auth/verify", port))
+        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // New token works
+    let resp = client
+        .post(format!("http://127.0.0.1:{}/api/auth/verify", port))
+        .header("Authorization", format!("Bearer {}", new_token))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
 
     shutdown_tx.send(()).unwrap();
 }

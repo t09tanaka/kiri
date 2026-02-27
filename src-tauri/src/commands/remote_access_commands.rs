@@ -7,7 +7,7 @@
 use base64::Engine;
 use image::ImageEncoder;
 use std::sync::Arc;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{oneshot, Mutex, RwLock};
 
 /// Holds the runtime state of the remote access server.
 pub struct RemoteServerState {
@@ -21,6 +21,9 @@ pub struct RemoteServerState {
     is_running: bool,
     /// Bearer token used to authenticate remote API requests.
     auth_token: Option<String>,
+    /// Shared reference to the live token used by the running server.
+    /// Updating this value immediately affects the running server's auth.
+    live_token: Option<Arc<RwLock<String>>>,
 }
 
 impl RemoteServerState {
@@ -31,6 +34,7 @@ impl RemoteServerState {
             port: 9876,
             is_running: false,
             auth_token: None,
+            live_token: None,
         }
     }
 }
@@ -70,7 +74,9 @@ pub async fn start_remote_server(
     if server.auth_token.is_none() {
         server.auth_token = Some(uuid::Uuid::new_v4().to_string());
     }
-    let auth_token = server.auth_token.clone().unwrap();
+    let token = server.auth_token.clone().unwrap();
+    let live_token = Arc::new(RwLock::new(token));
+    server.live_token = Some(live_token.clone());
 
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr)
@@ -81,7 +87,7 @@ pub async fn start_remote_server(
 
     let handle = tokio::spawn(async move {
         if let Err(e) =
-            super::remote_access::start_server(listener, shutdown_rx, auth_token).await
+            super::remote_access::start_server(listener, shutdown_rx, live_token).await
         {
             log::error!("Remote server error: {}", e);
         }
@@ -111,6 +117,7 @@ pub async fn stop_remote_server(
     }
     server.server_handle = None;
     server.is_running = false;
+    server.live_token = None;
     Ok(())
 }
 
@@ -129,6 +136,7 @@ pub async fn is_remote_server_running(
                 server.is_running = false;
                 server.shutdown_tx = None;
                 server.server_handle = None;
+                server.live_token = None;
                 return Ok(false);
             }
         }
@@ -137,7 +145,7 @@ pub async fn is_remote_server_running(
 }
 
 /// Generate a QR code PNG (as a base64 data-URI) that encodes the
-/// authentication token and port number.
+/// server URL (with auto-detected LAN IP) and authentication token.
 ///
 /// A new token is generated if none exists yet.
 ///
@@ -156,9 +164,15 @@ pub async fn generate_remote_qr_code(
     }
 
     let token = server.auth_token.as_ref().unwrap();
+
+    // Auto-detect local IP for QR payload
+    let host = local_ip_address::local_ip()
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|_| "localhost".to_string());
+
     let qr_data = serde_json::json!({
+        "url": format!("http://{}:{}", host, port),
         "token": token,
-        "port": port,
     });
 
     generate_qr_base64(&qr_data.to_string())
@@ -168,8 +182,8 @@ pub async fn generate_remote_qr_code(
 ///
 /// Returns the new token string.
 ///
-/// **Note:** If the server is currently running, the new token will
-/// only take effect after restarting the server.
+/// If the server is currently running, the live token is updated
+/// immediately so the new token takes effect without restart.
 #[tauri::command]
 pub async fn regenerate_remote_token(
     state: tauri::State<'_, RemoteServerStateType>,
@@ -177,6 +191,13 @@ pub async fn regenerate_remote_token(
     let mut server = state.lock().await;
     let new_token = uuid::Uuid::new_v4().to_string();
     server.auth_token = Some(new_token.clone());
+
+    // Update live server token immediately
+    if let Some(ref live_token) = server.live_token {
+        let mut t = live_token.write().await;
+        *t = new_token.clone();
+    }
+
     Ok(new_token)
 }
 
@@ -210,6 +231,7 @@ mod tests {
         let state = RemoteServerState::new();
         assert!(!state.is_running);
         assert!(state.auth_token.is_none());
+        assert!(state.live_token.is_none());
         assert_eq!(state.port, 9876);
     }
 

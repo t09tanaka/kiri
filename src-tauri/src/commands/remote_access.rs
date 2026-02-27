@@ -16,13 +16,23 @@ use axum::{
     Json, Router,
 };
 use serde::Serialize;
-use tokio::sync::oneshot;
+use std::sync::Arc;
+use subtle::ConstantTimeEq;
+use tokio::sync::{oneshot, RwLock};
 
 /// Shared application state passed to handlers and middleware.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AppState {
     /// The bearer token required to access protected endpoints.
-    pub auth_token: String,
+    pub(crate) auth_token: Arc<RwLock<String>>,
+}
+
+impl std::fmt::Debug for AppState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppState")
+            .field("auth_token", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Response payload for the health check endpoint.
@@ -57,6 +67,8 @@ pub async fn verify_handler() -> Json<serde_json::Value> {
 /// The following paths are exempt from authentication:
 /// - `/api/health` — always accessible for health checks
 /// - Any path that does **not** start with `/api/` or `/ws/` (static PWA files)
+///
+/// Token comparison uses constant-time equality to prevent timing attacks.
 pub async fn auth_middleware(
     State(state): State<AppState>,
     request: Request,
@@ -82,7 +94,12 @@ pub async fn auth_middleware(
     match auth_header {
         Some(auth) if auth.starts_with("Bearer ") => {
             let token = &auth[7..];
-            if token == state.auth_token {
+            let expected = state.auth_token.read().await;
+            let token_bytes = token.as_bytes();
+            let expected_bytes = expected.as_bytes();
+            if token_bytes.len() == expected_bytes.len()
+                && bool::from(token_bytes.ct_eq(expected_bytes))
+            {
                 Ok(next.run(request).await)
             } else {
                 Err(StatusCode::UNAUTHORIZED)
@@ -96,7 +113,7 @@ pub async fn auth_middleware(
 ///
 /// The `auth_token` is used by the bearer-token middleware to gate
 /// access to protected endpoints.
-pub fn create_router(auth_token: String) -> Router {
+pub fn create_router(auth_token: Arc<RwLock<String>>) -> Router {
     let state = AppState { auth_token };
 
     Router::new()
@@ -124,7 +141,7 @@ pub fn create_router(auth_token: String) -> Router {
 pub async fn start_server(
     listener: tokio::net::TcpListener,
     shutdown_rx: oneshot::Receiver<()>,
-    auth_token: String,
+    auth_token: Arc<RwLock<String>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = create_router(auth_token);
     log::info!(
@@ -159,15 +176,27 @@ mod tests {
     #[test]
     fn test_create_router_builds() {
         // Verify the router can be constructed without panicking
-        let _router = create_router("test-token".to_string());
+        let token = Arc::new(RwLock::new("test-token".to_string()));
+        let _router = create_router(token);
     }
 
     #[test]
     fn test_app_state_clone() {
         let state = AppState {
-            auth_token: "abc-123".to_string(),
+            auth_token: Arc::new(RwLock::new("abc-123".to_string())),
         };
         let cloned = state.clone();
-        assert_eq!(cloned.auth_token, "abc-123");
+        // Both point to the same Arc
+        assert!(Arc::ptr_eq(&state.auth_token, &cloned.auth_token));
+    }
+
+    #[test]
+    fn test_app_state_debug_redacts_token() {
+        let state = AppState {
+            auth_token: Arc::new(RwLock::new("secret-token".to_string())),
+        };
+        let debug_output = format!("{:?}", state);
+        assert!(debug_output.contains("[REDACTED]"));
+        assert!(!debug_output.contains("secret-token"));
     }
 }
