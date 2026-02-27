@@ -161,62 +161,6 @@ body {
   }
 }
 
-/* ── Auth screen ────────────────────────────────────── */
-
-#auth-screen {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: calc(100vh - 60px);
-  padding: 24px;
-  padding-left: calc(24px + var(--safe-area-left));
-  padding-right: calc(24px + var(--safe-area-right));
-}
-
-.auth-card {
-  width: 100%;
-  max-width: 360px;
-  padding: 32px 24px;
-  background: var(--bg-glass);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid var(--border-glow);
-  border-radius: var(--radius-lg);
-  text-align: center;
-  position: relative;
-  overflow: hidden;
-}
-
-.auth-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 10%;
-  right: 10%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--accent-color), transparent);
-  opacity: 0.6;
-}
-
-.auth-card h2 {
-  font-size: 20px;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
-.auth-card p {
-  font-size: 14px;
-  color: var(--text-secondary);
-  margin-bottom: 24px;
-  line-height: 1.5;
-}
-
-.error-text {
-  font-size: 13px;
-  color: var(--color-danger);
-  margin-top: 12px;
-}
-
 /* ── Dashboard ──────────────────────────────────────── */
 
 .section {
@@ -425,12 +369,6 @@ body {
 .btn-sm {
   padding: 6px 14px;
   font-size: 13px;
-}
-
-/* Full-width button in auth card */
-.auth-card .btn {
-  width: 100%;
-  margin-top: 16px;
 }
 
 /* ── Input fields ───────────────────────────────────── */

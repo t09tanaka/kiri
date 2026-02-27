@@ -6,9 +6,9 @@
     <meta name="theme-color" content="#0d1117" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <link rel="manifest" href="/manifest.json" />
+    <link rel="manifest" href="manifest.json" />
     <title>kiri remote</title>
-    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <div id="app">
@@ -22,24 +22,7 @@
         </div>
       </header>
       <main id="main-content">
-        <div id="auth-screen" class="screen">
-          <div class="auth-card">
-            <h2>Authentication Required</h2>
-            <p>Enter the bearer token from kiri settings.</p>
-            <input
-              type="password"
-              id="token-input"
-              placeholder="Bearer token"
-              spellcheck="false"
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="off"
-            />
-            <button id="auth-btn" class="btn btn-primary">Connect</button>
-            <p id="auth-error" class="error-text" hidden></p>
-          </div>
-        </div>
-        <div id="dashboard-screen" class="screen" hidden>
+        <div id="dashboard-screen" class="screen">
           <section class="section">
             <h2 class="section-title">Open Projects</h2>
             <div id="open-projects" class="project-list">
@@ -61,6 +44,6 @@
         </div>
       </main>
     </div>
-    <script src="/app.js"></script>
+    <script src="app.js"></script>
   </body>
 </html>

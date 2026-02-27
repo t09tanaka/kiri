@@ -1,89 +1,33 @@
-// kiri remote - PWA application logic
+// kiri remote - PWA application logic (WebSocket-only, optimistic UI)
 
 // ── State ─────────────────────────────────────────────
-let token = localStorage.getItem('kiri-remote-token') || '';
-let ws = null;
-let reconnectTimer = null;
+var ws = null;
+var reconnectTimer = null;
+var lastStatus = null;
 
 // ── DOM elements ──────────────────────────────────────
-const authScreen = document.getElementById('auth-screen');
-const dashboardScreen = document.getElementById('dashboard-screen');
-const tokenInput = document.getElementById('token-input');
-const authBtn = document.getElementById('auth-btn');
-const authError = document.getElementById('auth-error');
-const statusDot = document.getElementById('status-dot');
-const statusText = document.getElementById('status-text');
-const openProjectsEl = document.getElementById('open-projects');
-const recentProjectsEl = document.getElementById('recent-projects');
-const terminalsEl = document.getElementById('terminals');
+var statusDot = document.getElementById('status-dot');
+var statusText = document.getElementById('status-text');
+var openProjectsEl = document.getElementById('open-projects');
+var recentProjectsEl = document.getElementById('recent-projects');
+var terminalsEl = document.getElementById('terminals');
 
 // ── Initialize ────────────────────────────────────────
 function init() {
-  authBtn.addEventListener('click', authenticate);
-  tokenInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') authenticate();
-  });
-
-  // Register service worker
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').catch(function () {
-      // Service worker registration failed -- not critical
-    });
+    var basePath = getBasePath();
+    navigator.serviceWorker.register(basePath + 'sw.js', { scope: basePath }).catch(function () {});
   }
+  connectWebSocket();
+}
 
-  if (token) {
-    verifyToken();
-  } else {
-    showAuth();
+function getBasePath() {
+  var path = location.pathname;
+  var parts = path.split('/').filter(Boolean);
+  if (parts.length > 0) {
+    return '/' + parts[0] + '/';
   }
-}
-
-// ── Auth ──────────────────────────────────────────────
-async function authenticate() {
-  var inputToken = tokenInput.value.trim();
-  if (!inputToken) return;
-
-  token = inputToken;
-  await verifyToken();
-}
-
-async function verifyToken() {
-  try {
-    var res = await fetch('/api/auth/verify', {
-      method: 'POST',
-      headers: { Authorization: 'Bearer ' + token },
-    });
-    if (res.ok) {
-      localStorage.setItem('kiri-remote-token', token);
-      showDashboard();
-      connectWebSocket();
-    } else {
-      showAuth();
-      showError('Invalid token');
-    }
-  } catch (e) {
-    showAuth();
-    showError('Connection failed');
-  }
-}
-
-function showAuth() {
-  authScreen.hidden = false;
-  dashboardScreen.hidden = true;
-  setStatus('disconnected', 'Disconnected');
-}
-
-function showDashboard() {
-  authScreen.hidden = true;
-  dashboardScreen.hidden = false;
-}
-
-function showError(msg) {
-  authError.textContent = msg;
-  authError.hidden = false;
-  setTimeout(function () {
-    authError.hidden = true;
-  }, 3000);
+  return '/';
 }
 
 // ── WebSocket ─────────────────────────────────────────
@@ -91,9 +35,8 @@ function connectWebSocket() {
   if (ws) ws.close();
 
   var protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(
-    protocol + '//' + location.host + '/ws/status?token=' + encodeURIComponent(token)
-  );
+  var basePath = getBasePath();
+  ws = new WebSocket(protocol + '//' + location.host + basePath + 'ws');
 
   ws.onopen = function () {
     setStatus('connected', 'Connected');
@@ -103,6 +46,7 @@ function connectWebSocket() {
   ws.onmessage = function (e) {
     try {
       var data = JSON.parse(e.data);
+      lastStatus = data;
       renderDashboard(data);
     } catch (err) {
       console.error('Failed to parse WS message:', err);
@@ -111,13 +55,18 @@ function connectWebSocket() {
 
   ws.onclose = function () {
     setStatus('disconnected', 'Disconnected');
-    // Auto-reconnect after 3s
     reconnectTimer = setTimeout(connectWebSocket, 3000);
   };
 
   ws.onerror = function () {
     setStatus('disconnected', 'Error');
   };
+}
+
+function sendAction(action) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(action));
+  }
 }
 
 function setStatus(state, text) {
@@ -217,35 +166,54 @@ function renderRecentProjects(projects) {
     .join('');
 }
 
-// ── Actions ───────────────────────────────────────────
-async function openProject(path) {
-  try {
-    await fetch('/api/projects/open', {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ path: path }),
+// ── Actions (Optimistic UI) ──────────────────────────
+function openProject(path) {
+  if (lastStatus) {
+    var project = null;
+    var newRecent = [];
+    (lastStatus.recentProjects || []).forEach(function (p) {
+      if (p.path === path) {
+        project = p;
+      } else {
+        newRecent.push(p);
+      }
     });
-  } catch (e) {
-    console.error('Failed to open project:', e);
+    if (project) {
+      var openList = lastStatus.openProjects || [];
+      openList.push({ path: project.path, name: project.name, branch: project.gitBranch || null });
+      lastStatus.openProjects = openList;
+      lastStatus.recentProjects = newRecent;
+      renderDashboard(lastStatus);
+    }
   }
+  sendAction({ action: 'openProject', path: path });
 }
 
-async function closeProject(path) {
-  try {
-    await fetch('/api/projects/close', {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ path: path }),
+function closeProject(path) {
+  if (lastStatus) {
+    var closedProject = null;
+    var newOpen = [];
+    (lastStatus.openProjects || []).forEach(function (p) {
+      if (p.path === path) {
+        closedProject = p;
+      } else {
+        newOpen.push(p);
+      }
     });
-  } catch (e) {
-    console.error('Failed to close project:', e);
+    lastStatus.openProjects = newOpen;
+    if (closedProject) {
+      var recentList = lastStatus.recentProjects || [];
+      recentList.unshift({
+        path: closedProject.path,
+        name: closedProject.name,
+        lastOpened: Math.floor(Date.now() / 1000),
+        gitBranch: closedProject.branch,
+      });
+      lastStatus.recentProjects = recentList;
+    }
+    renderDashboard(lastStatus);
   }
+  sendAction({ action: 'closeProject', path: path });
 }
 
 // ── Utilities ─────────────────────────────────────────
