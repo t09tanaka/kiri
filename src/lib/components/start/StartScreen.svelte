@@ -626,67 +626,87 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-top: var(--space-4);
-    padding: var(--space-3) var(--space-4);
-    background: var(--bg-glass);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    transition: border-color var(--transition-normal);
-  }
-
-  .startup-command-section:hover {
-    border-color: var(--border-glow);
+    margin-top: var(--space-3);
+    padding: 10px var(--space-4);
   }
 
   .startup-label {
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    font-size: 12px;
-    font-weight: 500;
+    font-size: 11px;
+    font-weight: 400;
     color: var(--text-muted);
-    letter-spacing: 0.02em;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
     white-space: nowrap;
+    opacity: 0.6;
+    transition: opacity var(--transition-normal);
+  }
+
+  .startup-command-section:hover .startup-label {
+    opacity: 0.8;
   }
 
   .startup-label svg {
     color: var(--accent-color);
-    opacity: 0.6;
+    opacity: 0.5;
+    transition: opacity var(--transition-normal);
+  }
+
+  .startup-command-section:hover .startup-label svg {
+    opacity: 0.8;
   }
 
   .segment-control {
     display: flex;
-    gap: 2px;
-    padding: 2px;
-    background: var(--bg-tertiary);
+    gap: 4px;
+    padding: 3px;
+    background: rgba(255, 255, 255, 0.03);
     border-radius: var(--radius-md);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid rgba(125, 211, 252, 0.06);
+    transition: all var(--transition-normal);
+  }
+
+  .startup-command-section:hover .segment-control {
+    border-color: rgba(125, 211, 252, 0.1);
+    background: rgba(255, 255, 255, 0.04);
   }
 
   .segment-btn {
-    padding: 6px 16px;
+    position: relative;
+    padding: 5px 18px;
     background: transparent;
     border: none;
     border-radius: calc(var(--radius-md) - 2px);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
     color: var(--text-muted);
     cursor: pointer;
     transition: all var(--transition-fast);
     white-space: nowrap;
+    letter-spacing: 0.02em;
+    opacity: 0.5;
   }
 
   .segment-btn:hover:not(.active) {
     color: var(--text-secondary);
-    background: rgba(125, 211, 252, 0.05);
+    opacity: 0.8;
+    background: rgba(125, 211, 252, 0.04);
   }
 
   .segment-btn.active {
-    background: var(--accent-subtle);
-    color: var(--accent-color);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    background: linear-gradient(
+      135deg,
+      rgba(125, 211, 252, 0.12) 0%,
+      rgba(196, 181, 253, 0.08) 100%
+    );
+    color: var(--text-primary);
+    opacity: 1;
+    box-shadow:
+      0 0 12px rgba(125, 211, 252, 0.08),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(125, 211, 252, 0.15);
   }
 
   /* ===== Recent Section ===== */
