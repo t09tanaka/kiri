@@ -345,12 +345,13 @@ pub async fn get_terminals(
             .collect()
     };
 
-    // Now gather process info outside the lock (sysinfo is expensive).
+    // Refresh process table once, then look up each terminal.
+    let sys = refreshed_system();
     let mut terminals = Vec::with_capacity(terminal_snapshots.len());
 
     for (id, is_alive, shell_pid) in terminal_snapshots {
         let process_name = if is_alive {
-            shell_pid.and_then(get_process_name_for_pid)
+            shell_pid.and_then(|pid| lookup_process_name(&sys, pid))
         } else {
             None
         };
@@ -366,30 +367,38 @@ pub async fn get_terminals(
     Ok(Json(TerminalStatusResponse { terminals }))
 }
 
-/// Get the foreground process name for a given shell PID.
+/// Create a refreshed `sysinfo::System` for process lookups.
 ///
-/// Looks for child processes of the shell; returns the child's name
-/// if one exists, otherwise the shell's own name.
-fn get_process_name_for_pid(shell_pid: u32) -> Option<String> {
-    use sysinfo::{Pid, System};
-
-    let mut sys = System::new();
+/// Call this once, then pass the result to [`lookup_process_name`] for
+/// each terminal.  This avoids creating N `System` instances (and N
+/// full process-table scans) when there are N terminals.
+fn refreshed_system() -> sysinfo::System {
+    let mut sys = sysinfo::System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    sys
+}
+
+/// Look up the foreground process name for a given shell PID.
+///
+/// Uses the provided, already-refreshed [`sysinfo::System`] to find
+/// child processes of the shell.  Returns the child's name if one
+/// exists, otherwise the shell's own name.
+fn lookup_process_name(sys: &sysinfo::System, shell_pid: u32) -> Option<String> {
+    use sysinfo::Pid;
 
     let spid = Pid::from_u32(shell_pid);
 
     // Find child processes of the shell
-    let children: Vec<_> = sys
+    let child = sys
         .processes()
         .values()
-        .filter(|proc| {
+        .find(|proc| {
             proc.parent()
                 .map(|parent_pid| parent_pid == spid)
                 .unwrap_or(false)
-        })
-        .collect();
+        });
 
-    if let Some(child) = children.first() {
+    if let Some(child) = child {
         Some(child.name().to_string_lossy().to_string())
     } else {
         sys.process(spid)
@@ -526,10 +535,12 @@ fn collect_full_status(state: &AppState) -> Option<StatusUpdate> {
             .collect()
     };
 
+    // Refresh process table once for all terminal lookups.
+    let sys = refreshed_system();
     let mut terminals = Vec::with_capacity(terminal_snapshots.len());
     for (id, is_alive, shell_pid) in terminal_snapshots {
         let process_name = if is_alive {
-            shell_pid.and_then(get_process_name_for_pid)
+            shell_pid.and_then(|pid| lookup_process_name(&sys, pid))
         } else {
             None
         };
