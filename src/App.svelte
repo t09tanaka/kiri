@@ -321,10 +321,14 @@
 
     window.addEventListener('keydown', handleKeyDown);
 
-    // Refresh worktree info when project changes
+    // Refresh worktree info and update window title when project changes
     const unsubscribeProjectStore = projectStore.subscribe((state) => {
       if (state.currentPath) {
         worktreeStore.refresh(state.currentPath);
+        const projectName = state.currentPath.split('/').pop() || 'kiri';
+        windowService.setTitle(`${projectName} — kiri`);
+      } else {
+        windowService.setTitle('kiri');
       }
     });
 

@@ -40,6 +40,20 @@ impl WindowRegistry {
 
 pub type WindowRegistryState = Arc<Mutex<WindowRegistry>>;
 
+/// Generate window title from an optional project path
+fn window_title(project_path: Option<&str>) -> String {
+    match project_path {
+        Some(path) => {
+            let project_name = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("kiri");
+            format!("{} — kiri", project_name)
+        }
+        None => "kiri".to_string(),
+    }
+}
+
 /// Internal implementation of window creation (used by both command and menu)
 pub fn create_window_impl(
     app: &AppHandle,
@@ -76,8 +90,10 @@ pub fn create_window_impl(
         WebviewUrl::App(format!("?{}", params.join("&")).into())
     };
 
+    let title = window_title(project_path.as_deref());
+
     let mut builder = WebviewWindowBuilder::new(app, &label, url)
-        .title("kiri")
+        .title(&title)
         .inner_size(win_width, win_height)
         .min_inner_size(600.0, 400.0)
         .visible(true)
@@ -210,5 +226,31 @@ mod tests {
         let results = results.lock().unwrap();
         let unique: HashSet<_> = results.iter().collect();
         assert_eq!(unique.len(), 10, "All fetch_add results should be unique");
+    }
+
+    #[test]
+    fn test_window_title_without_project() {
+        assert_eq!(window_title(None), "kiri");
+    }
+
+    #[test]
+    fn test_window_title_with_project_path() {
+        assert_eq!(
+            window_title(Some("/Users/user/projects/my-app")),
+            "my-app — kiri"
+        );
+    }
+
+    #[test]
+    fn test_window_title_with_nested_path() {
+        assert_eq!(
+            window_title(Some("/a/b/c/deep-project")),
+            "deep-project — kiri"
+        );
+    }
+
+    #[test]
+    fn test_window_title_with_single_segment() {
+        assert_eq!(window_title(Some("my-project")), "my-project — kiri");
     }
 }

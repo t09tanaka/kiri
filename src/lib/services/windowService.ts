@@ -33,6 +33,14 @@ export const windowService = {
   unregisterWindow: (label: string): Promise<void> => invoke('unregister_window', { label }),
 
   /**
+   * Set the window title
+   */
+  setTitle: async (title: string): Promise<void> => {
+    const window = getCurrentWindow();
+    await window.setTitle(title);
+  },
+
+  /**
    * Set the size and center the window on screen
    */
   setSizeAndCenter: async (width: number, height: number): Promise<void> => {
