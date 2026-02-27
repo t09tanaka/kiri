@@ -98,6 +98,76 @@ export function getDefaultSettings(): PersistedSettings {
 }
 
 // ============================================================================
+// Remote Access Settings
+// ============================================================================
+
+/**
+ * Cloudflare tunnel configuration
+ */
+export interface CloudflareConfig {
+  enabled: boolean;
+  tunnelToken: string | null;
+}
+
+/**
+ * Remote access settings for the built-in server
+ */
+export interface RemoteAccessSettings {
+  enabled: boolean;
+  port: number;
+  authToken: string | null;
+  cloudflare: CloudflareConfig;
+}
+
+export const DEFAULT_REMOTE_ACCESS_SETTINGS: RemoteAccessSettings = {
+  enabled: false,
+  port: 9876,
+  authToken: null,
+  cloudflare: {
+    enabled: false,
+    tunnelToken: null,
+  },
+};
+
+/**
+ * Load remote access settings
+ */
+export async function loadRemoteAccessSettings(): Promise<RemoteAccessSettings> {
+  try {
+    const s = await getStore();
+    await s.reload();
+
+    const settings = await s.get<RemoteAccessSettings>('remoteAccess');
+    if (!settings) {
+      return { ...DEFAULT_REMOTE_ACCESS_SETTINGS };
+    }
+
+    return {
+      enabled: settings.enabled ?? DEFAULT_REMOTE_ACCESS_SETTINGS.enabled,
+      port: settings.port ?? DEFAULT_REMOTE_ACCESS_SETTINGS.port,
+      authToken: settings.authToken ?? DEFAULT_REMOTE_ACCESS_SETTINGS.authToken,
+      cloudflare: settings.cloudflare ?? { ...DEFAULT_REMOTE_ACCESS_SETTINGS.cloudflare },
+    };
+  } catch (error) {
+    console.error('Failed to load remote access settings:', error);
+    return { ...DEFAULT_REMOTE_ACCESS_SETTINGS };
+  }
+}
+
+/**
+ * Save remote access settings
+ */
+export async function saveRemoteAccessSettings(settings: RemoteAccessSettings): Promise<void> {
+  try {
+    const s = await getStore();
+    await s.set('remoteAccess', settings);
+    await s.save();
+  } catch (error) {
+    console.error('Failed to save remote access settings:', error);
+  }
+}
+
+// ============================================================================
 // Project-specific settings
 // ============================================================================
 
