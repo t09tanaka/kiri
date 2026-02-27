@@ -18,7 +18,7 @@ use axum::{
     http::{header, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{any, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -634,10 +634,10 @@ pub fn create_router(
 ) -> Router {
     let state = AppState {
         auth_token,
-        app_handle,
+        app_handle: app_handle.clone(),
     };
 
-    Router::new()
+    let router = Router::new()
         .route("/api/health", get(health_handler))
         .route("/api/auth/verify", post(verify_handler))
         .route("/api/projects", get(list_projects))
@@ -645,11 +645,46 @@ pub fn create_router(
         .route("/api/projects/close", post(close_project))
         .route("/api/terminals", get(get_terminals))
         .route("/ws/status", get(ws_status))
+        // Catch-all for unknown /api/ routes so they go through auth middleware
+        .route("/api/{*rest}", any(|| async { StatusCode::NOT_FOUND }))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
         ))
-        .with_state(state)
+        .with_state(state);
+
+    // Serve static PWA files as fallback for non-API/WS paths.
+    // Unknown /api/* requests are caught by the catch-all route above
+    // (and thus pass through auth middleware). The fallback only serves
+    // static files for paths like /, /style.css, /app.js, etc.
+    let ui_path = resolve_remote_ui_path(app_handle.as_ref());
+    if ui_path.exists() {
+        router.fallback_service(tower_http::services::ServeDir::new(ui_path))
+    } else {
+        log::warn!("Remote UI directory not found: {:?}", ui_path);
+        router
+    }
+}
+
+/// Resolve the path to the remote-ui directory.
+///
+/// In development: `remote-ui/` relative to the working directory
+/// (which for `cargo tauri dev` is `src-tauri/`).
+/// In production: `remote-ui/` relative to the app's resource directory.
+fn resolve_remote_ui_path(app_handle: Option<&tauri::AppHandle>) -> std::path::PathBuf {
+    // Try Tauri resource dir first (production)
+    if let Some(app) = app_handle {
+        use tauri::Manager;
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            let path = resource_dir.join("remote-ui");
+            if path.exists() {
+                return path;
+            }
+        }
+    }
+
+    // Fallback to development path
+    std::path::PathBuf::from("remote-ui")
 }
 
 /// Start the HTTP server on a pre-bound listener.
@@ -927,5 +962,11 @@ mod tests {
             app_handle: None,
         };
         assert!(collect_full_status(&state).is_none());
+    }
+
+    #[test]
+    fn test_resolve_remote_ui_path_without_app_handle() {
+        let path = resolve_remote_ui_path(None);
+        assert_eq!(path, std::path::PathBuf::from("remote-ui"));
     }
 }
