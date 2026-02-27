@@ -394,3 +394,79 @@ async fn test_close_project_endpoint_returns_503_without_app_handle() {
 
     shutdown_tx.send(()).unwrap();
 }
+
+// ── Terminal endpoint ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_terminals_endpoint_requires_auth() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let client = reqwest::Client::new();
+
+    // GET /api/terminals without token should return 401
+    let resp = client
+        .get(format!("http://127.0.0.1:{}/api/terminals", port))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn test_terminals_endpoint_returns_503_without_app_handle() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let client = reqwest::Client::new();
+
+    // GET /api/terminals with valid token but no AppHandle returns 503
+    let resp = client
+        .get(format!("http://127.0.0.1:{}/api/terminals", port))
+        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 503);
+
+    shutdown_tx.send(()).unwrap();
+}
+
+// ── WebSocket endpoint ───────────────────────────────────────────
+
+#[tokio::test]
+async fn test_ws_status_rejects_without_token() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let client = reqwest::Client::new();
+
+    // Try to access WS endpoint without token query param
+    let resp = client
+        .get(format!("http://127.0.0.1:{}/ws/status", port))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn test_ws_status_rejects_invalid_token() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let client = reqwest::Client::new();
+
+    // Try to access WS endpoint with wrong token
+    let resp = client
+        .get(format!(
+            "http://127.0.0.1:{}/ws/status?token=wrong-token",
+            port
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401);
+
+    shutdown_tx.send(()).unwrap();
+}

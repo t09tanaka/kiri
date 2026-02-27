@@ -2,20 +2,27 @@
 //!
 //! Provides an embedded axum HTTP server that can be started and stopped
 //! at runtime. The server exposes REST API endpoints for remote control
-//! of the kiri application.
+//! of the kiri application, plus a WebSocket endpoint for real-time
+//! status updates.
 //!
-//! All `/api/*` and `/ws/*` routes (except `/api/health`) are protected
-//! by bearer-token authentication.
+//! All `/api/*` routes (except `/api/health`) are protected by bearer-token
+//! authentication via the `Authorization` header.  WebSocket `/ws/*` routes
+//! authenticate via a `token` query parameter instead, because the browser
+//! `WebSocket` API does not support custom request headers.
 
 use axum::{
-    extract::{Request, State},
+    extract::{
+        ws::{Message, WebSocket},
+        FromRequest, Query, Request, State, WebSocketUpgrade,
+    },
     http::{header, StatusCode},
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
 use tokio::sync::{oneshot, RwLock};
@@ -85,6 +92,37 @@ pub struct OpenProjectRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct CloseProjectRequest {
     pub path: String,
+}
+
+// ── Terminal API types ──────────────────────────────────────────
+
+/// Response payload for the terminal list endpoint.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalStatusResponse {
+    pub terminals: Vec<TerminalStatus>,
+}
+
+/// Status of a single terminal instance.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalStatus {
+    pub id: u32,
+    pub is_alive: bool,
+    pub process_name: Option<String>,
+    pub cwd: Option<String>,
+}
+
+// ── WebSocket status types ──────────────────────────────────────
+
+/// Payload pushed over the `/ws/status` WebSocket every tick.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusUpdate {
+    pub open_projects: Vec<OpenProject>,
+    pub recent_projects: Vec<RecentProject>,
+    pub terminals: Vec<TerminalStatus>,
+    pub timestamp: u64,
 }
 
 // ── Handlers ─────────────────────────────────────────────────────
@@ -267,12 +305,262 @@ pub async fn close_project(
     }
 }
 
+// ── Terminal handler ─────────────────────────────────────────────
+
+/// Handler for `GET /api/terminals`.
+///
+/// Returns all terminal instances with their current process info.
+/// The endpoint requires authentication (bearer token).
+/// Returns 503 if no Tauri `AppHandle` is available.
+pub async fn get_terminals(
+    State(state): State<AppState>,
+) -> Result<Json<TerminalStatusResponse>, StatusCode> {
+    use tauri::Manager;
+
+    let app = state
+        .app_handle
+        .as_ref()
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+
+    let terminal_state = app.state::<crate::commands::TerminalState>();
+
+    // Collect IDs and shell PIDs while holding the lock briefly.
+    // We need mutable access because try_wait takes &mut self.
+    let terminal_snapshots: Vec<(u32, bool, Option<u32>)> = {
+        let mut manager = terminal_state
+            .lock()
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+        manager
+            .instances
+            .iter_mut()
+            .map(|(&id, instance)| {
+                let is_alive = instance
+                    .child
+                    .try_wait()
+                    .map(|status| status.is_none())
+                    .unwrap_or(false);
+                (id, is_alive, instance.shell_pid)
+            })
+            .collect()
+    };
+
+    // Now gather process info outside the lock (sysinfo is expensive).
+    let mut terminals = Vec::with_capacity(terminal_snapshots.len());
+
+    for (id, is_alive, shell_pid) in terminal_snapshots {
+        let process_name = if is_alive {
+            shell_pid.and_then(get_process_name_for_pid)
+        } else {
+            None
+        };
+
+        terminals.push(TerminalStatus {
+            id,
+            is_alive,
+            process_name,
+            cwd: None, // CWD lookup is expensive; skip for list
+        });
+    }
+
+    Ok(Json(TerminalStatusResponse { terminals }))
+}
+
+/// Get the foreground process name for a given shell PID.
+///
+/// Looks for child processes of the shell; returns the child's name
+/// if one exists, otherwise the shell's own name.
+fn get_process_name_for_pid(shell_pid: u32) -> Option<String> {
+    use sysinfo::{Pid, System};
+
+    let mut sys = System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+
+    let spid = Pid::from_u32(shell_pid);
+
+    // Find child processes of the shell
+    let children: Vec<_> = sys
+        .processes()
+        .values()
+        .filter(|proc| {
+            proc.parent()
+                .map(|parent_pid| parent_pid == spid)
+                .unwrap_or(false)
+        })
+        .collect();
+
+    if let Some(child) = children.first() {
+        Some(child.name().to_string_lossy().to_string())
+    } else {
+        sys.process(spid)
+            .map(|p| p.name().to_string_lossy().to_string())
+    }
+}
+
+// ── WebSocket handler ────────────────────────────────────────────
+
+/// Handler for `GET /ws/status`.
+///
+/// Upgrades to a WebSocket connection that pushes a combined status
+/// update (open projects, recent projects, terminals) every 2 seconds.
+///
+/// Authentication is checked **before** the WebSocket upgrade so that
+/// unauthenticated requests always receive `401 Unauthorized`, even if
+/// the request lacks the `Upgrade: websocket` header.
+///
+/// The browser WebSocket API does not support custom headers, so the
+/// token is passed via a `token` query parameter.  The auth middleware
+/// is skipped for `/ws/` paths -- this handler does its own auth.
+pub async fn ws_status(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+    request: Request,
+) -> Result<Response, StatusCode> {
+    // Validate token from query parameter -- checked BEFORE the upgrade
+    let token = params.get("token").ok_or(StatusCode::UNAUTHORIZED)?;
+    let expected = state.auth_token.read().await;
+
+    let token_bytes = token.as_bytes();
+    let expected_bytes = expected.as_bytes();
+    if token_bytes.len() != expected_bytes.len()
+        || !bool::from(token_bytes.ct_eq(expected_bytes))
+    {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    drop(expected);
+
+    // Attempt the WebSocket upgrade from the raw request
+    let ws = WebSocketUpgrade::from_request(request, &())
+        .await
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    Ok(ws
+        .on_upgrade(|socket| handle_status_ws(socket, state))
+        .into_response())
+}
+
+/// Drive the WebSocket connection: send status every 2 s, handle
+/// incoming ping/close frames.
+async fn handle_status_ws(mut socket: WebSocket, state: AppState) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let status = collect_full_status(&state);
+                match status {
+                    Some(data) => {
+                        let json = serde_json::to_string(&data).unwrap_or_default();
+                        if socket.send(Message::Text(json.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => break,
+                }
+            }
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Ping(data))) => {
+                        if socket.send(Message::Pong(data)).await.is_err() {
+                            break;
+                        }
+                    }
+                    _ => {} // Ignore other messages
+                }
+            }
+        }
+    }
+}
+
+/// Gather a full status snapshot for the WebSocket push.
+///
+/// Returns `None` when the `AppHandle` is unavailable (e.g. during
+/// tests without a Tauri runtime), which causes the WebSocket to close.
+fn collect_full_status(state: &AppState) -> Option<StatusUpdate> {
+    use tauri::Manager;
+
+    let app = state.app_handle.as_ref()?;
+
+    // -- Open projects --
+    let registry = app.state::<crate::commands::WindowRegistryState>();
+    let open_paths = {
+        let reg = registry.lock().ok()?;
+        reg.get_all_paths()
+    };
+
+    let open_projects: Vec<OpenProject> = open_paths
+        .iter()
+        .map(|path| {
+            let name = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            OpenProject {
+                path: path.clone(),
+                name,
+                branch: None,
+            }
+        })
+        .collect();
+
+    // -- Recent projects --
+    let recent_projects = load_recent_projects(app, &open_paths);
+
+    // -- Terminals --
+    let terminal_state = app.state::<crate::commands::TerminalState>();
+    let terminal_snapshots: Vec<(u32, bool, Option<u32>)> = {
+        let mut manager = terminal_state.lock().ok()?;
+        manager
+            .instances
+            .iter_mut()
+            .map(|(&id, instance)| {
+                let is_alive = instance
+                    .child
+                    .try_wait()
+                    .map(|s| s.is_none())
+                    .unwrap_or(false);
+                (id, is_alive, instance.shell_pid)
+            })
+            .collect()
+    };
+
+    let mut terminals = Vec::with_capacity(terminal_snapshots.len());
+    for (id, is_alive, shell_pid) in terminal_snapshots {
+        let process_name = if is_alive {
+            shell_pid.and_then(get_process_name_for_pid)
+        } else {
+            None
+        };
+        terminals.push(TerminalStatus {
+            id,
+            is_alive,
+            process_name,
+            cwd: None,
+        });
+    }
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    Some(StatusUpdate {
+        open_projects,
+        recent_projects,
+        terminals,
+        timestamp,
+    })
+}
+
 // ── Middleware ────────────────────────────────────────────────────
 
 /// Axum middleware that validates `Authorization: Bearer <token>`.
 ///
 /// The following paths are exempt from authentication:
 /// - `/api/health` -- always accessible for health checks
+/// - `/ws/*` -- WebSocket endpoints handle their own auth via query params
 /// - Any path that does **not** start with `/api/` or `/ws/` (static PWA files)
 ///
 /// Token comparison uses constant-time equality to prevent timing attacks.
@@ -288,8 +576,13 @@ pub async fn auth_middleware(
         return Ok(next.run(request).await);
     }
 
-    // Skip auth for non-API / non-WS paths (static files)
-    if !path.starts_with("/api/") && !path.starts_with("/ws/") {
+    // Skip auth for WebSocket paths (auth handled in handler via query param)
+    if path.starts_with("/ws/") {
+        return Ok(next.run(request).await);
+    }
+
+    // Skip auth for non-API paths (static files)
+    if !path.starts_with("/api/") {
         return Ok(next.run(request).await);
     }
 
@@ -339,6 +632,8 @@ pub fn create_router(
         .route("/api/projects", get(list_projects))
         .route("/api/projects/open", post(open_project))
         .route("/api/projects/close", post(close_project))
+        .route("/api/terminals", get(get_terminals))
+        .route("/ws/status", get(ws_status))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -516,5 +811,110 @@ mod tests {
         assert!(state.app_handle.is_none());
         let debug = format!("{:?}", state);
         assert!(debug.contains("false")); // app_handle: false (is_some)
+    }
+
+    #[test]
+    fn test_terminal_status_response_serialization() {
+        let response = TerminalStatusResponse {
+            terminals: vec![
+                TerminalStatus {
+                    id: 1,
+                    is_alive: true,
+                    process_name: Some("vim".to_string()),
+                    cwd: Some("/home/user".to_string()),
+                },
+                TerminalStatus {
+                    id: 2,
+                    is_alive: false,
+                    process_name: None,
+                    cwd: None,
+                },
+            ],
+        };
+
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["terminals"].as_array().unwrap().len(), 2);
+        assert_eq!(json["terminals"][0]["id"], 1);
+        assert_eq!(json["terminals"][0]["isAlive"], true);
+        assert_eq!(json["terminals"][0]["processName"], "vim");
+        assert_eq!(json["terminals"][0]["cwd"], "/home/user");
+        assert_eq!(json["terminals"][1]["id"], 2);
+        assert_eq!(json["terminals"][1]["isAlive"], false);
+        assert!(json["terminals"][1]["processName"].is_null());
+        assert!(json["terminals"][1]["cwd"].is_null());
+    }
+
+    #[test]
+    fn test_terminal_status_response_serialization_empty() {
+        let response = TerminalStatusResponse {
+            terminals: vec![],
+        };
+        let json = serde_json::to_value(&response).unwrap();
+        assert!(json["terminals"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_status_update_serialization() {
+        let update = StatusUpdate {
+            open_projects: vec![OpenProject {
+                path: "/projects/kiri".to_string(),
+                name: "kiri".to_string(),
+                branch: Some("main".to_string()),
+            }],
+            recent_projects: vec![],
+            terminals: vec![TerminalStatus {
+                id: 1,
+                is_alive: true,
+                process_name: Some("cargo".to_string()),
+                cwd: None,
+            }],
+            timestamp: 1700000000,
+        };
+
+        let json = serde_json::to_value(&update).unwrap();
+        assert_eq!(json["openProjects"].as_array().unwrap().len(), 1);
+        assert!(json["recentProjects"].as_array().unwrap().is_empty());
+        assert_eq!(json["terminals"].as_array().unwrap().len(), 1);
+        assert_eq!(json["timestamp"], 1700000000);
+        assert_eq!(json["terminals"][0]["processName"], "cargo");
+    }
+
+    #[test]
+    fn test_status_update_serialization_empty() {
+        let update = StatusUpdate {
+            open_projects: vec![],
+            recent_projects: vec![],
+            terminals: vec![],
+            timestamp: 0,
+        };
+        let json = serde_json::to_value(&update).unwrap();
+        assert!(json["openProjects"].as_array().unwrap().is_empty());
+        assert!(json["recentProjects"].as_array().unwrap().is_empty());
+        assert!(json["terminals"].as_array().unwrap().is_empty());
+        assert_eq!(json["timestamp"], 0);
+    }
+
+    #[test]
+    fn test_terminal_status_clone() {
+        let status = TerminalStatus {
+            id: 42,
+            is_alive: true,
+            process_name: Some("node".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        let cloned = status.clone();
+        assert_eq!(cloned.id, 42);
+        assert_eq!(cloned.is_alive, true);
+        assert_eq!(cloned.process_name, Some("node".to_string()));
+        assert_eq!(cloned.cwd, Some("/tmp".to_string()));
+    }
+
+    #[test]
+    fn test_collect_full_status_returns_none_without_app_handle() {
+        let state = AppState {
+            auth_token: Arc::new(RwLock::new("token".to_string())),
+            app_handle: None,
+        };
+        assert!(collect_full_status(&state).is_none());
     }
 }
