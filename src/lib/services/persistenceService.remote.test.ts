@@ -111,6 +111,25 @@ describe('RemoteAccessSettings', () => {
       expect(result).toEqual(DEFAULT_REMOTE_ACCESS_SETTINGS);
     });
 
+    it('should fill missing cloudflare sub-fields with defaults for partial cloudflare config', async () => {
+      const { loadRemoteAccessSettings } = await importModule();
+      const partialCloudflareSettings = {
+        enabled: true,
+        port: 4000,
+        authToken: 'token',
+        cloudflare: {
+          enabled: true,
+          // tunnelToken is missing
+        },
+      };
+      mockStore.get.mockResolvedValue(partialCloudflareSettings);
+
+      const result = await loadRemoteAccessSettings();
+
+      expect(result.cloudflare.enabled).toBe(true);
+      expect(result.cloudflare.tunnelToken).toBeNull();
+    });
+
     it('should fill missing fields with defaults for partial stored settings', async () => {
       const { loadRemoteAccessSettings } = await importModule();
       // Simulate a scenario where only some fields are stored (e.g., from an older version)

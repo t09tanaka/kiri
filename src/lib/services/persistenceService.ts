@@ -139,18 +139,28 @@ export async function loadRemoteAccessSettings(): Promise<RemoteAccessSettings> 
 
     const settings = await s.get<RemoteAccessSettings>('remoteAccess');
     if (!settings) {
-      return { ...DEFAULT_REMOTE_ACCESS_SETTINGS };
+      return {
+        ...DEFAULT_REMOTE_ACCESS_SETTINGS,
+        cloudflare: { ...DEFAULT_REMOTE_ACCESS_SETTINGS.cloudflare },
+      };
     }
 
     return {
       enabled: settings.enabled ?? DEFAULT_REMOTE_ACCESS_SETTINGS.enabled,
       port: settings.port ?? DEFAULT_REMOTE_ACCESS_SETTINGS.port,
       authToken: settings.authToken ?? DEFAULT_REMOTE_ACCESS_SETTINGS.authToken,
-      cloudflare: settings.cloudflare ?? { ...DEFAULT_REMOTE_ACCESS_SETTINGS.cloudflare },
+      cloudflare: {
+        enabled: settings.cloudflare?.enabled ?? DEFAULT_REMOTE_ACCESS_SETTINGS.cloudflare.enabled,
+        tunnelToken:
+          settings.cloudflare?.tunnelToken ?? DEFAULT_REMOTE_ACCESS_SETTINGS.cloudflare.tunnelToken,
+      },
     };
   } catch (error) {
     console.error('Failed to load remote access settings:', error);
-    return { ...DEFAULT_REMOTE_ACCESS_SETTINGS };
+    return {
+      ...DEFAULT_REMOTE_ACCESS_SETTINGS,
+      cloudflare: { ...DEFAULT_REMOTE_ACCESS_SETTINGS.cloudflare },
+    };
   }
 }
 
