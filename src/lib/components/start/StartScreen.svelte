@@ -154,44 +154,33 @@
       </div>
     </button>
 
-    <div class="startup-command-section">
-      <div class="startup-bg"></div>
-      <div class="startup-content">
-        <div class="startup-header">
-          <span class="startup-prompt-icon">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <polyline points="4 17 10 11 4 5"></polyline>
-              <line x1="12" y1="19" x2="20" y2="19"></line>
-            </svg>
-          </span>
-          <span class="startup-title">Startup Command</span>
-        </div>
-        <div class="startup-options">
-          {#each STARTUP_COMMANDS as cmd (cmd.id)}
-            <button
-              class="startup-chip"
-              class:active={$startupCommand === cmd.id}
-              onclick={() => handleStartupCommandChange(cmd.id)}
-            >
-              {#if cmd.id !== 'none'}
-                <span class="chip-prompt">$</span>
-              {/if}
-              <span class="chip-label">{cmd.id === 'none' ? '—' : cmd.command}</span>
-              {#if $startupCommand === cmd.id}
-                <span class="chip-cursor"></span>
-              {/if}
-            </button>
-          {/each}
-        </div>
+    <div class="startup-command-row">
+      <span class="startup-label">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="4 17 10 11 4 5"></polyline>
+          <line x1="12" y1="19" x2="20" y2="19"></line>
+        </svg>
+        Startup Command
+      </span>
+      <div class="segment-control">
+        {#each STARTUP_COMMANDS as cmd (cmd.id)}
+          <button
+            class="segment-option"
+            class:active={$startupCommand === cmd.id}
+            onclick={() => handleStartupCommandChange(cmd.id)}
+          >
+            {cmd.label}
+          </button>
+        {/each}
       </div>
     </div>
 
@@ -632,156 +621,61 @@
     box-shadow: 0 3px 0 var(--bg-primary);
   }
 
-  /* ===== Startup Command Section ===== */
-  .startup-command-section {
-    position: relative;
+  /* ===== Startup Command Row ===== */
+  .startup-command-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-3);
     margin-top: var(--space-3);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    transition: transform var(--transition-normal);
+    padding: 0 var(--space-1);
   }
 
-  .startup-command-section:hover {
-    transform: translateY(-1px);
-  }
-
-  .startup-bg {
-    position: absolute;
-    inset: 0;
-    background: var(--bg-glass);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    transition: all var(--transition-normal);
-  }
-
-  .startup-command-section:hover .startup-bg {
-    border-color: var(--border-glow);
-    background: var(--bg-glass-hover);
-  }
-
-  .startup-content {
-    position: relative;
+  .startup-label {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: var(--space-3) var(--space-4);
-  }
-
-  .startup-header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .startup-prompt-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    background: var(--accent-subtle);
-    border-radius: var(--radius-sm);
-    color: var(--accent-color);
-    transition: all var(--transition-normal);
-  }
-
-  .startup-command-section:hover .startup-prompt-icon {
-    background: var(--accent-muted);
-    transform: scale(1.05);
-  }
-
-  .startup-title {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-secondary);
-    letter-spacing: 0.02em;
-    transition: color var(--transition-fast);
-  }
-
-  .startup-command-section:hover .startup-title {
-    color: var(--text-primary);
-  }
-
-  .startup-options {
-    display: flex;
     gap: 6px;
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-muted);
+    letter-spacing: 0.04em;
+    white-space: nowrap;
   }
 
-  .startup-chip {
-    position: relative;
+  .startup-label svg {
+    color: var(--accent-color);
+    opacity: 0.4;
+  }
+
+  .segment-control {
     display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 6px 14px;
+    padding: 3px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+  }
+
+  .segment-option {
+    padding: 5px 14px;
     background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 12px;
+    border: none;
+    border-radius: calc(var(--radius-md) - 3px);
+    font-size: 11px;
     font-weight: 500;
     color: var(--text-muted);
     cursor: pointer;
     transition: all var(--transition-fast);
     white-space: nowrap;
-    overflow: hidden;
   }
 
-  .startup-chip:hover:not(.active) {
+  .segment-option:hover:not(.active) {
     color: var(--text-secondary);
     background: rgba(125, 211, 252, 0.04);
-    border-color: rgba(125, 211, 252, 0.08);
   }
 
-  .startup-chip.active {
-    background: rgba(125, 211, 252, 0.08);
-    border-color: rgba(125, 211, 252, 0.2);
+  .segment-option.active {
+    background: var(--accent-subtle);
     color: var(--accent-color);
-    box-shadow:
-      0 0 16px rgba(125, 211, 252, 0.06),
-      inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  }
-
-  .chip-prompt {
-    color: var(--accent-color);
-    opacity: 0.4;
-    font-weight: 600;
-    transition: opacity var(--transition-fast);
-  }
-
-  .startup-chip.active .chip-prompt {
-    opacity: 0.8;
-  }
-
-  .startup-chip:hover .chip-prompt {
-    opacity: 0.7;
-  }
-
-  .chip-label {
-    position: relative;
-  }
-
-  .chip-cursor {
-    display: inline-block;
-    width: 2px;
-    height: 14px;
-    background: var(--accent-color);
-    border-radius: 1px;
-    animation: cursorBlink 1.2s step-end infinite;
-    margin-left: 1px;
-    vertical-align: middle;
-    opacity: 0.7;
-  }
-
-  @keyframes cursorBlink {
-    0%,
-    100% {
-      opacity: 0.7;
-    }
-    50% {
-      opacity: 0;
-    }
   }
 
   /* ===== Recent Section ===== */
