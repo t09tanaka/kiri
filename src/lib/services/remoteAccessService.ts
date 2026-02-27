@@ -21,9 +21,11 @@ export const remoteAccessService = {
   isRunning: (): Promise<boolean> => invoke('is_remote_server_running'),
 
   /**
-   * Generate a QR code for remote access authentication
+   * Generate a QR code encoding the full access URL with token in path.
+   * If tunnelUrl is provided, it is used as the base URL.
    */
-  generateQrCode: (): Promise<string> => invoke('generate_remote_qr_code'),
+  generateQrCode: (port: number, tunnelUrl?: string): Promise<string> =>
+    invoke('generate_remote_qr_code', { port, tunnelUrl: tunnelUrl ?? null }),
 
   /**
    * Regenerate the remote access authentication token
@@ -31,9 +33,12 @@ export const remoteAccessService = {
   regenerateToken: (): Promise<string> => invoke('regenerate_remote_token'),
 
   /**
-   * Start a Cloudflare tunnel for external access
+   * Start a Cloudflare tunnel.
+   * token: null = Quick Tunnel, string = Named Tunnel.
+   * Returns the tunnel URL for Quick Tunnel mode.
    */
-  startTunnel: (token: string): Promise<void> => invoke('start_cloudflare_tunnel', { token }),
+  startTunnel: (token: string | null, port: number): Promise<string | null> =>
+    invoke('start_cloudflare_tunnel', { token, port }),
 
   /**
    * Stop the Cloudflare tunnel

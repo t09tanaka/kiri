@@ -76,20 +76,39 @@ describe('remoteAccessService', () => {
   });
 
   describe('generateQrCode', () => {
-    it('should call invoke and return QR code string', async () => {
+    it('should call invoke with port and no tunnel URL', async () => {
       const mockQrCode = 'data:image/png;base64,iVBOR...';
       vi.mocked(invoke).mockResolvedValue(mockQrCode);
 
-      const result = await remoteAccessService.generateQrCode();
+      const result = await remoteAccessService.generateQrCode(9876);
 
-      expect(invoke).toHaveBeenCalledWith('generate_remote_qr_code');
+      expect(invoke).toHaveBeenCalledWith('generate_remote_qr_code', {
+        port: 9876,
+        tunnelUrl: null,
+      });
+      expect(result).toBe(mockQrCode);
+    });
+
+    it('should call invoke with port and tunnel URL', async () => {
+      const mockQrCode = 'data:image/png;base64,iVBOR...';
+      vi.mocked(invoke).mockResolvedValue(mockQrCode);
+
+      const result = await remoteAccessService.generateQrCode(
+        9876,
+        'https://my-tunnel.trycloudflare.com'
+      );
+
+      expect(invoke).toHaveBeenCalledWith('generate_remote_qr_code', {
+        port: 9876,
+        tunnelUrl: 'https://my-tunnel.trycloudflare.com',
+      });
       expect(result).toBe(mockQrCode);
     });
 
     it('should propagate errors from invoke', async () => {
       vi.mocked(invoke).mockRejectedValue(new Error('Server not running'));
 
-      await expect(remoteAccessService.generateQrCode()).rejects.toThrow('Server not running');
+      await expect(remoteAccessService.generateQrCode(9876)).rejects.toThrow('Server not running');
     });
   });
 
@@ -114,21 +133,36 @@ describe('remoteAccessService', () => {
   });
 
   describe('startTunnel', () => {
-    it('should call invoke with correct command and token', async () => {
-      vi.mocked(invoke).mockResolvedValue(undefined);
+    it('should call invoke with named tunnel token and port', async () => {
+      vi.mocked(invoke).mockResolvedValue(null);
 
-      await remoteAccessService.startTunnel('my-cloudflare-token');
+      const result = await remoteAccessService.startTunnel('my-cloudflare-token', 9876);
 
       expect(invoke).toHaveBeenCalledWith('start_cloudflare_tunnel', {
         token: 'my-cloudflare-token',
+        port: 9876,
       });
       expect(invoke).toHaveBeenCalledTimes(1);
+      expect(result).toBeNull();
+    });
+
+    it('should call invoke with null token for Quick Tunnel and return URL', async () => {
+      const tunnelUrl = 'https://random-words.trycloudflare.com';
+      vi.mocked(invoke).mockResolvedValue(tunnelUrl);
+
+      const result = await remoteAccessService.startTunnel(null, 9876);
+
+      expect(invoke).toHaveBeenCalledWith('start_cloudflare_tunnel', {
+        token: null,
+        port: 9876,
+      });
+      expect(result).toBe(tunnelUrl);
     });
 
     it('should propagate errors from invoke', async () => {
       vi.mocked(invoke).mockRejectedValue(new Error('Tunnel failed to start'));
 
-      await expect(remoteAccessService.startTunnel('token')).rejects.toThrow(
+      await expect(remoteAccessService.startTunnel('token', 9876)).rejects.toThrow(
         'Tunnel failed to start'
       );
     });
