@@ -12,6 +12,7 @@
   import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
   import CommitHistoryModal from '@/lib/components/git/CommitHistoryModal.svelte';
   import WorktreePanel from '@/lib/components/git/WorktreePanel.svelte';
+  import RemoteAccessSettings from '@/lib/components/settings/RemoteAccessSettings.svelte';
   import EditorModal from '@/lib/components/editor/EditorModal.svelte';
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { contentSearchStore, isContentSearchOpen } from '@/lib/stores/contentSearchStore';
@@ -21,6 +22,7 @@
   import { diffViewStore } from '@/lib/stores/diffViewStore';
   import { commitHistoryStore } from '@/lib/stores/commitHistoryStore';
   import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
+  import { remoteAccessViewStore } from '@/lib/stores/remoteAccessViewStore';
   import { worktreeStore, isWorktree, isSubdirectoryOfRepo } from '@/lib/stores/worktreeStore';
   import { toastStore } from '@/lib/stores/toastStore';
   import { worktreeService } from '@/lib/services/worktreeService';
@@ -170,6 +172,13 @@
           worktreeViewStore.open(path);
         }
       }
+      return;
+    }
+
+    // Cmd+Shift+R: Toggle Remote Access Settings
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'r') {
+      e.preventDefault();
+      remoteAccessViewStore.toggle();
       return;
     }
 
@@ -550,6 +559,10 @@
 {:else}
   <StartScreen />
   <KeyboardShortcuts isOpen={showShortcuts} onClose={() => (showShortcuts = false)} />
+{/if}
+
+{#if $remoteAccessViewStore.isOpen}
+  <RemoteAccessSettings onClose={() => remoteAccessViewStore.close()} />
 {/if}
 
 <!-- Global Toast notifications -->
