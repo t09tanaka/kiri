@@ -152,7 +152,11 @@ pub async fn is_remote_server_running(
 }
 
 /// Generate a QR code PNG (as a base64 data-URI) that encodes the
-/// server URL (with auto-detected LAN IP) and authentication token.
+/// full URL with the authentication token embedded in the path.
+///
+/// The encoded URL has the form `{base_url}/{token}/` where:
+/// - If `tunnel_url` is provided, it is used as the base URL.
+/// - Otherwise, the LAN IP is auto-detected: `http://{local_ip}:{port}`.
 ///
 /// A new token is generated if none exists yet.
 ///
@@ -162,6 +166,7 @@ pub async fn is_remote_server_running(
 pub async fn generate_remote_qr_code(
     state: tauri::State<'_, RemoteServerStateType>,
     port: u16,
+    tunnel_url: Option<String>,
 ) -> Result<String, String> {
     let mut server = state.lock().await;
 
@@ -172,17 +177,18 @@ pub async fn generate_remote_qr_code(
 
     let token = server.auth_token.as_ref().unwrap();
 
-    // Auto-detect local IP for QR payload
-    let host = local_ip_address::local_ip()
-        .map(|ip| ip.to_string())
-        .unwrap_or_else(|_| "localhost".to_string());
+    let base_url = match tunnel_url {
+        Some(url) => url.trim_end_matches('/').to_string(),
+        None => {
+            let host = local_ip_address::local_ip()
+                .map(|ip| ip.to_string())
+                .unwrap_or_else(|_| "localhost".to_string());
+            format!("http://{}:{}", host, port)
+        }
+    };
 
-    let qr_data = serde_json::json!({
-        "url": format!("http://{}:{}", host, port),
-        "token": token,
-    });
-
-    generate_qr_base64(&qr_data.to_string())
+    let full_url = format!("{}/{}/", base_url, token);
+    generate_qr_base64(&full_url)
 }
 
 /// Replace the current auth token with a freshly generated UUID v4.
@@ -256,9 +262,9 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_qr_base64_encodes_json() {
-        let data = serde_json::json!({"token": "abc", "port": 9876});
-        let result = generate_qr_base64(&data.to_string());
+    fn test_generate_qr_base64_encodes_url() {
+        let url = "http://192.168.1.5:9876/abc-123-token/";
+        let result = generate_qr_base64(url);
         assert!(result.is_ok());
     }
 }
