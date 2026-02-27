@@ -7,7 +7,8 @@
   import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
   import { tabStore, getAllPaneIds, type TerminalTab } from '@/lib/stores/tabStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
-  import { fontSize } from '@/lib/stores/settingsStore';
+  import { fontSize, startupCommand } from '@/lib/stores/settingsStore';
+  import { getStartupCommandString } from '@/lib/services/persistenceService';
   import { peekStore } from '@/lib/stores/peekStore';
   import { openerService } from '@/lib/services/openerService';
   import { notificationService } from '@/lib/services/notificationService';
@@ -553,6 +554,32 @@
           terminalId,
           unlisten,
         });
+      }
+
+      // Execute startup command if configured
+      // Only for newly created terminals (not reattached from registry),
+      // and only for the first pane of the first tab
+      if (existingTerminalId === null) {
+        const state = get(tabStore);
+        const isFirstTab = state.tabs.length === 1;
+        const firstTab = state.tabs[0];
+        const isFirstPane =
+          isFirstTab &&
+          firstTab?.type === 'terminal' &&
+          firstTab.rootPane.type === 'terminal' &&
+          firstTab.rootPane.id === paneId;
+
+        if (isFirstPane) {
+          const commandStr = getStartupCommandString(get(startupCommand));
+          if (commandStr) {
+            // Wait for shell to be ready before sending command
+            setTimeout(() => {
+              if (terminalId !== null) {
+                terminalService.writeTerminal(terminalId, commandStr + '\n');
+              }
+            }, 300);
+          }
+        }
       }
 
       // Send input to PTY
