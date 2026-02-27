@@ -1,30 +1,25 @@
 //! Core HTTP server logic for remote access
 //!
 //! Provides an embedded axum HTTP server that can be started and stopped
-//! at runtime. The server exposes REST API endpoints for remote control
-//! of the kiri application, plus a WebSocket endpoint for real-time
-//! status updates.
+//! at runtime. The server exposes a health endpoint and a WebSocket
+//! endpoint for real-time status updates.
 //!
-//! All `/api/*` routes (except `/api/health`) are protected by bearer-token
-//! authentication via the `Authorization` header.  WebSocket `/ws/*` routes
-//! authenticate via a `token` query parameter instead, because the browser
-//! `WebSocket` API does not support custom request headers.
+//! All paths (except `/api/health`) are protected by a path-prefix token:
+//! requests must be made to `/{token}/...`. The middleware validates the
+//! token and strips it from the URI before passing to downstream handlers.
 
 use axum::{
     extract::{
         ws::{Message, WebSocket},
-        FromRequest, Query, Request, State, WebSocketUpgrade,
+        Request, State, WebSocketUpgrade,
     },
-    http::{header, StatusCode},
-    middleware::{self, Next},
+    http::StatusCode,
     response::{IntoResponse, Response},
-    routing::{any, get, post},
+    routing::get,
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Arc;
-use subtle::ConstantTimeEq;
 use tokio::sync::{oneshot, RwLock};
 
 /// Shared application state passed to handlers and middleware.
@@ -52,16 +47,6 @@ pub struct HealthResponse {
     pub version: String,
 }
 
-// ── Project API types ────────────────────────────────────────────
-
-/// Response payload for the project list endpoint.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProjectsResponse {
-    pub open_projects: Vec<OpenProject>,
-    pub recent_projects: Vec<RecentProject>,
-}
-
 /// A currently open project with an active window.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -80,27 +65,6 @@ pub struct RecentProject {
     pub last_opened: f64,
     #[serde(rename = "gitBranch")]
     pub git_branch: Option<String>,
-}
-
-/// Request payload for opening a project.
-#[derive(Debug, Clone, Deserialize)]
-pub struct OpenProjectRequest {
-    pub path: String,
-}
-
-/// Request payload for closing a project.
-#[derive(Debug, Clone, Deserialize)]
-pub struct CloseProjectRequest {
-    pub path: String,
-}
-
-// ── Terminal API types ──────────────────────────────────────────
-
-/// Response payload for the terminal list endpoint.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TerminalStatusResponse {
-    pub terminals: Vec<TerminalStatus>,
 }
 
 /// Status of a single terminal instance.
@@ -139,62 +103,6 @@ pub async fn health_handler() -> Json<HealthResponse> {
     })
 }
 
-/// Handler for `POST /api/auth/verify`.
-///
-/// If the request reaches this handler the auth middleware has already
-/// validated the bearer token, so we simply return `{ "valid": true }`.
-pub async fn verify_handler() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "valid": true }))
-}
-
-/// Handler for `GET /api/projects`.
-///
-/// Returns both currently open projects (from WindowRegistry) and
-/// recently opened projects (from the settings store). Recent projects
-/// that are currently open are excluded from the recent list.
-pub async fn list_projects(
-    State(state): State<AppState>,
-) -> Result<Json<ProjectsResponse>, StatusCode> {
-    use tauri::Manager;
-
-    let app = state
-        .app_handle
-        .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-
-    // Get open projects from WindowRegistry
-    // NOTE: std::sync::Mutex -- keep lock scope minimal, never hold across await points
-    let registry = app.state::<crate::commands::WindowRegistryState>();
-    let open_paths = {
-        let reg = registry.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        reg.get_all_paths()
-    };
-
-    let open_projects: Vec<OpenProject> = open_paths
-        .iter()
-        .map(|path| {
-            let name = std::path::Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
-            OpenProject {
-                path: path.clone(),
-                name,
-                branch: None,
-            }
-        })
-        .collect();
-
-    // Get recent projects from settings store
-    let recent_projects = load_recent_projects(app, &open_paths);
-
-    Ok(Json(ProjectsResponse {
-        open_projects,
-        recent_projects,
-    }))
-}
-
 /// Load recent projects from the kiri-settings.json store,
 /// filtering out any paths that are currently open.
 fn load_recent_projects(app: &tauri::AppHandle, open_paths: &[String]) -> Vec<RecentProject> {
@@ -214,157 +122,6 @@ fn load_recent_projects(app: &tauri::AppHandle, open_paths: &[String]) -> Vec<Re
         .into_iter()
         .filter(|p| !open_paths.contains(&p.path))
         .collect()
-}
-
-/// Handler for `POST /api/projects/open`.
-///
-/// Opens a project in a new window. If a window for the given path
-/// already exists, it is focused instead.
-pub async fn open_project(
-    State(state): State<AppState>,
-    Json(req): Json<OpenProjectRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    use tauri::Manager;
-
-    let app = state
-        .app_handle
-        .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-
-    let registry = app.state::<crate::commands::WindowRegistryState>();
-
-    // Check if project is already open
-    // NOTE: std::sync::Mutex -- keep lock scope minimal, never hold across await points
-    let existing_label = {
-        let reg = registry.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        reg.get_label_for_path(&req.path).cloned()
-    };
-
-    if let Some(label) = existing_label {
-        // Focus existing window
-        if let Some(window) = app.get_webview_window(&label) {
-            window
-                .set_focus()
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            return Ok(Json(serde_json::json!({
-                "success": true, "path": req.path, "action": "focused"
-            })));
-        }
-        // Window gone but registry stale -- fall through to create
-    }
-
-    // Create new window
-    crate::commands::window::create_window_impl(
-        app,
-        Some(&registry),
-        None,
-        None,
-        None,
-        None,
-        Some(req.path.clone()),
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(Json(serde_json::json!({
-        "success": true, "path": req.path, "action": "opened"
-    })))
-}
-
-/// Handler for `POST /api/projects/close`.
-///
-/// Closes the window associated with the given project path.
-/// Returns 404 if no window is found for the path.
-pub async fn close_project(
-    State(state): State<AppState>,
-    Json(req): Json<CloseProjectRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    use tauri::Manager;
-
-    let app = state
-        .app_handle
-        .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-
-    // NOTE: std::sync::Mutex -- keep lock scope minimal, never hold across await points
-    let registry = app.state::<crate::commands::WindowRegistryState>();
-    let label = {
-        let reg = registry.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        reg.get_label_for_path(&req.path).cloned()
-    };
-
-    match label {
-        Some(label) => {
-            if let Some(window) = app.get_webview_window(&label) {
-                window
-                    .close()
-                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-            }
-            Ok(Json(serde_json::json!({ "success": true })))
-        }
-        None => Err(StatusCode::NOT_FOUND),
-    }
-}
-
-// ── Terminal handler ─────────────────────────────────────────────
-
-/// Handler for `GET /api/terminals`.
-///
-/// Returns all terminal instances with their current process info.
-/// The endpoint requires authentication (bearer token).
-/// Returns 503 if no Tauri `AppHandle` is available.
-pub async fn get_terminals(
-    State(state): State<AppState>,
-) -> Result<Json<TerminalStatusResponse>, StatusCode> {
-    use tauri::Manager;
-
-    let app = state
-        .app_handle
-        .as_ref()
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
-
-    let terminal_state = app.state::<crate::commands::TerminalState>();
-
-    // Collect IDs and shell PIDs while holding the lock briefly.
-    // We need mutable access because try_wait takes &mut self.
-    let terminal_snapshots: Vec<(u32, bool, Option<u32>)> = {
-        let mut manager = terminal_state
-            .lock()
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-        manager
-            .instances
-            .iter_mut()
-            .map(|(&id, instance)| {
-                let is_alive = instance
-                    .child
-                    .try_wait()
-                    .map(|status| status.is_none())
-                    .unwrap_or(false);
-                (id, is_alive, instance.shell_pid)
-            })
-            .collect()
-    };
-
-    // Refresh process table once, then look up each terminal.
-    let sys = refreshed_system();
-    let mut terminals = Vec::with_capacity(terminal_snapshots.len());
-
-    for (id, is_alive, shell_pid) in terminal_snapshots {
-        let process_name = if is_alive {
-            shell_pid.and_then(|pid| lookup_process_name(&sys, pid))
-        } else {
-            None
-        };
-
-        terminals.push(TerminalStatus {
-            id,
-            is_alive,
-            process_name,
-            cwd: None, // CWD lookup is expensive; skip for list
-        });
-    }
-
-    Ok(Json(TerminalStatusResponse { terminals }))
 }
 
 /// Create a refreshed `sysinfo::System` for process lookups.
@@ -408,44 +165,18 @@ fn lookup_process_name(sys: &sysinfo::System, shell_pid: u32) -> Option<String> 
 
 // ── WebSocket handler ────────────────────────────────────────────
 
-/// Handler for `GET /ws/status`.
+/// Handler for `GET /ws`.
 ///
 /// Upgrades to a WebSocket connection that pushes a combined status
 /// update (open projects, recent projects, terminals) every 2 seconds.
 ///
-/// Authentication is checked **before** the WebSocket upgrade so that
-/// unauthenticated requests always receive `401 Unauthorized`, even if
-/// the request lacks the `Upgrade: websocket` header.
-///
-/// The browser WebSocket API does not support custom headers, so the
-/// token is passed via a `token` query parameter.  The auth middleware
-/// is skipped for `/ws/` paths -- this handler does its own auth.
-pub async fn ws_status(
+/// Authentication is handled by the path-prefix middleware, so this
+/// handler simply accepts the WebSocket upgrade.
+pub async fn ws_handler(
     State(state): State<AppState>,
-    Query(params): Query<HashMap<String, String>>,
-    request: Request,
-) -> Result<Response, StatusCode> {
-    // Validate token from query parameter -- checked BEFORE the upgrade
-    let token = params.get("token").ok_or(StatusCode::UNAUTHORIZED)?;
-    let expected = state.auth_token.read().await;
-
-    let token_bytes = token.as_bytes();
-    let expected_bytes = expected.as_bytes();
-    if token_bytes.len() != expected_bytes.len()
-        || !bool::from(token_bytes.ct_eq(expected_bytes))
-    {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    drop(expected);
-
-    // Attempt the WebSocket upgrade from the raw request
-    let ws = WebSocketUpgrade::from_request(request, &())
-        .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?;
-
-    Ok(ws
-        .on_upgrade(|socket| handle_status_ws(socket, state))
-        .into_response())
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    ws.on_upgrade(|socket| handle_status_ws(socket, state))
 }
 
 /// Drive the WebSocket connection: send status every 2 s, handle
@@ -565,69 +296,66 @@ fn collect_full_status(state: &AppState) -> Option<StatusUpdate> {
     })
 }
 
-// ── Middleware ────────────────────────────────────────────────────
+// ── Token path helpers ────────────────────────────────────────────
 
-/// Axum middleware that validates `Authorization: Bearer <token>`.
+/// Validate that `path` starts with `/{token}/` and return the remaining
+/// path after stripping the token prefix.
 ///
-/// The following paths are exempt from authentication:
-/// - `/api/health` -- always accessible for health checks
-/// - `/ws/*` -- WebSocket endpoints handle their own auth via query params
-/// - Any path that does **not** start with `/api/` or `/ws/` (static PWA files)
+/// Returns `None` when the first path segment does not match the expected
+/// token. The `/api/health` path is **not** token-prefixed and will also
+/// return `None` (it bypasses token validation at the middleware level).
 ///
-/// Token comparison uses constant-time equality to prevent timing attacks.
-pub async fn auth_middleware(
-    State(state): State<AppState>,
-    request: Request,
-    next: Next,
-) -> Result<Response, StatusCode> {
-    let path = request.uri().path();
+/// # Examples
+///
+/// ```text
+/// strip_token_prefix("/abc-123/ws",     "abc-123") => Some("/ws")
+/// strip_token_prefix("/abc-123/",       "abc-123") => Some("/")
+/// strip_token_prefix("/abc-123",        "abc-123") => Some("/")
+/// strip_token_prefix("/wrong-token/ws", "abc-123") => None
+/// strip_token_prefix("/api/health",     "abc-123") => None
+/// ```
+fn strip_token_prefix<'a>(path: &'a str, expected_token: &str) -> Option<&'a str> {
+    // Path must start with '/'
+    let after_slash = path.strip_prefix('/')?;
 
-    // Skip auth for health endpoint
-    if path == "/api/health" {
-        return Ok(next.run(request).await);
+    // Extract the first segment (up to the next '/' or end of string)
+    let (segment, rest) = match after_slash.find('/') {
+        Some(pos) => (&after_slash[..pos], &after_slash[pos..]),
+        None => (after_slash, "/"),
+    };
+
+    // Constant-time comparison to prevent timing attacks
+    use subtle::ConstantTimeEq;
+    let segment_bytes = segment.as_bytes();
+    let expected_bytes = expected_token.as_bytes();
+
+    if segment_bytes.len() != expected_bytes.len()
+        || !bool::from(segment_bytes.ct_eq(expected_bytes))
+    {
+        return None;
     }
 
-    // Skip auth for WebSocket paths (auth handled in handler via query param)
-    if path.starts_with("/ws/") {
-        return Ok(next.run(request).await);
-    }
-
-    // Skip auth for non-API paths (static files)
-    if !path.starts_with("/api/") {
-        return Ok(next.run(request).await);
-    }
-
-    let auth_header = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
-
-    match auth_header {
-        Some(auth) if auth.starts_with("Bearer ") => {
-            let token = &auth[7..];
-            let expected = state.auth_token.read().await;
-            let token_bytes = token.as_bytes();
-            let expected_bytes = expected.as_bytes();
-            if token_bytes.len() == expected_bytes.len()
-                && bool::from(token_bytes.ct_eq(expected_bytes))
-            {
-                Ok(next.run(request).await)
-            } else {
-                Err(StatusCode::UNAUTHORIZED)
-            }
-        }
-        _ => Err(StatusCode::UNAUTHORIZED),
-    }
+    // rest is either "/" or "/something..."
+    // When path was "/abc-123" (no trailing slash), rest is already "/"
+    Some(if rest.is_empty() { "/" } else { rest })
 }
 
 // ── Router & Server ──────────────────────────────────────────────
 
-/// Build the axum router with all API routes and auth middleware.
+/// Build the axum router with token-path middleware.
 ///
-/// The `auth_token` is used by the bearer-token middleware to gate
-/// access to protected endpoints. The `app_handle` provides access
-/// to Tauri state (WindowRegistry, store, etc.) and is `None` during
-/// integration tests that don't have a Tauri runtime.
+/// The `auth_token` is embedded in request paths: `/{token}/ws`, etc.
+/// The middleware validates the token prefix and strips it before
+/// routing. `/api/health` is the only unauthenticated endpoint.
+///
+/// The `app_handle` provides access to Tauri state (WindowRegistry,
+/// store, etc.) and is `None` during integration tests that don't
+/// have a Tauri runtime.
+///
+/// Architecture: An outer router handles `/api/health` directly.
+/// All other requests fall through to the token-path middleware,
+/// which validates and strips the `/{token}/` prefix, then forwards
+/// to an inner router for route matching.
 pub fn create_router(
     auth_token: Arc<RwLock<String>>,
     app_handle: Option<tauri::AppHandle>,
@@ -637,32 +365,80 @@ pub fn create_router(
         app_handle: app_handle.clone(),
     };
 
-    let router = Router::new()
+    // Inner router with token-protected routes.
+    // These are matched AFTER the token prefix is stripped by the fallback handler.
+    let mut inner = Router::new()
         .route("/api/health", get(health_handler))
-        .route("/api/auth/verify", post(verify_handler))
-        .route("/api/projects", get(list_projects))
-        .route("/api/projects/open", post(open_project))
-        .route("/api/projects/close", post(close_project))
-        .route("/api/terminals", get(get_terminals))
-        .route("/ws/status", get(ws_status))
-        // Catch-all for unknown /api/ routes so they go through auth middleware
-        .route("/api/{*rest}", any(|| async { StatusCode::NOT_FOUND }))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth_middleware,
-        ))
-        .with_state(state);
+        .route("/ws", get(ws_handler))
+        .with_state(state.clone());
 
     // Serve static PWA files as fallback for non-API/WS paths.
-    // Unknown /api/* requests are caught by the catch-all route above
-    // (and thus pass through auth middleware). The fallback only serves
-    // static files for paths like /, /style.css, /app.js, etc.
+    // After token stripping, paths like /app.js are served from the
+    // remote-ui directory.
     let ui_path = resolve_remote_ui_path(app_handle.as_ref());
     if ui_path.exists() {
-        router.fallback_service(tower_http::services::ServeDir::new(ui_path))
+        inner = inner.fallback_service(tower_http::services::ServeDir::new(ui_path));
     } else {
         log::warn!("Remote UI directory not found: {:?}", ui_path);
-        router
+    }
+
+    // Outer router: /api/health is public, everything else goes through
+    // the token-path middleware which rewrites the URI then forwards to
+    // the inner router.
+    Router::new()
+        .route("/api/health", get(health_handler))
+        .fallback(token_path_handler)
+        .with_state(TokenPathState {
+            app_state: state,
+            inner,
+        })
+}
+
+/// Combined state for the token-path fallback handler.
+#[derive(Clone)]
+struct TokenPathState {
+    app_state: AppState,
+    inner: Router,
+}
+
+/// Fallback handler that validates the token prefix, strips it from the
+/// URI, and forwards the request to the inner router for route matching.
+///
+/// This is implemented as a handler (not middleware) because axum's
+/// `Router::layer()` middleware runs after route matching, whereas we
+/// need to rewrite the URI *before* routes are matched.
+async fn token_path_handler(
+    State(state): State<TokenPathState>,
+    mut request: Request,
+) -> Response {
+    let path = request.uri().path();
+
+    let expected = state.app_state.auth_token.read().await;
+    let stripped = match strip_token_prefix(path, &expected) {
+        Some(s) => s.to_owned(),
+        None => return StatusCode::NOT_FOUND.into_response(),
+    };
+    drop(expected);
+
+    // Rebuild the URI with the token prefix removed, preserving query string
+    let new_path_and_query = if let Some(q) = request.uri().query() {
+        format!("{}?{}", stripped, q)
+    } else {
+        stripped
+    };
+
+    let new_uri = match new_path_and_query.parse::<axum::http::Uri>() {
+        Ok(uri) => uri,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    *request.uri_mut() = new_uri;
+
+    // Forward to the inner router
+    use tower::ServiceExt;
+    match state.inner.clone().oneshot(request).await {
+        Ok(response) => response,
+        Err(err) => err.into_response(),
     }
 }
 
@@ -765,59 +541,6 @@ mod tests {
     }
 
     #[test]
-    fn test_projects_response_serialization() {
-        let response = ProjectsResponse {
-            open_projects: vec![OpenProject {
-                path: "/Users/user/projects/kiri".to_string(),
-                name: "kiri".to_string(),
-                branch: Some("main".to_string()),
-            }],
-            recent_projects: vec![RecentProject {
-                path: "/Users/user/projects/old-project".to_string(),
-                name: "old-project".to_string(),
-                last_opened: 1700000000.0,
-                git_branch: Some("develop".to_string()),
-            }],
-        };
-
-        let json = serde_json::to_value(&response).unwrap();
-        assert_eq!(json["openProjects"][0]["path"], "/Users/user/projects/kiri");
-        assert_eq!(json["openProjects"][0]["name"], "kiri");
-        assert_eq!(json["openProjects"][0]["branch"], "main");
-        assert_eq!(
-            json["recentProjects"][0]["path"],
-            "/Users/user/projects/old-project"
-        );
-        assert_eq!(json["recentProjects"][0]["lastOpened"], 1700000000.0);
-        assert_eq!(json["recentProjects"][0]["gitBranch"], "develop");
-    }
-
-    #[test]
-    fn test_projects_response_serialization_empty() {
-        let response = ProjectsResponse {
-            open_projects: vec![],
-            recent_projects: vec![],
-        };
-        let json = serde_json::to_value(&response).unwrap();
-        assert!(json["openProjects"].as_array().unwrap().is_empty());
-        assert!(json["recentProjects"].as_array().unwrap().is_empty());
-    }
-
-    #[test]
-    fn test_open_project_request_deserialization() {
-        let json = serde_json::json!({ "path": "/Users/user/projects/kiri" });
-        let req: OpenProjectRequest = serde_json::from_value(json).unwrap();
-        assert_eq!(req.path, "/Users/user/projects/kiri");
-    }
-
-    #[test]
-    fn test_close_project_request_deserialization() {
-        let json = serde_json::json!({ "path": "/Users/user/projects/kiri" });
-        let req: CloseProjectRequest = serde_json::from_value(json).unwrap();
-        assert_eq!(req.path, "/Users/user/projects/kiri");
-    }
-
-    #[test]
     fn test_recent_project_serde_camel_case() {
         let json = serde_json::json!({
             "path": "/Users/user/projects/test",
@@ -857,46 +580,6 @@ mod tests {
         assert!(state.app_handle.is_none());
         let debug = format!("{:?}", state);
         assert!(debug.contains("false")); // app_handle: false (is_some)
-    }
-
-    #[test]
-    fn test_terminal_status_response_serialization() {
-        let response = TerminalStatusResponse {
-            terminals: vec![
-                TerminalStatus {
-                    id: 1,
-                    is_alive: true,
-                    process_name: Some("vim".to_string()),
-                    cwd: Some("/home/user".to_string()),
-                },
-                TerminalStatus {
-                    id: 2,
-                    is_alive: false,
-                    process_name: None,
-                    cwd: None,
-                },
-            ],
-        };
-
-        let json = serde_json::to_value(&response).unwrap();
-        assert_eq!(json["terminals"].as_array().unwrap().len(), 2);
-        assert_eq!(json["terminals"][0]["id"], 1);
-        assert_eq!(json["terminals"][0]["isAlive"], true);
-        assert_eq!(json["terminals"][0]["processName"], "vim");
-        assert_eq!(json["terminals"][0]["cwd"], "/home/user");
-        assert_eq!(json["terminals"][1]["id"], 2);
-        assert_eq!(json["terminals"][1]["isAlive"], false);
-        assert!(json["terminals"][1]["processName"].is_null());
-        assert!(json["terminals"][1]["cwd"].is_null());
-    }
-
-    #[test]
-    fn test_terminal_status_response_serialization_empty() {
-        let response = TerminalStatusResponse {
-            terminals: vec![],
-        };
-        let json = serde_json::to_value(&response).unwrap();
-        assert!(json["terminals"].as_array().unwrap().is_empty());
     }
 
     #[test]
@@ -968,5 +651,60 @@ mod tests {
     fn test_resolve_remote_ui_path_without_app_handle() {
         let path = resolve_remote_ui_path(None);
         assert_eq!(path, std::path::PathBuf::from("remote-ui"));
+    }
+
+    // ── strip_token_prefix tests ────────────────────────────────
+
+    #[test]
+    fn test_strip_token_prefix_valid_with_subpath() {
+        assert_eq!(strip_token_prefix("/abc-123/ws", "abc-123"), Some("/ws"));
+    }
+
+    #[test]
+    fn test_strip_token_prefix_valid_root_trailing_slash() {
+        assert_eq!(strip_token_prefix("/abc-123/", "abc-123"), Some("/"));
+    }
+
+    #[test]
+    fn test_strip_token_prefix_valid_no_trailing_slash() {
+        assert_eq!(strip_token_prefix("/abc-123", "abc-123"), Some("/"));
+    }
+
+    #[test]
+    fn test_strip_token_prefix_invalid_token() {
+        assert_eq!(strip_token_prefix("/wrong-token/ws", "abc-123"), None);
+    }
+
+    #[test]
+    fn test_strip_token_prefix_health_bypass() {
+        // /api/health is not token-prefixed; strip_token_prefix returns None
+        assert_eq!(strip_token_prefix("/api/health", "abc-123"), None);
+    }
+
+    #[test]
+    fn test_strip_token_prefix_static_file() {
+        assert_eq!(
+            strip_token_prefix("/abc-123/app.js", "abc-123"),
+            Some("/app.js")
+        );
+    }
+
+    #[test]
+    fn test_strip_token_prefix_nested_path() {
+        assert_eq!(
+            strip_token_prefix("/abc-123/assets/style.css", "abc-123"),
+            Some("/assets/style.css")
+        );
+    }
+
+    #[test]
+    fn test_strip_token_prefix_empty_path() {
+        assert_eq!(strip_token_prefix("", "abc-123"), None);
+    }
+
+    #[test]
+    fn test_strip_token_prefix_just_slash() {
+        // "/" has an empty first segment, which won't match any real token
+        assert_eq!(strip_token_prefix("/", "abc-123"), None);
     }
 }

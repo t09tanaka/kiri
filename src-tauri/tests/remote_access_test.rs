@@ -1,7 +1,7 @@
 //! Integration tests for the remote access HTTP server
 //!
 //! These tests verify that the embedded axum server starts correctly,
-//! responds to health checks, enforces bearer-token authentication,
+//! responds to health checks, enforces path-prefix token authentication,
 //! and shuts down gracefully.
 
 use std::sync::Arc;
@@ -105,7 +105,7 @@ async fn test_health_endpoint_returns_correct_fields() {
 async fn test_health_endpoint_requires_no_auth() {
     let (port, shutdown_tx, _handle) = start_test_server().await;
 
-    // Request WITHOUT Authorization header should succeed for /api/health
+    // Request WITHOUT token prefix should succeed for /api/health
     let client = reqwest::Client::new();
     let resp = client
         .get(format!("http://127.0.0.1:{}/api/health", port))
@@ -117,108 +117,62 @@ async fn test_health_endpoint_requires_no_auth() {
     shutdown_tx.send(()).unwrap();
 }
 
-// ── Unknown route ────────────────────────────────────────────────
+// ── Path-prefix token auth ──────────────────────────────────────
 
 #[tokio::test]
-async fn test_unknown_route_returns_404_with_auth() {
+async fn test_invalid_token_returns_404() {
     let (port, shutdown_tx, _handle) = start_test_server().await;
 
     let client = reqwest::Client::new();
+
+    // Request with invalid token prefix returns 404
     let resp = client
-        .get(format!("http://127.0.0.1:{}/api/nonexistent", port))
-        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
+        .get(format!("http://127.0.0.1:{}/wrong-token/ws", port))
         .send()
         .await
         .unwrap();
-    // With a valid token, unknown /api/* routes return 404
     assert_eq!(resp.status(), 404);
 
     shutdown_tx.send(()).unwrap();
 }
 
-// ── Auth middleware ──────────────────────────────────────────────
-
 #[tokio::test]
-async fn test_auth_rejects_without_token() {
+async fn test_missing_token_returns_404() {
     let (port, shutdown_tx, _handle) = start_test_server().await;
 
     let client = reqwest::Client::new();
+
+    // Request without any token prefix returns 404
     let resp = client
-        .post(format!("http://127.0.0.1:{}/api/auth/verify", port))
+        .get(format!("http://127.0.0.1:{}/ws", port))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 401);
+    assert_eq!(resp.status(), 404);
 
     shutdown_tx.send(()).unwrap();
 }
 
 #[tokio::test]
-async fn test_auth_rejects_invalid_token() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("http://127.0.0.1:{}/api/auth/verify", port))
-        .header("Authorization", "Bearer wrong-token")
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-#[tokio::test]
-async fn test_auth_rejects_malformed_header() {
+async fn test_valid_token_prefix_accepted() {
     let (port, shutdown_tx, _handle) = start_test_server().await;
 
     let client = reqwest::Client::new();
 
-    // Missing "Bearer " prefix
+    // With valid token prefix, health endpoint is also accessible via token path
+    // (the middleware strips the token and the request reaches /api/health)
     let resp = client
-        .post(format!("http://127.0.0.1:{}/api/auth/verify", port))
-        .header("Authorization", TEST_TOKEN)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-#[tokio::test]
-async fn test_auth_accepts_valid_token() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(format!("http://127.0.0.1:{}/api/auth/verify", port))
-        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
+        .get(format!(
+            "http://127.0.0.1:{}/{}/api/health",
+            port, TEST_TOKEN
+        ))
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
 
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["valid"], true);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-#[tokio::test]
-async fn test_auth_required_for_api_routes_without_token() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-
-    // Unknown /api/ route without auth should be 401, not 404
-    let resp = client
-        .get(format!("http://127.0.0.1:{}/api/nonexistent", port))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
+    assert_eq!(body["status"], "ok");
 
     shutdown_tx.send(()).unwrap();
 }
@@ -247,10 +201,12 @@ async fn test_live_token_update_takes_effect_immediately() {
 
     let client = reqwest::Client::new();
 
-    // Old token works
+    // Old token works (200 from /api/health means token was accepted)
     let resp = client
-        .post(format!("http://127.0.0.1:{}/api/auth/verify", port))
-        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
+        .get(format!(
+            "http://127.0.0.1:{}/{}/api/health",
+            port, TEST_TOKEN
+        ))
         .send()
         .await
         .unwrap();
@@ -265,208 +221,25 @@ async fn test_live_token_update_takes_effect_immediately() {
 
     // Old token no longer works
     let resp = client
-        .post(format!("http://127.0.0.1:{}/api/auth/verify", port))
-        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
-
-    // New token works
-    let resp = client
-        .post(format!("http://127.0.0.1:{}/api/auth/verify", port))
-        .header("Authorization", format!("Bearer {}", new_token))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-// ── Project endpoints ────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_projects_endpoint_requires_auth() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-
-    // GET /api/projects without token should return 401
-    let resp = client
-        .get(format!("http://127.0.0.1:{}/api/projects", port))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-#[tokio::test]
-async fn test_projects_endpoint_returns_503_without_app_handle() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-
-    // GET /api/projects with valid token but no AppHandle returns 503
-    let resp = client
-        .get(format!("http://127.0.0.1:{}/api/projects", port))
-        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 503);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-#[tokio::test]
-async fn test_open_project_endpoint_requires_auth() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-
-    // POST /api/projects/open without token should return 401
-    let resp = client
-        .post(format!("http://127.0.0.1:{}/api/projects/open", port))
-        .json(&serde_json::json!({ "path": "/tmp/test" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-#[tokio::test]
-async fn test_open_project_endpoint_returns_503_without_app_handle() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-
-    // POST /api/projects/open with valid token but no AppHandle returns 503
-    let resp = client
-        .post(format!("http://127.0.0.1:{}/api/projects/open", port))
-        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
-        .json(&serde_json::json!({ "path": "/tmp/test" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 503);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-#[tokio::test]
-async fn test_close_project_endpoint_requires_auth() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-
-    // POST /api/projects/close without token should return 401
-    let resp = client
-        .post(format!("http://127.0.0.1:{}/api/projects/close", port))
-        .json(&serde_json::json!({ "path": "/tmp/test" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-#[tokio::test]
-async fn test_close_project_endpoint_returns_503_without_app_handle() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-
-    // POST /api/projects/close with valid token but no AppHandle returns 503
-    let resp = client
-        .post(format!("http://127.0.0.1:{}/api/projects/close", port))
-        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
-        .json(&serde_json::json!({ "path": "/tmp/test" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 503);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-// ── Terminal endpoint ────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_terminals_endpoint_requires_auth() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-
-    // GET /api/terminals without token should return 401
-    let resp = client
-        .get(format!("http://127.0.0.1:{}/api/terminals", port))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-#[tokio::test]
-async fn test_terminals_endpoint_returns_503_without_app_handle() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-
-    // GET /api/terminals with valid token but no AppHandle returns 503
-    let resp = client
-        .get(format!("http://127.0.0.1:{}/api/terminals", port))
-        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 503);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-// ── WebSocket endpoint ───────────────────────────────────────────
-
-#[tokio::test]
-async fn test_ws_status_rejects_without_token() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-
-    // Try to access WS endpoint without token query param
-    let resp = client
-        .get(format!("http://127.0.0.1:{}/ws/status", port))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 401);
-
-    shutdown_tx.send(()).unwrap();
-}
-
-#[tokio::test]
-async fn test_ws_status_rejects_invalid_token() {
-    let (port, shutdown_tx, _handle) = start_test_server().await;
-
-    let client = reqwest::Client::new();
-
-    // Try to access WS endpoint with wrong token
-    let resp = client
         .get(format!(
-            "http://127.0.0.1:{}/ws/status?token=wrong-token",
-            port
+            "http://127.0.0.1:{}/{}/api/health",
+            port, TEST_TOKEN
         ))
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 401);
+    assert_eq!(resp.status(), 404);
+
+    // New token works
+    let resp = client
+        .get(format!(
+            "http://127.0.0.1:{}/{}/api/health",
+            port, new_token
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
 
     shutdown_tx.send(()).unwrap();
 }

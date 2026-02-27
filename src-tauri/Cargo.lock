@@ -2409,6 +2409,7 @@ dependencies = [
  "tauri-plugin-store",
  "tempfile",
  "tokio",
+ "tower",
  "tower-http",
  "urlencoding",
  "uuid",

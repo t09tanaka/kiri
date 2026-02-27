@@ -451,6 +451,10 @@ pub fn fetch_remote(repo_path: String, remote: Option<String>) -> Result<FetchRe
     let output = std::process::Command::new("git")
         .args(["fetch", &remote_name])
         .current_dir(&repo_path)
+        // Clear inherited GIT_DIR/GIT_WORK_TREE so git operates on the
+        // target repo_path, not the parent worktree (e.g. during pre-commit hooks).
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
         .output()
         .map_err(|e| format!("Failed to execute git fetch: {}", e))?;
 
