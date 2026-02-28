@@ -207,6 +207,15 @@ describe('projectStore', () => {
 
       expect(get(recentProjects)).toEqual([]);
     });
+
+    it('should return empty array when store returns null', async () => {
+      mockStoreInstance.get.mockResolvedValue(null);
+
+      const { projectStore, recentProjects } = await import('./projectStore');
+      await projectStore.init();
+
+      expect(get(recentProjects)).toEqual([]);
+    });
   });
 
   describe('saveRecentProjects error handling', () => {
@@ -244,6 +253,22 @@ describe('projectStore', () => {
       expect(projects[0].path).toBe('/second');
       expect(projects[1].path).toBe('/first');
       expect(projects[2].path).toBe('/third');
+    });
+  });
+
+  describe('openProject with trailing slash path', () => {
+    it('should use full path as name when path ends with /', async () => {
+      mockStoreInstance.get.mockResolvedValue([]);
+
+      const { projectStore, recentProjects } = await import('./projectStore');
+      await projectStore.init();
+
+      await projectStore.openProject('/test/project/');
+
+      const projects = get(recentProjects);
+      // path.split('/').pop() returns '' for trailing slash, so fallback to full path
+      expect(projects[0].name).toBe('/test/project/');
+      expect(projects[0].path).toBe('/test/project/');
     });
   });
 

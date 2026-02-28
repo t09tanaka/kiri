@@ -377,3 +377,53 @@ describe('performanceService', () => {
     });
   });
 });
+
+describe('performanceService (production mode)', () => {
+  it('should no-op all methods when not in dev mode', async () => {
+    vi.resetModules();
+    vi.stubEnv('DEV', false);
+
+    const mod = await import('./performanceService');
+    const svc = mod.performanceService;
+
+    // init should not log
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    svc.init();
+    expect(logSpy).not.toHaveBeenCalled();
+    logSpy.mockRestore();
+
+    // getMemoryMetrics should return null
+    expect(await svc.getMemoryMetrics()).toBeNull();
+
+    // getPerformanceReport should return null
+    expect(await svc.getPerformanceReport()).toBeNull();
+
+    // markStartupPhase should not log
+    const logSpy2 = vi.spyOn(console, 'log').mockImplementation(() => {});
+    svc.markStartupPhase('test');
+    expect(logSpy2).not.toHaveBeenCalled();
+    logSpy2.mockRestore();
+
+    // startOperation should return a no-op function
+    const stop = svc.startOperation('test');
+    expect(typeof stop).toBe('function');
+    expect(() => stop()).not.toThrow();
+
+    // trackLongTask should not warn
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    svc.trackLongTask(100);
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+
+    // exportMetrics should return null
+    expect(svc.exportMetrics()).toBeNull();
+
+    // logSummary should return immediately
+    await svc.logSummary();
+
+    // clear should not throw
+    expect(() => svc.clear()).not.toThrow();
+
+    vi.unstubAllEnvs();
+  });
+});

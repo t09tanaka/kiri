@@ -173,6 +173,16 @@ describe('GlobalSettings (with Store mock)', () => {
       expect(result.startupCommand).toBe('none');
     });
 
+    it('should use default fontSize when fontSize is undefined', async () => {
+      const { loadSettings } = await importModule();
+      mockStore.get.mockResolvedValue({ startupCommand: 'claude', fontSize: undefined });
+
+      const result = await loadSettings();
+
+      expect(result.fontSize).toBe(13);
+      expect(result.startupCommand).toBe('claude');
+    });
+
     it('should return default settings when store throws an error', async () => {
       const { loadSettings } = await importModule();
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -257,6 +267,20 @@ describe('GlobalSettings (with Store mock)', () => {
       expect(result.worktreeInitCommands).toEqual([]);
     });
 
+    it('should use default when searchExcludePatterns is undefined', async () => {
+      const { loadProjectSettings } = await importModule();
+      mockStore.get.mockResolvedValue({
+        searchExcludePatterns: undefined,
+        worktreeCopyPatterns: ['**/.env*'],
+        worktreeInitCommands: [],
+      });
+
+      const result = await loadProjectSettings('/path/to/project');
+
+      expect(result.searchExcludePatterns).toEqual(DEFAULT_EXCLUDE_PATTERNS);
+      expect(result.worktreeCopyPatterns).toEqual(['**/.env*']);
+    });
+
     it('should preserve portConfig and composeIsolationConfig if present', async () => {
       const { loadProjectSettings } = await importModule();
       const storedSettings = {
@@ -318,6 +342,131 @@ describe('GlobalSettings (with Store mock)', () => {
           searchExcludePatterns: [],
           worktreeCopyPatterns: [],
           worktreeInitCommands: [],
+        })
+      ).resolves.not.toThrow();
+      errorSpy.mockRestore();
+    });
+  });
+
+  describe('store caching', () => {
+    it('should reuse cached store on subsequent calls', async () => {
+      vi.mocked(Store.load).mockClear();
+      const { loadSettings, saveSettings } = await importModule();
+      mockStore.get.mockResolvedValue(null);
+
+      await loadSettings();
+      await saveSettings({ fontSize: 14, startupCommand: 'none' });
+
+      // Store.load should have been called only once (cached for second call)
+      expect(Store.load).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('loadRemoteAccessSettings', () => {
+    it('should return default settings when no settings are stored', async () => {
+      const { loadRemoteAccessSettings, DEFAULT_REMOTE_ACCESS_SETTINGS } = await importModule();
+      mockStore.get.mockResolvedValue(null);
+
+      const result = await loadRemoteAccessSettings();
+
+      expect(result).toEqual(DEFAULT_REMOTE_ACCESS_SETTINGS);
+    });
+
+    it('should return stored settings', async () => {
+      const { loadRemoteAccessSettings } = await importModule();
+      mockStore.get.mockResolvedValue({
+        enabled: true,
+        port: 8080,
+        authToken: 'secret',
+        tunnelToken: 'cf-token',
+        tunnelUrl: 'https://tunnel.example.com',
+      });
+
+      const result = await loadRemoteAccessSettings();
+
+      expect(result.enabled).toBe(true);
+      expect(result.port).toBe(8080);
+      expect(result.authToken).toBe('secret');
+      expect(result.tunnelToken).toBe('cf-token');
+      expect(result.tunnelUrl).toBe('https://tunnel.example.com');
+    });
+
+    it('should fill undefined fields with defaults', async () => {
+      const { loadRemoteAccessSettings } = await importModule();
+      mockStore.get.mockResolvedValue({
+        enabled: undefined,
+        port: undefined,
+        authToken: undefined,
+        tunnelToken: undefined,
+        tunnelUrl: undefined,
+      });
+
+      const result = await loadRemoteAccessSettings();
+
+      expect(result.enabled).toBe(false);
+      expect(result.port).toBe(9876);
+      expect(result.authToken).toBeNull();
+      expect(result.tunnelToken).toBeNull();
+      expect(result.tunnelUrl).toBeNull();
+    });
+
+    it('should migrate from old CloudflareConfig format', async () => {
+      const { loadRemoteAccessSettings } = await importModule();
+      mockStore.get.mockResolvedValue({
+        enabled: true,
+        port: 9876,
+        authToken: null,
+        tunnelToken: undefined,
+        tunnelUrl: null,
+        cloudflare: { tunnelToken: 'old-cf-token' },
+      });
+
+      const result = await loadRemoteAccessSettings();
+
+      expect(result.tunnelToken).toBe('old-cf-token');
+    });
+
+    it('should return default settings when store throws an error', async () => {
+      const { loadRemoteAccessSettings, DEFAULT_REMOTE_ACCESS_SETTINGS } = await importModule();
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockStore.reload.mockRejectedValue(new Error('Store error'));
+
+      const result = await loadRemoteAccessSettings();
+
+      expect(result).toEqual(DEFAULT_REMOTE_ACCESS_SETTINGS);
+      errorSpy.mockRestore();
+    });
+  });
+
+  describe('saveRemoteAccessSettings', () => {
+    it('should save remote access settings', async () => {
+      const { saveRemoteAccessSettings } = await importModule();
+      const settings = {
+        enabled: true,
+        port: 8080,
+        authToken: 'secret',
+        tunnelToken: null,
+        tunnelUrl: null,
+      };
+
+      await saveRemoteAccessSettings(settings);
+
+      expect(mockStore.set).toHaveBeenCalledWith('remoteAccess', settings);
+      expect(mockStore.save).toHaveBeenCalled();
+    });
+
+    it('should not throw when save fails', async () => {
+      const { saveRemoteAccessSettings } = await importModule();
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockStore.save.mockRejectedValue(new Error('Save error'));
+
+      await expect(
+        saveRemoteAccessSettings({
+          enabled: false,
+          port: 9876,
+          authToken: null,
+          tunnelToken: null,
+          tunnelUrl: null,
         })
       ).resolves.not.toThrow();
       errorSpy.mockRestore();

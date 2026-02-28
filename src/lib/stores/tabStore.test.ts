@@ -410,6 +410,45 @@ describe('tabStore', () => {
       expect(firstChild.direction).toBe('horizontal');
       expect(firstChild.children).toHaveLength(2);
     });
+
+    it('should recurse when target is not a direct child in same-direction split', () => {
+      tabStore.addTerminalTab();
+      let state = get(tabStore);
+      const tabId = state.tabs[0].id;
+      const firstPaneId = (state.tabs[0].rootPane as { id: string }).id;
+
+      // Step 1: Vertical split → root: vertical [paneA, paneB]
+      tabStore.splitPane(tabId, firstPaneId, 'vertical');
+      state = get(tabStore);
+      let rootPane = state.tabs[0].rootPane;
+      if (rootPane.type !== 'split') return;
+
+      // Step 2: Split paneA horizontally → root: vertical [horizontal[paneA, paneC], paneB]
+      tabStore.splitPane(tabId, firstPaneId, 'horizontal');
+      state = get(tabStore);
+      rootPane = state.tabs[0].rootPane;
+      if (rootPane.type !== 'split') return;
+      expect(rootPane.direction).toBe('vertical');
+
+      // paneA is now nested inside the horizontal split, NOT a direct child of root
+      // Step 3: Split paneA vertically again → root is vertical but paneA is NOT direct child
+      // This triggers targetIndex === -1 in same-direction branch, causing recursion
+      tabStore.splitPane(tabId, firstPaneId, 'vertical');
+
+      state = get(tabStore);
+      rootPane = state.tabs[0].rootPane;
+      if (rootPane.type !== 'split') return;
+
+      // Root should still be vertical with 2 children
+      expect(rootPane.direction).toBe('vertical');
+      expect(rootPane.children).toHaveLength(2);
+
+      // First child should be horizontal split, with one child being a vertical sub-split
+      const firstChild = rootPane.children[0];
+      expect(firstChild.type).toBe('split');
+      if (firstChild.type !== 'split') return;
+      expect(firstChild.direction).toBe('horizontal');
+    });
   });
 
   describe('closePane', () => {

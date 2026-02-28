@@ -372,6 +372,39 @@ describe('portIsolationService', () => {
       const result = portIsolationService.getUsedWorktreeIndices(config);
       expect(result.size).toBe(0);
     });
+
+    it('should skip worktrees with zero or negative index', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            // assignedValue === originalValue → index = 0, skipped
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3000 }],
+          },
+          'feature-b': {
+            worktreeName: 'feature-b',
+            // assignedValue < originalValue → negative index, skipped
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 2900 }],
+          },
+        },
+      });
+      const result = portIsolationService.getUsedWorktreeIndices(config);
+      expect(result.size).toBe(0);
+    });
+
+    it('should skip worktrees with non-integer index', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            // (3050 - 3000) / 100 = 0.5 → not integer, skipped
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3050 }],
+          },
+        },
+      });
+      const result = portIsolationService.getUsedWorktreeIndices(config);
+      expect(result.size).toBe(0);
+    });
   });
 
   describe('getNextWorktreeIndex', () => {
@@ -764,6 +797,15 @@ describe('portIsolationService', () => {
       const sources: PortSource[] = [makePortSource({ variable_name: 'PORT', file_path: '.env' })];
       expect(
         portIsolationService.isPortTransformable('PORT', sources, projectPath, ['**/.env*'])
+      ).toBe(true);
+    });
+
+    it('should handle project path ending with slash', () => {
+      const sources: PortSource[] = [
+        makePortSource({ variable_name: 'PORT', file_path: '/project/.env' }),
+      ];
+      expect(
+        portIsolationService.isPortTransformable('PORT', sources, '/project/', ['**/.env*'])
       ).toBe(true);
     });
   });

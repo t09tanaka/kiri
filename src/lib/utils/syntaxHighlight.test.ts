@@ -60,6 +60,10 @@ describe('getLanguageFromPath', () => {
     expect(getLanguageFromPath('file.xyz')).toBeNull();
   });
 
+  it('returns null for empty path', () => {
+    expect(getLanguageFromPath('')).toBeNull();
+  });
+
   it('returns makefile for Makefile', () => {
     expect(getLanguageFromPath('Makefile')).toBe('makefile');
   });
@@ -274,6 +278,12 @@ describe('detectEmbeddedContext', () => {
     // First meaningful line is TS, even if later lines look like HTML
     expect(detectEmbeddedContext(['const x = 5;', '<div>'])).toBe('script');
   });
+
+  it('returns template for unrecognized patterns', () => {
+    // A line that does not match any script, template, or style pattern
+    expect(detectEmbeddedContext(['---'])).toBe('template');
+    expect(detectEmbeddedContext(['123 some text'])).toBe('template');
+  });
 });
 
 describe('insertMarksIntoHighlightedHtml', () => {
@@ -367,5 +377,13 @@ describe('insertMarksIntoHighlightedHtml', () => {
     const html = 'text&';
     const result = insertMarksIntoHighlightedHtml(html, [{ start: 0, end: 5 }]);
     expect(result).toBe('<mark>text&</mark>');
+  });
+
+  it('handles unclosed tag (< without closing >)', () => {
+    // When peekTag encounters '<' but no '>' exists, it returns null
+    // and the '<' is treated as regular text character
+    const html = 'abc<def';
+    const result = insertMarksIntoHighlightedHtml(html, [{ start: 0, end: 7 }]);
+    expect(result).toBe('<mark>abc<def</mark>');
   });
 });

@@ -172,6 +172,24 @@ describe('parseDiff', () => {
       const result = parseDiff(diff);
       expect(result.addedLines).toEqual([2]);
     });
+
+    it('should handle malformed hunk header that does not match regex', () => {
+      const diff = `@@ malformed header @@
++ added line`;
+      const result = parseDiff(diff);
+      // Without matching hunk header, currentLineNumber stays at 0
+      expect(result.addedLines).toEqual([1]);
+    });
+
+    it('should ignore lines that do not match any known prefix', () => {
+      const diff = `@@ -1,2 +1,3 @@
+  context
+this line has no recognized prefix
++ added line`;
+      const result = parseDiff(diff);
+      // Unrecognized line is skipped (no line number increment), added line is 2
+      expect(result.addedLines).toEqual([2]);
+    });
   });
 });
 

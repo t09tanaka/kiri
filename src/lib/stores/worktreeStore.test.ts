@@ -109,6 +109,17 @@ describe('worktreeStore', () => {
       expect(state.isLoading).toBe(false);
       expect(state.error).toBe('Failed to list');
     });
+
+    it('should handle non-Error thrown values', async () => {
+      vi.mocked(worktreeService.list).mockRejectedValue('string error');
+      vi.mocked(worktreeService.getContext).mockRejectedValue('string error');
+
+      await worktreeStore.refresh('/repo');
+
+      const state = get(worktreeStore);
+      expect(state.isLoading).toBe(false);
+      expect(state.error).toBe('string error');
+    });
   });
 
   describe('clear', () => {
