@@ -205,6 +205,19 @@ describe('performanceMarker', () => {
       }
     });
 
+    it('should return no-op when not in development mode', async () => {
+      vi.resetModules();
+      vi.stubEnv('DEV', false);
+
+      const mod = await import('./performanceMarker');
+      const cleanup = mod.setupLongTaskObserver();
+
+      expect(typeof cleanup).toBe('function');
+      expect(() => cleanup()).not.toThrow();
+
+      vi.unstubAllEnvs();
+    });
+
     it('should warn and return no-op when PerformanceObserver is not available', () => {
       delete (window as unknown as { PerformanceObserver?: typeof PerformanceObserver })
         .PerformanceObserver;
