@@ -558,7 +558,7 @@
   .section-divider {
     height: 1px;
     background: var(--border-color);
-    margin: 0;
+    margin: var(--space-2) 0;
   }
 
   .description {
