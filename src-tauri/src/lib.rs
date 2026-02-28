@@ -13,8 +13,8 @@ use commands::{
     push_commits, read_directory, read_file, read_file_as_base64, record_command_timing,
     regenerate_remote_token, register_window, resize_terminal, remove_worktree, reveal_in_finder,
     run_init_command, search_content, search_files, setup_menu, start_watching, stop_all_watching,
-    start_cloudflare_tunnel, start_remote_server, stop_cloudflare_tunnel, stop_remote_server,
-    is_remote_server_running,
+    is_cloudflared_available, start_cloudflare_tunnel, start_remote_server,
+    stop_cloudflare_tunnel, stop_remote_server, is_remote_server_running,
     stop_watching, unregister_window, write_terminal, RemoteServerState, RemoteServerStateType,
     TerminalState, TunnelState, TunnelStateType, WatcherState, WindowRegistry, WindowRegistryState,
 };
@@ -115,6 +115,7 @@ pub fn run() {
             generate_remote_qr_code,
             regenerate_remote_token,
             // Cloudflare Tunnel
+            is_cloudflared_available,
             start_cloudflare_tunnel,
             stop_cloudflare_tunnel,
         ])

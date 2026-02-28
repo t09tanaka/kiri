@@ -44,4 +44,9 @@ export const remoteAccessService = {
    * Stop the Cloudflare tunnel
    */
   stopTunnel: (): Promise<void> => invoke('stop_cloudflare_tunnel'),
+
+  /**
+   * Check if cloudflared binary is available on the system
+   */
+  isCloudflaredAvailable: (): Promise<boolean> => invoke('is_cloudflared_available'),
 };

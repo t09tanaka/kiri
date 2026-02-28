@@ -19,6 +19,7 @@
   let mounted = $state(false);
   let isTogglingRemote = $state(false);
   let showRemoteSettings = $state(false);
+  let remoteError = $state<string | null>(null);
 
   async function handleOpenDirectory() {
     const selected = await dialogService.openDirectory();
@@ -51,15 +52,41 @@
     try {
       const settings = await loadRemoteAccessSettings();
       if ($isRemoteActive) {
+        // Stop tunnel first, then server
+        remoteError = null;
+        try {
+          await remoteAccessService.stopTunnel();
+        } catch {
+          // Tunnel may not be running
+        }
+        remoteAccessStore.setTunnelRunning(false);
         await remoteAccessService.stopServer();
         remoteAccessStore.setServerRunning(false);
         settings.enabled = false;
       } else {
+        // Check if cloudflared is available before starting
+        const cloudflaredAvailable = await remoteAccessService.isCloudflaredAvailable();
+        if (!cloudflaredAvailable) {
+          remoteError = 'cloudflared is not installed. Run: brew install cloudflared';
+          return;
+        }
+        remoteError = null;
+
+        // Start server, then tunnel
         await remoteAccessService.startServer(settings.port);
         remoteAccessStore.setServerRunning(true);
         remoteAccessStore.setPort(settings.port);
         remoteAccessStore.setHasToken(true);
         settings.enabled = true;
+
+        try {
+          const token = settings.tunnelToken?.trim() || null;
+          const tunnelUrl = await remoteAccessService.startTunnel(token, settings.port);
+          remoteAccessStore.setTunnelRunning(true, tunnelUrl ?? undefined);
+        } catch {
+          // Tunnel failed - server stays running
+          remoteAccessStore.setTunnelRunning(false);
+        }
       }
       await saveRemoteAccessSettings(settings);
     } catch (error) {
@@ -274,6 +301,10 @@
         </button>
       </div>
     </div>
+
+    {#if remoteError}
+      <p class="remote-error">{remoteError}</p>
+    {/if}
 
     {#if $recentProjects.length > 0}
       <section class="recent-section">
@@ -845,6 +876,16 @@
     color: var(--accent-color);
     background: rgba(125, 211, 252, 0.04);
     border-color: var(--border-color);
+  }
+
+  /* ===== Remote Error ===== */
+  .remote-error {
+    margin-top: var(--space-2);
+    padding: 0 var(--space-1);
+    font-size: 11px;
+    color: var(--accent3-color);
+    text-align: right;
+    opacity: 0.85;
   }
 
   /* ===== Recent Section ===== */

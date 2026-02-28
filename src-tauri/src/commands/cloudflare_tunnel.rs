@@ -52,6 +52,23 @@ pub fn cloudflared_path() -> std::path::PathBuf {
     }
 }
 
+/// Check if `cloudflared` binary is available.
+#[tauri::command]
+pub fn is_cloudflared_available() -> bool {
+    let path = cloudflared_path();
+    if cfg!(debug_assertions) {
+        // In debug, check if it's on PATH by trying to run it
+        std::process::Command::new(&path)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+    } else {
+        path.exists()
+    }
+}
+
 /// Parse the Quick Tunnel URL from cloudflared's stderr output.
 ///
 /// cloudflared prints lines like:
