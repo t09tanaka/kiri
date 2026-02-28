@@ -103,6 +103,22 @@ describe('performanceService', () => {
       );
     });
 
+    it('should silently catch invoke rejection for record_command_timing', async () => {
+      vi.mocked(invoke).mockRejectedValue(new Error('Backend unavailable'));
+
+      const stop = performanceService.startOperation('failing-op');
+      stop();
+
+      // Wait for async catch handler to execute
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(invoke).toHaveBeenCalledWith(
+        'record_command_timing',
+        expect.objectContaining({ command: 'failing-op' })
+      );
+      // Should not throw - catch handler silently ignores the error
+    });
+
     it('should warn on slow operations', async () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -214,6 +230,18 @@ describe('performanceService', () => {
       performanceService.clear();
 
       expect(invoke).toHaveBeenCalledWith('clear_performance_timings');
+    });
+
+    it('should silently catch invoke rejection for clear_performance_timings', async () => {
+      vi.mocked(invoke).mockRejectedValue(new Error('Backend unavailable'));
+
+      performanceService.clear();
+
+      // Wait for async catch handler to execute
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(invoke).toHaveBeenCalledWith('clear_performance_timings');
+      // Should not throw - catch handler silently ignores the error
     });
   });
 

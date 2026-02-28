@@ -524,6 +524,29 @@ describe('contentSearchStore', () => {
     });
   });
 
+  describe('getSelectedMatch with empty matches array', () => {
+    it('should return null when file has no matches at selectedMatchIndex', async () => {
+      vi.useFakeTimers();
+      const mockSearchContent = vi.mocked(searchService.searchContent);
+      // Return a result where matches array is empty
+      mockSearchContent.mockResolvedValue([
+        {
+          path: '/project/src/empty.ts',
+          name: 'empty.ts',
+          matches: [],
+        },
+      ]);
+
+      await contentSearchStore.open('/path/to/project');
+      contentSearchStore.search('foo');
+      await vi.advanceTimersByTimeAsync(200);
+
+      // selectedMatchIndex is 0 but matches is empty, so matches[0] is undefined
+      const match = contentSearchStore.getSelectedMatch();
+      expect(match).toBeNull();
+    });
+  });
+
   describe('addExcludePattern', () => {
     beforeEach(async () => {
       await contentSearchStore.open('/path/to/project');

@@ -478,4 +478,48 @@ describe('projectStore', () => {
       expect(get(currentProjectName)).toBe('/Users/user/projects/');
     });
   });
+
+  describe('currentProjectPath derived store', () => {
+    it('should return null when no project is open', async () => {
+      mockStoreInstance.get.mockResolvedValue([]);
+
+      const { projectStore, currentProjectPath } = await import('./projectStore');
+      await projectStore.init();
+
+      expect(get(currentProjectPath)).toBeNull();
+    });
+
+    it('should return the current path', async () => {
+      mockStoreInstance.get.mockResolvedValue([]);
+
+      const { projectStore, currentProjectPath } = await import('./projectStore');
+      await projectStore.init();
+
+      projectStore.setCurrentPath('/test/project');
+
+      expect(get(currentProjectPath)).toBe('/test/project');
+    });
+  });
+
+  describe('isProjectOpen derived store', () => {
+    it('should return false when no project is open', async () => {
+      mockStoreInstance.get.mockResolvedValue([]);
+
+      const { projectStore, isProjectOpen } = await import('./projectStore');
+      await projectStore.init();
+
+      expect(get(isProjectOpen)).toBe(false);
+    });
+
+    it('should return true when a project is open', async () => {
+      mockStoreInstance.get.mockResolvedValue([]);
+
+      const { projectStore, isProjectOpen } = await import('./projectStore');
+      await projectStore.init();
+
+      projectStore.setCurrentPath('/test/project');
+
+      expect(get(isProjectOpen)).toBe(true);
+    });
+  });
 });
