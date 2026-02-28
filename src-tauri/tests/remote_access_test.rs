@@ -2,10 +2,13 @@
 //!
 //! These tests verify that the embedded axum server starts correctly,
 //! responds to health checks, enforces path-prefix token authentication,
-//! and shuts down gracefully.
+//! WebSocket connectivity, and shuts down gracefully.
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+use futures_util::{SinkExt, StreamExt};
+use tokio_tungstenite::tungstenite;
 
 const TEST_TOKEN: &str = "test-token-abc-123";
 
@@ -241,5 +244,95 @@ async fn test_live_token_update_takes_effect_immediately() {
         .unwrap();
     assert_eq!(resp.status(), 200);
 
+    shutdown_tx.send(()).unwrap();
+}
+
+// ── WebSocket connectivity ─────────────────────────────────────
+
+#[tokio::test]
+async fn test_websocket_upgrade_with_valid_token() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let url = format!("ws://127.0.0.1:{}/{}/ws", port, TEST_TOKEN);
+
+    // Should successfully upgrade to WebSocket
+    let result = tokio_tungstenite::connect_async(&url).await;
+    assert!(
+        result.is_ok(),
+        "WebSocket upgrade should succeed with valid token"
+    );
+
+    let (mut ws_stream, response) = result.unwrap();
+    assert_eq!(response.status(), 101, "Expected HTTP 101 Switching Protocols");
+
+    // Without an AppHandle, collect_full_status returns None and the
+    // server-side loop breaks, closing the WebSocket.  The client
+    // should observe a clean close (or simply an end-of-stream).
+    let msg = tokio::time::timeout(std::time::Duration::from_secs(5), ws_stream.next()).await;
+    assert!(
+        msg.is_ok(),
+        "Should receive a frame (Close or None) within timeout"
+    );
+
+    // Clean up
+    let _ = ws_stream.close(None).await;
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn test_websocket_upgrade_with_invalid_token_fails() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let url = format!("ws://127.0.0.1:{}/wrong-token/ws", port);
+
+    // With an invalid token, the server returns 404.
+    // tokio-tungstenite surfaces this as an HTTP error in the handshake.
+    let result = tokio_tungstenite::connect_async(&url).await;
+    assert!(result.is_err(), "WebSocket upgrade should fail with invalid token");
+
+    if let Err(tungstenite::Error::Http(response)) = result {
+        assert_eq!(
+            response.status(),
+            404,
+            "Expected 404 for invalid token path"
+        );
+    }
+
+    shutdown_tx.send(()).unwrap();
+}
+
+#[tokio::test]
+async fn test_websocket_client_action_does_not_panic() {
+    let (port, shutdown_tx, _handle) = start_test_server().await;
+
+    let url = format!("ws://127.0.0.1:{}/{}/ws", port, TEST_TOKEN);
+    let (mut ws_stream, _) = tokio_tungstenite::connect_async(&url)
+        .await
+        .expect("WebSocket connect failed");
+
+    // Send a client action message.
+    // Without an AppHandle the handler returns early, but it must not
+    // panic or crash the server.
+    let action = serde_json::json!({
+        "action": "openProject",
+        "path": "/tmp/nonexistent-project"
+    });
+    let _ = ws_stream
+        .send(tungstenite::Message::Text(action.to_string().into()))
+        .await;
+
+    // Give the server a moment to process the message
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Server should still be healthy after processing the action
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://127.0.0.1:{}/api/health", port))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "Server should still be healthy");
+
+    let _ = ws_stream.close(None).await;
     shutdown_tx.send(()).unwrap();
 }
