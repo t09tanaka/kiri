@@ -15,8 +15,11 @@
   let isLoading = $state(true);
   let copied = $state(false);
   let copyTimeout: ReturnType<typeof setTimeout> | null = null;
+  let dotCount = $state(1);
+  let dotInterval: ReturnType<typeof setInterval> | null = null;
 
   const tunnelUrl = $derived($remoteAccessStore.tunnelUrl);
+  const generatingText = $derived('Generating' + '.'.repeat(dotCount));
 
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -78,11 +81,15 @@
       isVisible = true;
     });
     document.addEventListener('keydown', handleKeyDown);
+    dotInterval = setInterval(() => {
+      dotCount = (dotCount % 3) + 1;
+    }, 500);
   });
 
   onDestroy(() => {
     document.removeEventListener('keydown', handleKeyDown);
     if (copyTimeout) clearTimeout(copyTimeout);
+    if (dotInterval) clearInterval(dotInterval);
   });
 </script>
 
@@ -159,7 +166,7 @@
             {#if tunnelUrl}
               <code class="url-text">{tunnelUrl}</code>
             {:else}
-              <span class="url-generating">Generating...</span>
+              <span class="url-generating">{generatingText}</span>
             {/if}
             <button
               class="copy-btn"
