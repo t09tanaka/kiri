@@ -46,11 +46,22 @@
 
   async function handleRemoteToggle() {
     if (isTogglingRemote) return;
-    await toggleRemoteAccess({
+    // Open QR modal immediately for instant feedback (before any async work)
+    if (!$isRemoteActive) {
+      remoteAccessViewStore.openQrModal();
+    }
+    const result = await toggleRemoteAccess({
       onToggling: (v) => (isTogglingRemote = v),
-      onError: (msg) => (remoteError = msg || null),
-      onServerStarted: () => remoteAccessViewStore.openQrModal(),
+      onError: (msg) => {
+        remoteError = msg || null;
+        // Close QR modal on error (e.g. cloudflared not available)
+        if (msg) remoteAccessViewStore.closeQrModal();
+      },
     });
+    // Close QR modal if toggle failed (result is null when turning ON means error)
+    if (!result && !$isRemoteActive) {
+      remoteAccessViewStore.closeQrModal();
+    }
   }
 
   function handleKeyDown(e: KeyboardEvent) {

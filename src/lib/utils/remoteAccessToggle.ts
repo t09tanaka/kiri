@@ -9,7 +9,6 @@ import { get } from 'svelte/store';
 export interface ToggleRemoteOptions {
   onToggling: (toggling: boolean) => void;
   onError: (message: string) => void;
-  onServerStarted?: () => void;
 }
 
 /**
@@ -53,9 +52,6 @@ export async function toggleRemoteAccess(
       remoteAccessStore.setPort(settings.port);
       remoteAccessStore.setHasToken(true);
       settings.enabled = true;
-
-      // Notify caller that server is ready (before tunnel starts)
-      opts.onServerStarted?.();
 
       let tunnelUrl: string | null = null;
       try {
