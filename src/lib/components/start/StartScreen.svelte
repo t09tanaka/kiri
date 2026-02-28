@@ -2,23 +2,21 @@
   import { dialogService } from '@/lib/services/dialogService';
   import {
     saveSettings,
-    loadRemoteAccessSettings,
-    saveRemoteAccessSettings,
     STARTUP_COMMANDS,
     type StartupCommand,
   } from '@/lib/services/persistenceService';
   import { remoteAccessService } from '@/lib/services/remoteAccessService';
   import { projectStore, recentProjects, type RecentProject } from '@/lib/stores/projectStore';
   import { remoteAccessStore, isRemoteActive } from '@/lib/stores/remoteAccessStore';
+  import { remoteAccessViewStore } from '@/lib/stores/remoteAccessViewStore';
   import { settingsStore, startupCommand } from '@/lib/stores/settingsStore';
   import { tabStore } from '@/lib/stores/tabStore';
-  import RemoteAccessSettings from '@/lib/components/settings/RemoteAccessSettings.svelte';
+  import { toggleRemoteAccess } from '@/lib/utils/remoteAccessToggle';
   import RecentProjectItem from './RecentProjectItem.svelte';
   import { onMount } from 'svelte';
 
   let mounted = $state(false);
   let isTogglingRemote = $state(false);
-  let showRemoteSettings = $state(false);
   let remoteError = $state<string | null>(null);
 
   async function handleOpenDirectory() {
@@ -48,51 +46,13 @@
 
   async function handleRemoteToggle() {
     if (isTogglingRemote) return;
-    isTogglingRemote = true;
-    try {
-      const settings = await loadRemoteAccessSettings();
-      if ($isRemoteActive) {
-        // Stop tunnel first, then server
-        remoteError = null;
-        try {
-          await remoteAccessService.stopTunnel();
-        } catch {
-          // Tunnel may not be running
-        }
-        remoteAccessStore.setTunnelRunning(false);
-        await remoteAccessService.stopServer();
-        remoteAccessStore.setServerRunning(false);
-        settings.enabled = false;
-      } else {
-        // Check if cloudflared is available before starting
-        const cloudflaredAvailable = await remoteAccessService.isCloudflaredAvailable();
-        if (!cloudflaredAvailable) {
-          remoteError = 'cloudflared is not installed. Run: brew install cloudflared';
-          return;
-        }
-        remoteError = null;
-
-        // Start server, then tunnel
-        await remoteAccessService.startServer(settings.port);
-        remoteAccessStore.setServerRunning(true);
-        remoteAccessStore.setPort(settings.port);
-        remoteAccessStore.setHasToken(true);
-        settings.enabled = true;
-
-        try {
-          const token = settings.tunnelToken?.trim() || null;
-          const tunnelUrl = await remoteAccessService.startTunnel(token, settings.port);
-          remoteAccessStore.setTunnelRunning(true, tunnelUrl ?? undefined);
-        } catch {
-          // Tunnel failed - server stays running
-          remoteAccessStore.setTunnelRunning(false);
-        }
-      }
-      await saveRemoteAccessSettings(settings);
-    } catch (error) {
-      console.error('Failed to toggle remote access:', error);
-    } finally {
-      isTogglingRemote = false;
+    const result = await toggleRemoteAccess({
+      onToggling: (v) => (isTogglingRemote = v),
+      onError: (msg) => (remoteError = msg || null),
+    });
+    // Show QR modal on successful ON with tunnel URL
+    if (result) {
+      remoteAccessViewStore.openQrModal();
     }
   }
 
@@ -280,7 +240,7 @@
         </button>
         <button
           class="remote-settings-btn"
-          onclick={() => (showRemoteSettings = true)}
+          onclick={() => remoteAccessViewStore.openSettings()}
           aria-label="Remote access settings"
         >
           <svg
@@ -358,10 +318,6 @@
     {/if}
   </div>
 </div>
-
-{#if showRemoteSettings}
-  <RemoteAccessSettings onClose={() => (showRemoteSettings = false)} />
-{/if}
 
 <style>
   .start-screen {

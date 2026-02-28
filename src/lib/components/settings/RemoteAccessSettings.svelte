@@ -5,7 +5,10 @@
     saveRemoteAccessSettings,
   } from '@/lib/services/persistenceService';
   import { remoteAccessService } from '@/lib/services/remoteAccessService';
+  import { remoteAccessStore, isRemoteActive } from '@/lib/stores/remoteAccessStore';
+  import { remoteAccessViewStore } from '@/lib/stores/remoteAccessViewStore';
   import { toastStore } from '@/lib/stores/toastStore';
+  import { toggleRemoteAccess } from '@/lib/utils/remoteAccessToggle';
 
   interface Props {
     onClose: () => void;
@@ -21,6 +24,42 @@
   let showTunnelToken = $state(false);
   let isSaving = $state(false);
   let cloudflaredAvailable = $state(true);
+  let isTogglingRemote = $state(false);
+  let remoteError = $state<string | null>(null);
+  let copied = $state(false);
+  let copyTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  const remoteUrl = $derived(
+    $remoteAccessStore.tunnelUrl ?? `http://localhost:${$remoteAccessStore.port}`
+  );
+
+  async function handleToggle() {
+    if (isTogglingRemote) return;
+    const result = await toggleRemoteAccess({
+      onToggling: (v) => (isTogglingRemote = v),
+      onError: (msg) => (remoteError = msg || null),
+    });
+    if (result) {
+      remoteAccessViewStore.openQrModal();
+    }
+  }
+
+  async function handleCopyUrl() {
+    try {
+      await navigator.clipboard.writeText(remoteUrl);
+      copied = true;
+      if (copyTimeout) clearTimeout(copyTimeout);
+      copyTimeout = setTimeout(() => {
+        copied = false;
+      }, 2000);
+    } catch {
+      toastStore.error('Failed to copy URL');
+    }
+  }
+
+  function handleOpenQr() {
+    remoteAccessViewStore.openQrModal();
+  }
 
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -95,6 +134,7 @@
 
   onDestroy(() => {
     document.removeEventListener('keydown', handleKeyDown);
+    if (copyTimeout) clearTimeout(copyTimeout);
   });
 </script>
 
@@ -147,10 +187,102 @@
 
       <!-- Content -->
       <div class="content">
-        <p class="description">
-          Access kiri from outside your network via Cloudflare Tunnel. Toggle on the start screen to
-          connect.
-        </p>
+        <!-- ON/OFF Toggle -->
+        <div class="toggle-row">
+          <div class="toggle-label">
+            <span class="label-text">Remote Access</span>
+            <span class="toggle-status" class:active={$isRemoteActive}>
+              {$isRemoteActive ? 'ON' : 'OFF'}
+            </span>
+          </div>
+          <button
+            class="remote-lightswitch"
+            class:active={$isRemoteActive}
+            onclick={handleToggle}
+            disabled={isTogglingRemote}
+            aria-label={$isRemoteActive ? 'Stop remote access' : 'Start remote access'}
+          >
+            <span class="lightswitch-track">
+              <span class="lightswitch-thumb"></span>
+            </span>
+          </button>
+        </div>
+
+        {#if remoteError}
+          <p class="remote-error">{remoteError}</p>
+        {/if}
+
+        <!-- Remote URL Section (visible when active) -->
+        {#if $isRemoteActive}
+          <div class="url-section">
+            <span class="url-label">Remote URL</span>
+            <div class="url-row">
+              <code class="url-text">{remoteUrl}</code>
+              <button
+                class="url-action-btn"
+                onclick={handleOpenQr}
+                aria-label="Show QR code"
+                title="Show QR code"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="3" y="3" width="7" height="7"></rect>
+                  <rect x="14" y="3" width="7" height="7"></rect>
+                  <rect x="3" y="14" width="7" height="7"></rect>
+                  <rect x="14" y="14" width="3" height="3"></rect>
+                  <line x1="21" y1="14" x2="21" y2="14.01"></line>
+                  <line x1="21" y1="21" x2="21" y2="21.01"></line>
+                </svg>
+              </button>
+              <button
+                class="url-action-btn"
+                class:copied
+                onclick={handleCopyUrl}
+                aria-label={copied ? 'Copied' : 'Copy URL'}
+                title={copied ? 'Copied!' : 'Copy URL'}
+              >
+                {#if copied}
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                {:else}
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                  </svg>
+                {/if}
+              </button>
+            </div>
+          </div>
+        {/if}
+
+        <p class="description">Access kiri from outside your network via Cloudflare Tunnel.</p>
 
         {#if !cloudflaredAvailable}
           <div class="warning-banner">
@@ -563,5 +695,157 @@
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--text-secondary);
+  }
+
+  /* Toggle Row */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+  }
+
+  .toggle-label {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .toggle-status {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .toggle-status.active {
+    background: rgba(125, 211, 252, 0.15);
+    border-color: rgba(125, 211, 252, 0.3);
+    color: var(--accent-color);
+  }
+
+  .remote-lightswitch {
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .remote-lightswitch:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .lightswitch-track {
+    display: block;
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    position: relative;
+    transition: all var(--transition-fast);
+  }
+
+  .remote-lightswitch.active .lightswitch-track {
+    background: rgba(125, 211, 252, 0.2);
+    border-color: var(--accent-color);
+  }
+
+  .lightswitch-thumb {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: all var(--transition-fast);
+  }
+
+  .remote-lightswitch.active .lightswitch-thumb {
+    left: 18px;
+    background: var(--accent-color);
+  }
+
+  .remote-error {
+    margin: 0;
+    font-size: 11px;
+    color: var(--accent3-color);
+    opacity: 0.85;
+  }
+
+  /* URL Section */
+  .url-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .url-label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: 0.08em;
+  }
+
+  .url-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
+    overflow: hidden;
+  }
+
+  .url-text {
+    flex: 1;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .url-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all var(--transition-fast);
+  }
+
+  .url-action-btn:hover {
+    color: var(--accent-color);
+    background: rgba(125, 211, 252, 0.08);
+    border-color: var(--border-color);
+  }
+
+  .url-action-btn.copied {
+    color: #4ade80;
   }
 </style>

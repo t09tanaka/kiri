@@ -13,6 +13,7 @@
   import CommitHistoryModal from '@/lib/components/git/CommitHistoryModal.svelte';
   import WorktreePanel from '@/lib/components/git/WorktreePanel.svelte';
   import RemoteAccessSettings from '@/lib/components/settings/RemoteAccessSettings.svelte';
+  import QrCodeModal from '@/lib/components/remote/QrCodeModal.svelte';
   import EditorModal from '@/lib/components/editor/EditorModal.svelte';
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { contentSearchStore, isContentSearchOpen } from '@/lib/stores/contentSearchStore';
@@ -178,7 +179,7 @@
     // Cmd+Shift+R: Toggle Remote Access Settings
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'r') {
       e.preventDefault();
-      remoteAccessViewStore.toggle();
+      remoteAccessViewStore.toggleSettings();
       return;
     }
 
@@ -561,8 +562,12 @@
   <KeyboardShortcuts isOpen={showShortcuts} onClose={() => (showShortcuts = false)} />
 {/if}
 
-{#if $remoteAccessViewStore.isOpen}
-  <RemoteAccessSettings onClose={() => remoteAccessViewStore.close()} />
+{#if $remoteAccessViewStore.isSettingsOpen}
+  <RemoteAccessSettings onClose={() => remoteAccessViewStore.closeSettings()} />
+{/if}
+
+{#if $remoteAccessViewStore.isQrModalOpen}
+  <QrCodeModal onClose={() => remoteAccessViewStore.closeQrModal()} />
 {/if}
 
 <!-- Global Toast notifications -->

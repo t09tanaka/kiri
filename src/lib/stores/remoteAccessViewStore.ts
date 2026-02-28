@@ -1,19 +1,23 @@
 import { writable } from 'svelte/store';
 
 interface RemoteAccessViewState {
-  isOpen: boolean;
+  isSettingsOpen: boolean;
+  isQrModalOpen: boolean;
 }
 
 function createRemoteAccessViewStore() {
-  const { subscribe, set, update } = writable<RemoteAccessViewState>({
-    isOpen: false,
+  const { subscribe, update } = writable<RemoteAccessViewState>({
+    isSettingsOpen: false,
+    isQrModalOpen: false,
   });
 
   return {
     subscribe,
-    open: () => update((s) => ({ ...s, isOpen: true })),
-    close: () => set({ isOpen: false }),
-    toggle: () => update((s) => ({ ...s, isOpen: !s.isOpen })),
+    openSettings: () => update((s) => ({ ...s, isSettingsOpen: true })),
+    closeSettings: () => update((s) => ({ ...s, isSettingsOpen: false })),
+    toggleSettings: () => update((s) => ({ ...s, isSettingsOpen: !s.isSettingsOpen })),
+    openQrModal: () => update((s) => ({ ...s, isQrModalOpen: true })),
+    closeQrModal: () => update((s) => ({ ...s, isQrModalOpen: false })),
   };
 }
 
