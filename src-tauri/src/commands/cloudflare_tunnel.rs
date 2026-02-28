@@ -87,24 +87,47 @@ pub fn parse_quick_tunnel_url(line: &str) -> Option<String> {
 ///
 /// Waits up to 30 seconds for the URL to appear. Returns an error if the URL
 /// is not found within the timeout or if stderr cannot be read.
+///
+/// After finding the URL, spawns a background thread to drain remaining stderr
+/// output. This prevents cloudflared from receiving SIGPIPE when it tries to
+/// write to a closed pipe, which would kill the process.
 pub(crate) fn parse_tunnel_url_from_stderr(
     child: &mut std::process::Child,
 ) -> Result<String, String> {
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, Read};
 
     let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
-    let reader = BufReader::new(stderr);
+    let mut reader = BufReader::new(stderr);
 
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(30);
+    let mut line_buf = String::new();
 
-    for line in reader.lines() {
+    loop {
+        line_buf.clear();
         if start.elapsed() > timeout {
             return Err("Timeout waiting for tunnel URL".to_string());
         }
-        let line = line.map_err(|e| format!("Failed to read stderr: {}", e))?;
-        if let Some(url) = parse_quick_tunnel_url(&line) {
-            return Ok(url);
+        match reader.read_line(&mut line_buf) {
+            Ok(0) => break, // EOF
+            Ok(_) => {
+                if let Some(url) = parse_quick_tunnel_url(&line_buf) {
+                    // Drain remaining stderr in a background thread to prevent
+                    // cloudflared from receiving SIGPIPE when writing to a closed pipe.
+                    let mut stderr = reader.into_inner();
+                    std::thread::spawn(move || {
+                        let mut buf = [0u8; 4096];
+                        loop {
+                            match stderr.read(&mut buf) {
+                                Ok(0) | Err(_) => break,
+                                Ok(_) => continue,
+                            }
+                        }
+                    });
+                    return Ok(url);
+                }
+            }
+            Err(e) => return Err(format!("Failed to read stderr: {}", e)),
         }
     }
 
@@ -133,8 +156,8 @@ pub async fn start_cloudflare_tunnel(
             // Named Tunnel mode
             let child = std::process::Command::new(cloudflared_path())
                 .args(["tunnel", "run", "--token", t])
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .spawn()
                 .map_err(|e| format!("Failed to start cloudflared: {}", e))?;
 
@@ -149,7 +172,7 @@ pub async fn start_cloudflare_tunnel(
             let local_url = format!("http://localhost:{}", port);
             let mut child = std::process::Command::new(cloudflared_path())
                 .args(["tunnel", "--url", &local_url])
-                .stdout(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .map_err(|e| format!("Failed to start cloudflared: {}", e))?;
