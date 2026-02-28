@@ -184,4 +184,30 @@ describe('remoteAccessService', () => {
       await expect(remoteAccessService.stopTunnel()).rejects.toThrow('Tunnel not running');
     });
   });
+
+  describe('isCloudflaredAvailable', () => {
+    it('should call invoke with is_cloudflared_available and return true', async () => {
+      vi.mocked(invoke).mockResolvedValue(true);
+
+      const result = await remoteAccessService.isCloudflaredAvailable();
+
+      expect(invoke).toHaveBeenCalledWith('is_cloudflared_available');
+      expect(result).toBe(true);
+    });
+
+    it('should call invoke with is_cloudflared_available and return false', async () => {
+      vi.mocked(invoke).mockResolvedValue(false);
+
+      const result = await remoteAccessService.isCloudflaredAvailable();
+
+      expect(invoke).toHaveBeenCalledWith('is_cloudflared_available');
+      expect(result).toBe(false);
+    });
+
+    it('should propagate errors from invoke', async () => {
+      vi.mocked(invoke).mockRejectedValue(new Error('Command failed'));
+
+      await expect(remoteAccessService.isCloudflaredAvailable()).rejects.toThrow('Command failed');
+    });
+  });
 });

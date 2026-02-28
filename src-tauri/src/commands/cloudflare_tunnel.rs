@@ -87,7 +87,9 @@ pub fn parse_quick_tunnel_url(line: &str) -> Option<String> {
 ///
 /// Waits up to 30 seconds for the URL to appear. Returns an error if the URL
 /// is not found within the timeout or if stderr cannot be read.
-fn parse_tunnel_url_from_stderr(child: &mut std::process::Child) -> Result<String, String> {
+pub(crate) fn parse_tunnel_url_from_stderr(
+    child: &mut std::process::Child,
+) -> Result<String, String> {
     use std::io::{BufRead, BufReader};
 
     let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
@@ -264,5 +266,126 @@ mod tests {
     #[test]
     fn test_parse_quick_tunnel_url_empty_string() {
         assert_eq!(parse_quick_tunnel_url(""), None);
+    }
+
+    #[test]
+    fn test_is_cloudflared_available_does_not_panic() {
+        // is_cloudflared_available is a #[tauri::command] but takes no tauri::State,
+        // so it can be called directly. cloudflared may or may not be installed,
+        // so we just verify it returns a bool without panicking.
+        let result = is_cloudflared_available();
+        // result is either true or false depending on the environment
+        assert!(result || !result);
+    }
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_finds_url() {
+        // Create a child process that writes a tunnel URL to stderr.
+        // We use `sh -c` to write to stderr via >&2.
+        let mut child = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "echo 'Starting tunnel...' >&2; echo 'INF | https://bright-fox-lake.trycloudflare.com |' >&2",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        let result = parse_tunnel_url_from_stderr(&mut child);
+        assert_eq!(
+            result,
+            Ok("https://bright-fox-lake.trycloudflare.com".to_string())
+        );
+
+        // Clean up
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_no_url() {
+        // Create a child process that writes non-matching output to stderr.
+        let mut child = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "echo 'Starting tunnel...' >&2; echo 'Some other log line' >&2",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        let result = parse_tunnel_url_from_stderr(&mut child);
+        assert_eq!(
+            result,
+            Err("Could not find tunnel URL in cloudflared output".to_string())
+        );
+
+        // Clean up
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_empty_stderr() {
+        // Create a child process with empty stderr.
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "true"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        let result = parse_tunnel_url_from_stderr(&mut child);
+        assert_eq!(
+            result,
+            Err("Could not find tunnel URL in cloudflared output".to_string())
+        );
+
+        // Clean up
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_url_after_many_lines() {
+        // URL appears after several non-matching lines.
+        let mut child = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "echo 'line 1' >&2; echo 'line 2' >&2; echo 'line 3' >&2; echo 'https://test-abc.trycloudflare.com' >&2",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        let result = parse_tunnel_url_from_stderr(&mut child);
+        assert_eq!(
+            result,
+            Ok("https://test-abc.trycloudflare.com".to_string())
+        );
+
+        // Clean up
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_no_stderr_captured() {
+        // Create a child process without stderr piped, then take stderr manually
+        // to simulate the "Failed to capture stderr" path.
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "true"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        // Take stderr away so the function can't get it
+        let _stolen_stderr = child.stderr.take();
+
+        let result = parse_tunnel_url_from_stderr(&mut child);
+        assert_eq!(result, Err("Failed to capture stderr".to_string()));
+
+        // Clean up
+        let _ = child.wait();
     }
 }

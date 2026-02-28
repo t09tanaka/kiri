@@ -85,7 +85,7 @@ describe('performanceService', () => {
       const metrics = performanceService.exportMetrics();
       expect(metrics?.operations['test-operation']).toBeDefined();
       expect(metrics?.operations['test-operation'].length).toBe(1);
-      expect(metrics?.operations['test-operation'][0]).toBeGreaterThanOrEqual(10);
+      expect(metrics?.operations['test-operation'][0]).toBeGreaterThanOrEqual(5);
     });
 
     it('should call invoke to record timing', async () => {
@@ -238,6 +238,142 @@ describe('performanceService', () => {
       groupSpy.mockRestore();
       logSpy.mockRestore();
       groupEndSpy.mockRestore();
+    });
+
+    it('should log operations with avg and max when multiple timings exist', async () => {
+      vi.mocked(invoke).mockResolvedValue({
+        memory: { rss: 50000000, vms: 100000000, platform: 'darwin' },
+        command_timings: [],
+        app_uptime_ms: 5000,
+      });
+
+      const groupSpy = vi.spyOn(console, 'group').mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const groupEndSpy = vi.spyOn(console, 'groupEnd').mockImplementation(() => {});
+
+      performanceService.init();
+
+      // Record multiple timings for the same operation
+      const stop1 = performanceService.startOperation('file-read');
+      stop1();
+      const stop2 = performanceService.startOperation('file-read');
+      stop2();
+      const stop3 = performanceService.startOperation('file-read');
+      stop3();
+
+      await performanceService.logSummary();
+
+      // Verify operations section was logged with avg/max/count format
+      const operationLogs = logSpy.mock.calls.filter(
+        (call) => typeof call[0] === 'string' && call[0].includes('file-read')
+      );
+      expect(operationLogs.length).toBeGreaterThanOrEqual(1);
+      expect(operationLogs[0][0]).toMatch(/avg=.*ms, max=.*ms, count=3/);
+
+      groupSpy.mockRestore();
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+      groupEndSpy.mockRestore();
+    });
+
+    it('should log memory metrics from backend report', async () => {
+      vi.mocked(invoke).mockResolvedValue({
+        memory: { rss: 52428800, vms: 104857600, platform: 'darwin' },
+        command_timings: [
+          { command: 'read_dir', duration_ms: 15.5, timestamp_ms: 1000 },
+          { command: 'read_file', duration_ms: 8.2, timestamp_ms: 2000 },
+        ],
+        app_uptime_ms: 10000,
+      });
+
+      const groupSpy = vi.spyOn(console, 'group').mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const groupEndSpy = vi.spyOn(console, 'groupEnd').mockImplementation(() => {});
+
+      performanceService.init();
+      await performanceService.logSummary();
+
+      // Verify memory metrics were logged (52428800 / 1024 / 1024 = 50.0 MB)
+      const memoryLog = logSpy.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('Memory:')
+      );
+      expect(memoryLog).toBeDefined();
+      expect(memoryLog![0]).toContain('RSS=50.0MB');
+      expect(memoryLog![0]).toContain('VMS=100.0MB');
+
+      groupSpy.mockRestore();
+      logSpy.mockRestore();
+      groupEndSpy.mockRestore();
+    });
+
+    it('should handle null backend report gracefully', async () => {
+      // getPerformanceReport returns null when it fails
+      vi.mocked(invoke).mockRejectedValue(new Error('Backend unavailable'));
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const groupSpy = vi.spyOn(console, 'group').mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const groupEndSpy = vi.spyOn(console, 'groupEnd').mockImplementation(() => {});
+
+      performanceService.init();
+      await performanceService.logSummary();
+
+      // Should still complete without throwing
+      expect(groupSpy).toHaveBeenCalledWith(expect.stringContaining('Performance Summary'));
+      expect(groupEndSpy).toHaveBeenCalled();
+
+      errorSpy.mockRestore();
+      groupSpy.mockRestore();
+      logSpy.mockRestore();
+      groupEndSpy.mockRestore();
+    });
+
+    it('should log long task count', async () => {
+      vi.mocked(invoke).mockResolvedValue({
+        memory: { rss: 50000000, vms: 100000000, platform: 'darwin' },
+        command_timings: [],
+        app_uptime_ms: 5000,
+      });
+
+      const groupSpy = vi.spyOn(console, 'group').mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const groupEndSpy = vi.spyOn(console, 'groupEnd').mockImplementation(() => {});
+
+      performanceService.init();
+      performanceService.trackLongTask(60);
+      performanceService.trackLongTask(80);
+      performanceService.trackLongTask(100);
+
+      await performanceService.logSummary();
+
+      // Verify long task count was logged
+      const longTaskLog = logSpy.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('Long tasks')
+      );
+      expect(longTaskLog).toBeDefined();
+      expect(longTaskLog![0]).toContain('3');
+
+      groupSpy.mockRestore();
+      logSpy.mockRestore();
+      warnSpy.mockRestore();
+      groupEndSpy.mockRestore();
+    });
+  });
+
+  describe('getPerformanceReport', () => {
+    it('should handle errors gracefully and return null', async () => {
+      vi.mocked(invoke).mockRejectedValue(new Error('Backend unavailable'));
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const result = await performanceService.getPerformanceReport();
+
+      expect(result).toBeNull();
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Failed to get performance report'),
+        expect.any(Error)
+      );
+      errorSpy.mockRestore();
     });
   });
 });

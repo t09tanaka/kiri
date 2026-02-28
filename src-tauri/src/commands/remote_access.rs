@@ -144,7 +144,7 @@ fn load_recent_projects(app: &tauri::AppHandle, open_paths: &[String]) -> Vec<Re
 /// Call this once, then pass the result to [`lookup_process_name`] for
 /// each terminal.  This avoids creating N `System` instances (and N
 /// full process-table scans) when there are N terminals.
-fn refreshed_system() -> sysinfo::System {
+pub(crate) fn refreshed_system() -> sysinfo::System {
     let mut sys = sysinfo::System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
     sys
@@ -155,7 +155,7 @@ fn refreshed_system() -> sysinfo::System {
 /// Uses the provided, already-refreshed [`sysinfo::System`] to find
 /// child processes of the shell.  Returns the child's name if one
 /// exists, otherwise the shell's own name.
-fn lookup_process_name(sys: &sysinfo::System, shell_pid: u32) -> Option<String> {
+pub(crate) fn lookup_process_name(sys: &sysinfo::System, shell_pid: u32) -> Option<String> {
     use sysinfo::Pid;
 
     let spid = Pid::from_u32(shell_pid);
@@ -845,5 +845,513 @@ mod tests {
     fn test_strip_token_prefix_just_slash() {
         // "/" has an empty first segment, which won't match any real token
         assert_eq!(strip_token_prefix("/", "abc-123"), None);
+    }
+
+    // ── refreshed_system tests ─────────────────────────────────────
+
+    #[test]
+    fn test_refreshed_system_returns_system_with_processes() {
+        let sys = refreshed_system();
+        // After refresh, the system should contain at least the current process
+        assert!(
+            !sys.processes().is_empty(),
+            "refreshed system should have at least one process"
+        );
+    }
+
+    #[test]
+    fn test_refreshed_system_contains_current_process() {
+        let sys = refreshed_system();
+        let current_pid = sysinfo::Pid::from_u32(std::process::id());
+        assert!(
+            sys.process(current_pid).is_some(),
+            "refreshed system should contain the current process (pid={})",
+            std::process::id()
+        );
+    }
+
+    // ── lookup_process_name tests ──────────────────────────────────
+
+    #[test]
+    fn test_lookup_process_name_current_process() {
+        let sys = refreshed_system();
+        let current_pid = std::process::id();
+        // The current process should be findable
+        let name = lookup_process_name(&sys, current_pid);
+        assert!(
+            name.is_some(),
+            "lookup should find the current process (pid={})",
+            current_pid
+        );
+        // The name should be non-empty
+        assert!(
+            !name.as_ref().unwrap().is_empty(),
+            "process name should not be empty"
+        );
+    }
+
+    #[test]
+    fn test_lookup_process_name_nonexistent_pid() {
+        let sys = refreshed_system();
+        // u32::MAX is extremely unlikely to be a real PID
+        let name = lookup_process_name(&sys, u32::MAX);
+        assert!(
+            name.is_none(),
+            "lookup should return None for a nonexistent PID"
+        );
+    }
+
+    #[test]
+    fn test_lookup_process_name_zero_pid() {
+        let sys = refreshed_system();
+        // PID 0 is kernel/system on most platforms; lookup_process_name
+        // should not panic regardless of whether it exists.
+        let _name = lookup_process_name(&sys, 0);
+        // No assertion on the value — just verify no panic
+    }
+
+    #[test]
+    fn test_lookup_process_name_returns_child_over_shell() {
+        // When a PID has child processes, lookup_process_name should prefer
+        // the child name. We can verify this by looking up the current test
+        // runner process (which is the child of whatever spawned it).
+        let sys = refreshed_system();
+        let current_pid = sysinfo::Pid::from_u32(std::process::id());
+
+        // Get the parent PID of the current process
+        if let Some(proc) = sys.process(current_pid) {
+            if let Some(parent_pid) = proc.parent() {
+                // Looking up the parent should find a child (possibly this
+                // process or a sibling). The important thing is it returns
+                // Some and doesn't panic.
+                let name = lookup_process_name(&sys, parent_pid.as_u32());
+                assert!(
+                    name.is_some(),
+                    "lookup for parent PID {} should find a child process",
+                    parent_pid.as_u32()
+                );
+            }
+        }
+    }
+
+    // ── Additional strip_token_prefix edge cases ───────────────────
+
+    #[test]
+    fn test_strip_token_prefix_uuid_format_token() {
+        let uuid_token = "550e8400-e29b-41d4-a716-446655440000";
+        assert_eq!(
+            strip_token_prefix(
+                &format!("/{}/ws", uuid_token),
+                uuid_token
+            ),
+            Some("/ws")
+        );
+    }
+
+    #[test]
+    fn test_strip_token_prefix_uuid_token_with_nested_path() {
+        let uuid_token = "550e8400-e29b-41d4-a716-446655440000";
+        assert_eq!(
+            strip_token_prefix(
+                &format!("/{}/assets/css/style.css", uuid_token),
+                uuid_token
+            ),
+            Some("/assets/css/style.css")
+        );
+    }
+
+    #[test]
+    fn test_strip_token_prefix_very_long_path() {
+        let token = "abc-123";
+        let long_suffix = "/a".repeat(500);
+        let path = format!("/{}{}", token, long_suffix);
+        let result = strip_token_prefix(&path, token);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), long_suffix);
+    }
+
+    #[test]
+    fn test_strip_token_prefix_token_with_special_chars() {
+        // Tokens should only be UUIDs in practice, but test resilience
+        let token = "abc_123.xyz";
+        assert_eq!(
+            strip_token_prefix(&format!("/{}/ws", token), token),
+            Some("/ws")
+        );
+    }
+
+    #[test]
+    fn test_strip_token_prefix_partial_match_shorter() {
+        // "abc" is a prefix of "abc-123", should NOT match
+        assert_eq!(strip_token_prefix("/abc/ws", "abc-123"), None);
+    }
+
+    #[test]
+    fn test_strip_token_prefix_partial_match_longer() {
+        // "abc-123-extra" is longer than "abc-123", should NOT match
+        assert_eq!(strip_token_prefix("/abc-123-extra/ws", "abc-123"), None);
+    }
+
+    #[test]
+    fn test_strip_token_prefix_case_sensitive() {
+        assert_eq!(strip_token_prefix("/ABC-123/ws", "abc-123"), None);
+    }
+
+    #[test]
+    fn test_strip_token_prefix_empty_token() {
+        // Empty token should match the empty first segment of "//"
+        assert_eq!(strip_token_prefix("//ws", ""), Some("/ws"));
+    }
+
+    #[test]
+    fn test_strip_token_prefix_path_with_query_like_content() {
+        // Query strings are part of the URI, not the path, but the path
+        // itself could contain encoded characters
+        let token = "abc-123";
+        assert_eq!(
+            strip_token_prefix("/abc-123/api/data", token),
+            Some("/api/data")
+        );
+    }
+
+    #[test]
+    fn test_strip_token_prefix_no_leading_slash() {
+        assert_eq!(strip_token_prefix("abc-123/ws", "abc-123"), None);
+    }
+
+    // ── Additional ClientAction deserialization edge cases ──────────
+
+    #[test]
+    fn test_client_action_extra_fields_ignored() {
+        let json = r#"{"action":"openProject","path":"/some/path","extra":"field","count":42}"#;
+        let action: ClientAction = serde_json::from_str(json).unwrap();
+        match action {
+            ClientAction::OpenProject { path } => assert_eq!(path, "/some/path"),
+            _ => panic!("Expected OpenProject"),
+        }
+    }
+
+    #[test]
+    fn test_client_action_empty_path() {
+        let json = r#"{"action":"openProject","path":""}"#;
+        let action: ClientAction = serde_json::from_str(json).unwrap();
+        match action {
+            ClientAction::OpenProject { path } => assert_eq!(path, ""),
+            _ => panic!("Expected OpenProject"),
+        }
+    }
+
+    #[test]
+    fn test_client_action_unicode_path() {
+        let json = r#"{"action":"openProject","path":"/Users/ユーザー/プロジェクト"}"#;
+        let action: ClientAction = serde_json::from_str(json).unwrap();
+        match action {
+            ClientAction::OpenProject { path } => {
+                assert_eq!(path, "/Users/ユーザー/プロジェクト")
+            }
+            _ => panic!("Expected OpenProject"),
+        }
+    }
+
+    #[test]
+    fn test_client_action_path_with_spaces() {
+        let json = r#"{"action":"closeProject","path":"/Users/user/my project/test"}"#;
+        let action: ClientAction = serde_json::from_str(json).unwrap();
+        match action {
+            ClientAction::CloseProject { path } => {
+                assert_eq!(path, "/Users/user/my project/test")
+            }
+            _ => panic!("Expected CloseProject"),
+        }
+    }
+
+    #[test]
+    fn test_client_action_empty_json() {
+        let json = r#"{}"#;
+        let result = serde_json::from_str::<ClientAction>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_client_action_null_path_fails() {
+        let json = r#"{"action":"openProject","path":null}"#;
+        let result = serde_json::from_str::<ClientAction>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_client_action_debug_impl() {
+        let action = ClientAction::OpenProject {
+            path: "/some/path".to_string(),
+        };
+        let debug = format!("{:?}", action);
+        assert!(debug.contains("OpenProject"));
+        assert!(debug.contains("/some/path"));
+    }
+
+    #[test]
+    fn test_client_action_clone() {
+        let action = ClientAction::CloseProject {
+            path: "/test".to_string(),
+        };
+        let cloned = action.clone();
+        match cloned {
+            ClientAction::CloseProject { path } => assert_eq!(path, "/test"),
+            _ => panic!("Expected CloseProject"),
+        }
+    }
+
+    // ── Additional HealthResponse serialization edge cases ─────────
+
+    #[test]
+    fn test_health_response_empty_version() {
+        let response = HealthResponse {
+            status: "ok".to_string(),
+            version: "".to_string(),
+        };
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["version"], "");
+    }
+
+    #[test]
+    fn test_health_response_debug_impl() {
+        let response = HealthResponse {
+            status: "ok".to_string(),
+            version: "1.0.0".to_string(),
+        };
+        let debug = format!("{:?}", response);
+        assert!(debug.contains("ok"));
+        assert!(debug.contains("1.0.0"));
+    }
+
+    #[test]
+    fn test_health_response_clone() {
+        let response = HealthResponse {
+            status: "ok".to_string(),
+            version: "1.0.0".to_string(),
+        };
+        let cloned = response.clone();
+        assert_eq!(cloned.status, "ok");
+        assert_eq!(cloned.version, "1.0.0");
+    }
+
+    // ── OpenProject serialization tests ────────────────────────────
+
+    #[test]
+    fn test_open_project_with_none_branch() {
+        let project = OpenProject {
+            path: "/projects/kiri".to_string(),
+            name: "kiri".to_string(),
+            branch: None,
+        };
+        let json = serde_json::to_value(&project).unwrap();
+        assert_eq!(json["path"], "/projects/kiri");
+        assert_eq!(json["name"], "kiri");
+        assert!(json["branch"].is_null());
+    }
+
+    #[test]
+    fn test_open_project_camel_case_serialization() {
+        // OpenProject has no multi-word fields currently, but verify rename_all works
+        let project = OpenProject {
+            path: "/test".to_string(),
+            name: "test".to_string(),
+            branch: Some("feature/test".to_string()),
+        };
+        let json = serde_json::to_value(&project).unwrap();
+        // All current fields are single-word, so camelCase is same as original
+        assert!(json.get("path").is_some());
+        assert!(json.get("name").is_some());
+        assert!(json.get("branch").is_some());
+    }
+
+    #[test]
+    fn test_open_project_debug_impl() {
+        let project = OpenProject {
+            path: "/test".to_string(),
+            name: "test".to_string(),
+            branch: Some("main".to_string()),
+        };
+        let debug = format!("{:?}", project);
+        assert!(debug.contains("OpenProject"));
+        assert!(debug.contains("main"));
+    }
+
+    #[test]
+    fn test_open_project_clone() {
+        let project = OpenProject {
+            path: "/test".to_string(),
+            name: "test".to_string(),
+            branch: Some("dev".to_string()),
+        };
+        let cloned = project.clone();
+        assert_eq!(cloned.path, "/test");
+        assert_eq!(cloned.branch, Some("dev".to_string()));
+    }
+
+    // ── TerminalStatus serialization tests ─────────────────────────
+
+    #[test]
+    fn test_terminal_status_all_none_fields() {
+        let status = TerminalStatus {
+            id: 1,
+            is_alive: false,
+            process_name: None,
+            cwd: None,
+        };
+        let json = serde_json::to_value(&status).unwrap();
+        assert_eq!(json["id"], 1);
+        assert_eq!(json["isAlive"], false);
+        assert!(json["processName"].is_null());
+        assert!(json["cwd"].is_null());
+    }
+
+    #[test]
+    fn test_terminal_status_camel_case_serialization() {
+        let status = TerminalStatus {
+            id: 42,
+            is_alive: true,
+            process_name: Some("node".to_string()),
+            cwd: Some("/tmp".to_string()),
+        };
+        let json = serde_json::to_value(&status).unwrap();
+        assert!(json.get("isAlive").is_some());
+        assert!(json.get("processName").is_some());
+        // Ensure snake_case variants are NOT present
+        assert!(json.get("is_alive").is_none());
+        assert!(json.get("process_name").is_none());
+    }
+
+    #[test]
+    fn test_terminal_status_debug_impl() {
+        let status = TerminalStatus {
+            id: 7,
+            is_alive: true,
+            process_name: Some("cargo".to_string()),
+            cwd: None,
+        };
+        let debug = format!("{:?}", status);
+        assert!(debug.contains("TerminalStatus"));
+        assert!(debug.contains("cargo"));
+    }
+
+    // ── RecentProject deserialization edge cases ────────────────────
+
+    #[test]
+    fn test_recent_project_missing_git_branch_field() {
+        // When the field is entirely missing (not null), it should default to None
+        let json = serde_json::json!({
+            "path": "/Users/user/projects/test",
+            "name": "test",
+            "lastOpened": 1700000000.0
+        });
+        let project: RecentProject = serde_json::from_value(json).unwrap();
+        assert_eq!(project.git_branch, None);
+    }
+
+    #[test]
+    fn test_recent_project_fractional_timestamp() {
+        let json = serde_json::json!({
+            "path": "/test",
+            "name": "test",
+            "lastOpened": 1700000000.123456,
+            "gitBranch": null
+        });
+        let project: RecentProject = serde_json::from_value(json).unwrap();
+        assert!((project.last_opened - 1700000000.123456).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_recent_project_zero_timestamp() {
+        let json = serde_json::json!({
+            "path": "/test",
+            "name": "test",
+            "lastOpened": 0.0,
+            "gitBranch": null
+        });
+        let project: RecentProject = serde_json::from_value(json).unwrap();
+        assert_eq!(project.last_opened, 0.0);
+    }
+
+    #[test]
+    fn test_recent_project_debug_impl() {
+        let project = RecentProject {
+            path: "/test".to_string(),
+            name: "test".to_string(),
+            last_opened: 1700000000.0,
+            git_branch: Some("develop".to_string()),
+        };
+        let debug = format!("{:?}", project);
+        assert!(debug.contains("RecentProject"));
+        assert!(debug.contains("develop"));
+    }
+
+    #[test]
+    fn test_recent_project_clone() {
+        let project = RecentProject {
+            path: "/test".to_string(),
+            name: "test".to_string(),
+            last_opened: 1700000000.0,
+            git_branch: Some("main".to_string()),
+        };
+        let cloned = project.clone();
+        assert_eq!(cloned.path, project.path);
+        assert_eq!(cloned.last_opened, project.last_opened);
+        assert_eq!(cloned.git_branch, project.git_branch);
+    }
+
+    // ── StatusUpdate edge cases ────────────────────────────────────
+
+    #[test]
+    fn test_status_update_debug_impl() {
+        let update = StatusUpdate {
+            open_projects: vec![],
+            recent_projects: vec![],
+            terminals: vec![],
+            timestamp: 1234567890,
+        };
+        let debug = format!("{:?}", update);
+        assert!(debug.contains("StatusUpdate"));
+        assert!(debug.contains("1234567890"));
+    }
+
+    #[test]
+    fn test_status_update_clone() {
+        let update = StatusUpdate {
+            open_projects: vec![OpenProject {
+                path: "/p".to_string(),
+                name: "p".to_string(),
+                branch: None,
+            }],
+            recent_projects: vec![],
+            terminals: vec![],
+            timestamp: 100,
+        };
+        let cloned = update.clone();
+        assert_eq!(cloned.open_projects.len(), 1);
+        assert_eq!(cloned.timestamp, 100);
+    }
+
+    #[test]
+    fn test_status_update_camel_case_keys() {
+        let update = StatusUpdate {
+            open_projects: vec![],
+            recent_projects: vec![],
+            terminals: vec![],
+            timestamp: 0,
+        };
+        let json = serde_json::to_value(&update).unwrap();
+        assert!(json.get("openProjects").is_some());
+        assert!(json.get("recentProjects").is_some());
+        assert!(json.get("open_projects").is_none());
+        assert!(json.get("recent_projects").is_none());
+    }
+
+    // ── resolve_remote_ui_path tests ───────────────────────────────
+
+    #[test]
+    fn test_resolve_remote_ui_path_none_returns_dev_fallback() {
+        let path = resolve_remote_ui_path(None);
+        assert_eq!(path, std::path::PathBuf::from("remote-ui"));
     }
 }

@@ -675,4 +675,140 @@ describe('portIsolationService', () => {
       ).toBe(true);
     });
   });
+
+  describe('registerWorktreeAssignments', () => {
+    it('should add assignments for a new worktree', () => {
+      const config = makeDefaultConfig();
+      const assignments = [
+        { variable_name: 'PORT', original_value: 3000, assigned_value: 3100 },
+        { variable_name: 'DB_PORT', original_value: 5432, assigned_value: 5532 },
+      ];
+
+      const result = portIsolationService.registerWorktreeAssignments(
+        config,
+        'feature-a',
+        assignments
+      );
+
+      expect(result.worktreeAssignments['feature-a']).toBeDefined();
+      expect(result.worktreeAssignments['feature-a'].worktreeName).toBe('feature-a');
+      expect(result.worktreeAssignments['feature-a'].assignments).toHaveLength(2);
+      expect(result.worktreeAssignments['feature-a'].assignments[0]).toEqual({
+        variableName: 'PORT',
+        originalValue: 3000,
+        assignedValue: 3100,
+      });
+      expect(result.worktreeAssignments['feature-a'].assignments[1]).toEqual({
+        variableName: 'DB_PORT',
+        originalValue: 5432,
+        assignedValue: 5532,
+      });
+    });
+
+    it('should preserve existing worktree assignments', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+        },
+      });
+      const assignments = [{ variable_name: 'PORT', original_value: 3000, assigned_value: 3200 }];
+
+      const result = portIsolationService.registerWorktreeAssignments(
+        config,
+        'feature-b',
+        assignments
+      );
+
+      expect(result.worktreeAssignments['feature-a']).toBeDefined();
+      expect(result.worktreeAssignments['feature-b']).toBeDefined();
+    });
+
+    it('should handle empty assignments array', () => {
+      const config = makeDefaultConfig();
+
+      const result = portIsolationService.registerWorktreeAssignments(config, 'empty-wt', []);
+
+      expect(result.worktreeAssignments['empty-wt']).toBeDefined();
+      expect(result.worktreeAssignments['empty-wt'].assignments).toHaveLength(0);
+    });
+
+    it('should handle config with undefined worktreeAssignments', () => {
+      const config = { enabled: true, targetFiles: ['**/.env*'] } as PortConfig;
+
+      const assignments = [{ variable_name: 'PORT', original_value: 3000, assigned_value: 3100 }];
+
+      const result = portIsolationService.registerWorktreeAssignments(
+        config,
+        'feature-a',
+        assignments
+      );
+
+      expect(result.worktreeAssignments['feature-a']).toBeDefined();
+    });
+  });
+
+  describe('removeWorktreeAssignments', () => {
+    it('should remove assignments for a specific worktree', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+          'feature-b': {
+            worktreeName: 'feature-b',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3200 }],
+          },
+        },
+      });
+
+      const result = portIsolationService.removeWorktreeAssignments(config, 'feature-a');
+
+      expect(result.worktreeAssignments['feature-a']).toBeUndefined();
+      expect(result.worktreeAssignments['feature-b']).toBeDefined();
+    });
+
+    it('should handle removing non-existent worktree gracefully', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+        },
+      });
+
+      const result = portIsolationService.removeWorktreeAssignments(config, 'nonexistent');
+
+      expect(result.worktreeAssignments['feature-a']).toBeDefined();
+    });
+
+    it('should handle config with undefined worktreeAssignments', () => {
+      const config = { enabled: true, targetFiles: ['**/.env*'] } as PortConfig;
+
+      const result = portIsolationService.removeWorktreeAssignments(config, 'feature-a');
+
+      expect(result).toBe(config); // Should return same reference
+    });
+
+    it('should return new object, not mutate original', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+        },
+      });
+
+      const result = portIsolationService.removeWorktreeAssignments(config, 'feature-a');
+
+      expect(result).not.toBe(config);
+      // Original should still have feature-a
+      expect(config.worktreeAssignments['feature-a']).toBeDefined();
+    });
+  });
 });
