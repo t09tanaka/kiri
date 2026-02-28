@@ -35,13 +35,11 @@
 
   async function handleToggle() {
     if (isTogglingRemote) return;
-    const result = await toggleRemoteAccess({
+    await toggleRemoteAccess({
       onToggling: (v) => (isTogglingRemote = v),
       onError: (msg) => (remoteError = msg || null),
+      onServerStarted: () => remoteAccessViewStore.openQrModal(),
     });
-    if (result) {
-      remoteAccessViewStore.openQrModal();
-    }
   }
 
   async function handleCopyUrl() {

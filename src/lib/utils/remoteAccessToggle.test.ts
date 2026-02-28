@@ -107,6 +107,25 @@ describe('toggleRemoteAccess', () => {
       expect(mockService.startTunnel).toHaveBeenCalledWith(null, 9876);
     });
 
+    it('should call onServerStarted after server starts but before tunnel', async () => {
+      const callOrder: string[] = [];
+      mockService.startServer.mockImplementation(async () => {
+        callOrder.push('startServer');
+      });
+      mockService.startTunnel.mockImplementation(async () => {
+        callOrder.push('startTunnel');
+        return 'https://test.trycloudflare.com';
+      });
+
+      const opts = createOpts();
+      await toggleRemoteAccess({
+        ...opts,
+        onServerStarted: () => callOrder.push('onServerStarted'),
+      });
+
+      expect(callOrder).toEqual(['startServer', 'onServerStarted', 'startTunnel']);
+    });
+
     it('should save settings with enabled=true', async () => {
       const opts = createOpts();
       await toggleRemoteAccess(opts);

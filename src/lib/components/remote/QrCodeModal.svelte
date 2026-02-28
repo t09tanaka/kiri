@@ -52,6 +52,8 @@
     }
   }
 
+  let prevUrl = $state<string | null>(null);
+
   async function loadQrCode() {
     isLoading = true;
     try {
@@ -64,12 +66,20 @@
     }
   }
 
+  // Regenerate QR code when tunnel URL changes (e.g. tunnel connects after modal opens)
+  $effect(() => {
+    const currentUrl = $remoteAccessStore.tunnelUrl;
+    if (currentUrl !== prevUrl) {
+      prevUrl = currentUrl;
+      loadQrCode();
+    }
+  });
+
   onMount(() => {
     requestAnimationFrame(() => {
       isVisible = true;
     });
     document.addEventListener('keydown', handleKeyDown);
-    loadQrCode();
   });
 
   onDestroy(() => {

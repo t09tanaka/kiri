@@ -46,14 +46,11 @@
 
   async function handleRemoteToggle() {
     if (isTogglingRemote) return;
-    const result = await toggleRemoteAccess({
+    await toggleRemoteAccess({
       onToggling: (v) => (isTogglingRemote = v),
       onError: (msg) => (remoteError = msg || null),
+      onServerStarted: () => remoteAccessViewStore.openQrModal(),
     });
-    // Show QR modal on successful ON with tunnel URL
-    if (result) {
-      remoteAccessViewStore.openQrModal();
-    }
   }
 
   function handleKeyDown(e: KeyboardEvent) {
