@@ -354,4 +354,18 @@ describe('insertMarksIntoHighlightedHtml', () => {
     // Opening span is emitted first, then mark opens after closing span
     expect(result).toBe('<span class="hljs-keyword"></span><mark>text</mark>');
   });
+
+  it('handles ampersand without valid HTML entity (no semicolon within 10 chars)', () => {
+    // & followed by text that doesn't have a semicolon within 10 characters
+    // This triggers the else branch at lines 416-418
+    const html = 'a&longenoughtext b';
+    const result = insertMarksIntoHighlightedHtml(html, [{ start: 0, end: 2 }]);
+    expect(result).toBe('<mark>a&</mark>longenoughtext b');
+  });
+
+  it('handles ampersand at end of string without semicolon', () => {
+    const html = 'text&';
+    const result = insertMarksIntoHighlightedHtml(html, [{ start: 0, end: 5 }]);
+    expect(result).toBe('<mark>text&</mark>');
+  });
 });

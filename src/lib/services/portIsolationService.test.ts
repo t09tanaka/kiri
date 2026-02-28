@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   portIsolationService,
   targetFilePatternToRegex,
@@ -6,6 +6,11 @@ import {
 } from './portIsolationService';
 import type { DetectedPorts, PortSource } from './portIsolationService';
 import type { PortConfig } from './persistenceService';
+import { invoke } from '@tauri-apps/api/core';
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}));
 
 function makePortSource(overrides: Partial<PortSource> = {}): PortSource {
   return {
@@ -183,6 +188,93 @@ describe('portIsolationService', () => {
     it('should be case-sensitive', () => {
       expect(portIsolationService.isComposePort('compose:3000')).toBe(false);
       expect(portIsolationService.isComposePort('Compose:3000')).toBe(false);
+    });
+  });
+
+  describe('isScriptPort', () => {
+    it('should return true for script port variable names', () => {
+      expect(portIsolationService.isScriptPort('SCRIPT:3000')).toBe(true);
+      expect(portIsolationService.isScriptPort('SCRIPT:8080')).toBe(true);
+    });
+
+    it('should return false for non-script variable names', () => {
+      expect(portIsolationService.isScriptPort('PORT')).toBe(false);
+      expect(portIsolationService.isScriptPort('COMPOSE:3000')).toBe(false);
+      expect(portIsolationService.isScriptPort('')).toBe(false);
+    });
+
+    it('should be case-sensitive', () => {
+      expect(portIsolationService.isScriptPort('script:3000')).toBe(false);
+    });
+  });
+
+  describe('getUniqueScriptPorts', () => {
+    it('should return empty array when no script ports', () => {
+      const detected = makeEmptyDetected();
+      expect(portIsolationService.getUniqueScriptPorts(detected)).toEqual([]);
+    });
+
+    it('should return all script ports when no duplicates', () => {
+      const detected: DetectedPorts = {
+        ...makeEmptyDetected(),
+        script_ports: [
+          makePortSource({
+            variable_name: 'SCRIPT:3000',
+            port_value: 3000,
+            file_path: 'package.json',
+          }),
+          makePortSource({
+            variable_name: 'SCRIPT:8080',
+            port_value: 8080,
+            file_path: 'package.json',
+          }),
+        ],
+      };
+      const result = portIsolationService.getUniqueScriptPorts(detected);
+      expect(result).toHaveLength(2);
+    });
+
+    it('should deduplicate script ports by variable_name', () => {
+      const detected: DetectedPorts = {
+        ...makeEmptyDetected(),
+        script_ports: [
+          makePortSource({
+            variable_name: 'SCRIPT:3000',
+            port_value: 3000,
+            file_path: 'package.json',
+            line_number: 5,
+          }),
+          makePortSource({
+            variable_name: 'SCRIPT:3000',
+            port_value: 3000,
+            file_path: 'package.json',
+            line_number: 10,
+          }),
+        ],
+      };
+      const result = portIsolationService.getUniqueScriptPorts(detected);
+      expect(result).toHaveLength(1);
+      expect(result[0].line_number).toBe(5); // Keeps first occurrence
+    });
+  });
+
+  describe('createDefaultConfig', () => {
+    it('should return default port config', () => {
+      const config = portIsolationService.createDefaultConfig();
+      expect(config.enabled).toBe(true);
+      expect(config.worktreeAssignments).toEqual({});
+      expect(config.targetFiles).toContain('**/.env*');
+      expect(config.targetFiles).toContain('**/docker-compose.yml');
+      expect(config.targetFiles).toContain('**/package.json');
+      expect(config.targetFiles.length).toBeGreaterThan(0);
+    });
+
+    it('should return a new object each time', () => {
+      const config1 = portIsolationService.createDefaultConfig();
+      const config2 = portIsolationService.createDefaultConfig();
+      expect(config1).toEqual(config2);
+      expect(config1).not.toBe(config2);
+      expect(config1.targetFiles).not.toBe(config2.targetFiles);
     });
   });
 
@@ -809,6 +901,68 @@ describe('portIsolationService', () => {
       expect(result).not.toBe(config);
       // Original should still have feature-a
       expect(config.worktreeAssignments['feature-a']).toBeDefined();
+    });
+  });
+
+  describe('detectPorts (invoke wrapper)', () => {
+    it('should invoke detect_ports command', async () => {
+      const mockResult: DetectedPorts = {
+        env_ports: [makePortSource()],
+        dockerfile_ports: [],
+        compose_ports: [],
+        script_ports: [],
+      };
+      vi.mocked(invoke).mockResolvedValue(mockResult);
+
+      const result = await portIsolationService.detectPorts('/path/to/project');
+
+      expect(invoke).toHaveBeenCalledWith('detect_ports', { dirPath: '/path/to/project' });
+      expect(result).toEqual(mockResult);
+    });
+
+    it('should propagate errors from invoke', async () => {
+      vi.mocked(invoke).mockRejectedValue(new Error('Tauri error'));
+
+      await expect(portIsolationService.detectPorts('/path')).rejects.toThrow('Tauri error');
+    });
+  });
+
+  describe('allocatePorts (invoke wrapper)', () => {
+    it('should invoke allocate_worktree_ports command', async () => {
+      const ports = [makePortSource()];
+      const mockResult = { assignments: [], overflow_warnings: [] };
+      vi.mocked(invoke).mockResolvedValue(mockResult);
+
+      const result = await portIsolationService.allocatePorts(ports, 1);
+
+      expect(invoke).toHaveBeenCalledWith('allocate_worktree_ports', {
+        ports,
+        worktreeIndex: 1,
+      });
+      expect(result).toEqual(mockResult);
+    });
+  });
+
+  describe('copyFilesWithPorts (invoke wrapper)', () => {
+    it('should invoke copy_files_with_ports command', async () => {
+      const assignments = [{ variable_name: 'PORT', original_value: 3000, assigned_value: 3100 }];
+      const mockResult = { copied: ['file.env'], skipped: [], errors: [] };
+      vi.mocked(invoke).mockResolvedValue(mockResult);
+
+      const result = await portIsolationService.copyFilesWithPorts(
+        '/source',
+        '/target',
+        ['**/.env*'],
+        assignments
+      );
+
+      expect(invoke).toHaveBeenCalledWith('copy_files_with_ports', {
+        sourcePath: '/source',
+        targetPath: '/target',
+        patterns: ['**/.env*'],
+        assignments,
+      });
+      expect(result).toEqual(mockResult);
     });
   });
 });
