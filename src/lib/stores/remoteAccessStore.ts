@@ -6,6 +6,7 @@ export interface RemoteAccessState {
   tunnelUrl: string | null;
   port: number;
   hasToken: boolean;
+  authToken: string | null;
 }
 
 const DEFAULT_PORT = 9876;
@@ -16,6 +17,7 @@ const initialState: RemoteAccessState = {
   tunnelUrl: null,
   port: DEFAULT_PORT,
   hasToken: false,
+  authToken: null,
 };
 
 function createRemoteAccessStore() {
@@ -44,6 +46,12 @@ function createRemoteAccessStore() {
      * Set whether an authentication token exists
      */
     setHasToken: (has: boolean) => update((s) => ({ ...s, hasToken: has })),
+
+    /**
+     * Set the authentication token returned by the server
+     */
+    setAuthToken: (token: string | null) =>
+      update((s) => ({ ...s, authToken: token, hasToken: !!token })),
 
     /**
      * Reset to initial state

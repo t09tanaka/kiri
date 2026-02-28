@@ -34,6 +34,7 @@ export async function toggleRemoteAccess(
       remoteAccessStore.setTunnelRunning(false);
       await remoteAccessService.stopServer();
       remoteAccessStore.setServerRunning(false);
+      remoteAccessStore.setAuthToken(null);
       settings.enabled = false;
       await saveRemoteAccessSettings(settings);
       return null;
@@ -47,10 +48,10 @@ export async function toggleRemoteAccess(
       opts.onError('');
 
       // Start server, then tunnel
-      await remoteAccessService.startServer(settings.port);
+      const authToken = await remoteAccessService.startServer(settings.port);
       remoteAccessStore.setServerRunning(true);
       remoteAccessStore.setPort(settings.port);
-      remoteAccessStore.setHasToken(true);
+      remoteAccessStore.setAuthToken(authToken);
       settings.enabled = true;
 
       let tunnelUrl: string | null = null;

@@ -16,6 +16,7 @@ describe('remoteAccessStore', () => {
         tunnelUrl: null,
         port: 9876,
         hasToken: false,
+        authToken: null,
       });
     });
   });
@@ -105,6 +106,23 @@ describe('remoteAccessStore', () => {
     });
   });
 
+  describe('setAuthToken', () => {
+    it('should set token and hasToken to true', () => {
+      remoteAccessStore.setAuthToken('test-token-123');
+      const state = get(remoteAccessStore);
+      expect(state.authToken).toBe('test-token-123');
+      expect(state.hasToken).toBe(true);
+    });
+
+    it('should clear token and hasToken when set to null', () => {
+      remoteAccessStore.setAuthToken('test-token-123');
+      remoteAccessStore.setAuthToken(null);
+      const state = get(remoteAccessStore);
+      expect(state.authToken).toBeNull();
+      expect(state.hasToken).toBe(false);
+    });
+  });
+
   describe('reset', () => {
     it('should restore initial state', () => {
       remoteAccessStore.setServerRunning(true);
@@ -121,6 +139,7 @@ describe('remoteAccessStore', () => {
         tunnelUrl: null,
         port: 9876,
         hasToken: false,
+        authToken: null,
       });
     });
   });

@@ -51,7 +51,7 @@ describe('toggleRemoteAccess', () => {
       mockLoad.mockResolvedValue({ port: 9876, tunnelToken: null, enabled: false });
       mockSave.mockResolvedValue(undefined);
       mockService.isCloudflaredAvailable.mockResolvedValue(true);
-      mockService.startServer.mockResolvedValue(undefined);
+      mockService.startServer.mockResolvedValue('test-auth-token-uuid');
       mockService.startTunnel.mockResolvedValue('https://test.trycloudflare.com');
     });
 
@@ -107,6 +107,15 @@ describe('toggleRemoteAccess', () => {
       expect(mockService.startTunnel).toHaveBeenCalledWith(null, 9876);
     });
 
+    it('should store auth token from server', async () => {
+      const opts = createOpts();
+      await toggleRemoteAccess(opts);
+
+      const state = get(remoteAccessStore);
+      expect(state.authToken).toBe('test-auth-token-uuid');
+      expect(state.hasToken).toBe(true);
+    });
+
     it('should save settings with enabled=true', async () => {
       const opts = createOpts();
       await toggleRemoteAccess(opts);
@@ -134,6 +143,17 @@ describe('toggleRemoteAccess', () => {
       expect(mockService.stopTunnel).toHaveBeenCalled();
       expect(mockService.stopServer).toHaveBeenCalled();
       expect(get(isRemoteActive)).toBe(false);
+    });
+
+    it('should clear auth token when stopping', async () => {
+      remoteAccessStore.setAuthToken('old-token');
+
+      const opts = createOpts();
+      await toggleRemoteAccess(opts);
+
+      const state = get(remoteAccessStore);
+      expect(state.authToken).toBeNull();
+      expect(state.hasToken).toBe(false);
     });
 
     it('should save settings with enabled=false', async () => {

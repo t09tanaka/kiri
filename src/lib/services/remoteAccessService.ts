@@ -8,7 +8,7 @@ export const remoteAccessService = {
   /**
    * Start the remote access HTTP server on the specified port
    */
-  startServer: (port: number): Promise<void> => invoke('start_remote_server', { port }),
+  startServer: (port: number): Promise<string> => invoke('start_remote_server', { port }),
 
   /**
    * Stop the remote access HTTP server

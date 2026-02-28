@@ -19,6 +19,10 @@
   let dotInterval: ReturnType<typeof setInterval> | null = null;
 
   const tunnelUrl = $derived($remoteAccessStore.tunnelUrl);
+  const authToken = $derived($remoteAccessStore.authToken);
+  const fullAccessUrl = $derived(
+    tunnelUrl && authToken ? `${tunnelUrl.replace(/\/+$/, '')}/${authToken}/` : null
+  );
   const generatingText = $derived('Generating' + '.'.repeat(dotCount));
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -41,9 +45,9 @@
   }
 
   async function handleCopy() {
-    if (!tunnelUrl) return;
+    if (!fullAccessUrl) return;
     try {
-      await navigator.clipboard.writeText(tunnelUrl);
+      await navigator.clipboard.writeText(fullAccessUrl);
       copied = true;
       if (copyTimeout) clearTimeout(copyTimeout);
       copyTimeout = setTimeout(() => {
@@ -163,8 +167,8 @@
         <div class="url-section">
           <span class="url-label">Remote URL</span>
           <div class="url-row">
-            {#if tunnelUrl}
-              <code class="url-text">{tunnelUrl}</code>
+            {#if fullAccessUrl}
+              <code class="url-text">{fullAccessUrl}</code>
             {:else}
               <span class="url-generating">{generatingText}</span>
             {/if}
@@ -172,7 +176,7 @@
               class="copy-btn"
               class:copied
               onclick={handleCopy}
-              disabled={!tunnelUrl}
+              disabled={!fullAccessUrl}
               aria-label={copied ? 'Copied' : 'Copy URL'}
             >
               {#if copied}

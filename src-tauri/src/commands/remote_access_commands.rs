@@ -65,7 +65,7 @@ pub async fn start_remote_server(
     app: tauri::AppHandle,
     state: tauri::State<'_, RemoteServerStateType>,
     port: u16,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let mut server = state.lock().await;
     if server.is_running {
         return Err("Server is already running".to_string());
@@ -100,11 +100,12 @@ pub async fn start_remote_server(
         }
     });
 
+    let token = server.auth_token.clone().unwrap();
     server.shutdown_tx = Some(shutdown_tx);
     server.server_handle = Some(handle);
     server.port = port;
     server.is_running = true;
-    Ok(())
+    Ok(token)
 }
 
 /// Stop the remote access HTTP server gracefully.
