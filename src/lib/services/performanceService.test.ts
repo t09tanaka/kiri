@@ -387,6 +387,34 @@ describe('performanceService', () => {
       warnSpy.mockRestore();
       groupEndSpy.mockRestore();
     });
+
+    it('should handle null exportMetrics gracefully in logSummary', async () => {
+      vi.mocked(invoke).mockResolvedValue({
+        memory: { rss: 50000000, vms: 100000000, platform: 'darwin' },
+        command_timings: [],
+        app_uptime_ms: 5000,
+      });
+
+      const groupSpy = vi.spyOn(console, 'group').mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const groupEndSpy = vi.spyOn(console, 'groupEnd').mockImplementation(() => {});
+      const exportSpy = vi.spyOn(performanceService, 'exportMetrics').mockReturnValue(null);
+
+      await performanceService.logSummary();
+
+      expect(groupSpy).toHaveBeenCalledWith(expect.stringContaining('Performance Summary'));
+      expect(groupEndSpy).toHaveBeenCalled();
+      // Operations section should be skipped when exportMetrics returns null
+      const opsLog = logSpy.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('Operations:')
+      );
+      expect(opsLog).toBeUndefined();
+
+      exportSpy.mockRestore();
+      groupSpy.mockRestore();
+      logSpy.mockRestore();
+      groupEndSpy.mockRestore();
+    });
   });
 
   describe('getPerformanceReport', () => {

@@ -22,7 +22,7 @@ export async function getLanguageExtension(filename: string): Promise<Extension 
   // Check cache first
   const cacheKey = ext;
   if (languageCache.has(cacheKey)) {
-    return languageCache.get(cacheKey) || null;
+    return languageCache.get(cacheKey)!;
   }
 
   let langExt: Extension | null = null;
@@ -78,9 +78,7 @@ export async function getLanguageExtension(filename: string): Promise<Extension 
   }
 
   // Cache the loaded extension
-  if (langExt) {
-    languageCache.set(cacheKey, langExt);
-  }
+  languageCache.set(cacheKey, langExt);
 
   return langExt;
 }

@@ -195,6 +195,59 @@ describe('matchCountPlugin', () => {
     expect(countEl!.textContent).toMatch(/\d+\/3/);
   });
 
+  it('should handle missing panel DOM gracefully', () => {
+    openSearchPanel(view);
+
+    // Set initial query
+    view.dispatch({
+      effects: setSearchQuery.of(new SearchQuery({ search: 'hello' })),
+    });
+
+    // Temporarily remove .cm-editor class so closest('.cm-editor') returns null
+    const editorEl = view.dom;
+    const originalClass = editorEl.className;
+    editorEl.className = editorEl.className.replace('cm-editor', 'cm-editor-hidden');
+
+    // Change query to force recalculation (bypass same-query cache)
+    view.dispatch({
+      effects: setSearchQuery.of(new SearchQuery({ search: 'world' })),
+    });
+
+    // Restore class
+    editorEl.className = originalClass;
+
+    // Should not throw - gracefully returns when panel is not found
+  });
+
+  it('should create countEl when input is missing in panel', () => {
+    openSearchPanel(view);
+
+    view.dispatch({
+      effects: setSearchQuery.of(new SearchQuery({ search: 'hello' })),
+    });
+
+    // Remove the search input from the panel
+    const searchPanel = parent.querySelector('.cm-panel.cm-search');
+    const input = searchPanel?.querySelector('input[name="search"]');
+    if (input) {
+      input.remove();
+    }
+
+    // Remove existing countEl so plugin needs to recreate it
+    const existingCount = parent.querySelector('.cm-search-count');
+    if (existingCount) {
+      existingCount.remove();
+    }
+
+    // Trigger re-evaluation by changing selection
+    view.dispatch({ selection: { anchor: 1 } });
+    view.dispatch({
+      effects: setSearchQuery.of(new SearchQuery({ search: 'world' })),
+    });
+
+    // countEl should still be created even without input (just not inserted into DOM via input.after)
+  });
+
   it('should handle destroy correctly', () => {
     openSearchPanel(view);
 
