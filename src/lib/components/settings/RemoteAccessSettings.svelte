@@ -191,13 +191,12 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="backdrop" class:visible={isVisible} onclick={handleBackdropClick}>
   <div
-    class="panel"
+    class="modal-panel"
     class:visible={isVisible}
     role="dialog"
     aria-modal="true"
     aria-labelledby="remote-access-title"
   >
-    <div class="panel-glow"></div>
     <div class="panel-content">
       <!-- Header -->
       <div class="header">
@@ -454,9 +453,9 @@
   .backdrop {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.75);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    background: rgba(0, 0, 0, 0.3);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -469,7 +468,7 @@
     opacity: 1;
   }
 
-  .panel {
+  .modal-panel {
     position: relative;
     max-width: 560px;
     width: 90%;
@@ -479,27 +478,13 @@
     transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  .panel.visible {
+  .modal-panel.visible {
     transform: translateY(0) scale(1);
     opacity: 1;
   }
 
-  .panel-glow {
-    position: absolute;
-    inset: -2px;
-    background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
-    border-radius: calc(var(--radius-xl) + 2px);
-    opacity: 0.06;
-    filter: blur(6px);
-    z-index: -1;
-    transition: opacity 0.3s ease;
-  }
-
-  .panel:hover .panel-glow {
-    opacity: 0.1;
-  }
-
   .panel-content {
+    position: relative;
     background: var(--bg-glass);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
@@ -508,7 +493,18 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    box-shadow: var(--shadow-lg);
+  }
+
+  .panel-content::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 10%;
+    right: 10%;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent-color), transparent);
+    opacity: 0.6;
+    z-index: 1;
   }
 
   /* Header */
@@ -518,7 +514,6 @@
     gap: var(--space-3);
     padding: var(--space-4) var(--space-5);
     border-bottom: 1px solid var(--border-color);
-    background: rgba(0, 0, 0, 0.2);
   }
 
   .header-icon {
@@ -582,13 +577,14 @@
 
   /* Section */
   .section {
-    padding: var(--space-4);
-    background: rgba(0, 0, 0, 0.15);
-    border-radius: var(--radius-md);
-    border: 1px solid var(--border-subtle);
+    padding: var(--space-4) 0;
     display: flex;
     flex-direction: column;
     gap: var(--space-3);
+  }
+
+  .section + .section {
+    border-top: 1px solid var(--border-color);
   }
 
   .section-header {

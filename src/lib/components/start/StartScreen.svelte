@@ -241,13 +241,15 @@
       </span>
       <div class="remote-controls">
         <button
-          class="remote-toggle"
+          class="remote-lightswitch"
           class:active={$isRemoteActive}
           onclick={handleRemoteToggle}
           disabled={isTogglingRemote}
+          aria-label={$isRemoteActive ? 'Stop remote access' : 'Start remote access'}
         >
-          <span class="remote-status-dot" class:active={$isRemoteActive}></span>
-          {$isRemoteActive ? 'ON' : 'OFF'}
+          <span class="lightswitch-track">
+            <span class="lightswitch-thumb"></span>
+          </span>
         </button>
         <button
           class="remote-settings-btn"
@@ -272,10 +274,6 @@
         </button>
       </div>
     </div>
-
-    {#if showRemoteSettings}
-      <RemoteAccessSettings onClose={() => (showRemoteSettings = false)} />
-    {/if}
 
     {#if $recentProjects.length > 0}
       <section class="recent-section">
@@ -329,6 +327,10 @@
     {/if}
   </div>
 </div>
+
+{#if showRemoteSettings}
+  <RemoteAccessSettings onClose={() => (showRemoteSettings = false)} />
+{/if}
 
 <style>
   .start-screen {
@@ -778,48 +780,50 @@
     gap: var(--space-2);
   }
 
-  .remote-toggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 14px;
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid var(--border-color);
-    border-radius: calc(var(--radius-md) - 3px);
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-muted);
+  .remote-lightswitch {
+    background: transparent;
+    border: none;
+    padding: 0;
     cursor: pointer;
-    transition: all var(--transition-fast);
+    flex-shrink: 0;
   }
 
-  .remote-toggle:hover:not(:disabled) {
-    color: var(--text-secondary);
-    background: rgba(125, 211, 252, 0.04);
-  }
-
-  .remote-toggle.active {
-    background: var(--accent-subtle);
-    color: var(--accent-color);
-    border-color: rgba(125, 211, 252, 0.3);
-  }
-
-  .remote-toggle:disabled {
+  .remote-lightswitch:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  .remote-status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--git-deleted);
-    transition: background var(--transition-fast);
+  .lightswitch-track {
+    display: block;
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    position: relative;
+    transition: all var(--transition-fast);
   }
 
-  .remote-status-dot.active {
-    background: var(--git-added);
-    box-shadow: 0 0 4px rgba(74, 222, 128, 0.4);
+  .remote-lightswitch.active .lightswitch-track {
+    background: rgba(125, 211, 252, 0.2);
+    border-color: var(--accent-color);
+  }
+
+  .lightswitch-thumb {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: all var(--transition-fast);
+  }
+
+  .remote-lightswitch.active .lightswitch-thumb {
+    left: 18px;
+    background: var(--accent-color);
   }
 
   .remote-settings-btn {
