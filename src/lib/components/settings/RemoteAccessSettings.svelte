@@ -196,69 +196,45 @@
 
       <!-- Content -->
       <div class="content">
-        <!-- ON/OFF Toggle -->
-        <div class="toggle-row">
-          <div class="toggle-label">
-            <span class="label-text">Remote Access</span>
-            <span class="toggle-status" class:active={$isRemoteActive}>
-              {$isRemoteActive ? 'ON' : 'OFF'}
-            </span>
+        <!-- Section: Connection -->
+        <div class="section">
+          <h3 class="section-title">Connection</h3>
+
+          <div class="toggle-row">
+            <div class="toggle-label">
+              <span class="label-text">Remote Access</span>
+              <span class="toggle-status" class:active={$isRemoteActive}>
+                {$isRemoteActive ? 'ON' : 'OFF'}
+              </span>
+            </div>
+            <button
+              class="remote-lightswitch"
+              class:active={$isRemoteActive}
+              onclick={handleToggle}
+              disabled={isTogglingRemote}
+              aria-label={$isRemoteActive ? 'Stop remote access' : 'Start remote access'}
+            >
+              <span class="lightswitch-track">
+                <span class="lightswitch-thumb"></span>
+              </span>
+            </button>
           </div>
-          <button
-            class="remote-lightswitch"
-            class:active={$isRemoteActive}
-            onclick={handleToggle}
-            disabled={isTogglingRemote}
-            aria-label={$isRemoteActive ? 'Stop remote access' : 'Start remote access'}
-          >
-            <span class="lightswitch-track">
-              <span class="lightswitch-thumb"></span>
-            </span>
-          </button>
-        </div>
 
-        {#if remoteError}
-          <p class="remote-error">{remoteError}</p>
-        {/if}
+          {#if remoteError}
+            <p class="remote-error">{remoteError}</p>
+          {/if}
 
-        <!-- Remote URL Section (visible when active) -->
-        {#if $isRemoteActive}
-          <div class="url-section">
-            <span class="url-label">Remote URL</span>
-            <div class="url-row">
-              <code class="url-text">{remoteUrl}</code>
-              <button
-                class="url-action-btn"
-                onclick={handleOpenQr}
-                aria-label="Show QR code"
-                title="Show QR code"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
+          {#if $isRemoteActive}
+            <div class="url-section">
+              <span class="url-label">Remote URL</span>
+              <div class="url-row">
+                <code class="url-text">{remoteUrl}</code>
+                <button
+                  class="url-action-btn"
+                  onclick={handleOpenQr}
+                  aria-label="Show QR code"
+                  title="Show QR code"
                 >
-                  <rect x="3" y="3" width="7" height="7"></rect>
-                  <rect x="14" y="3" width="7" height="7"></rect>
-                  <rect x="3" y="14" width="7" height="7"></rect>
-                  <rect x="14" y="14" width="3" height="3"></rect>
-                  <line x1="21" y1="14" x2="21" y2="14.01"></line>
-                  <line x1="21" y1="21" x2="21" y2="21.01"></line>
-                </svg>
-              </button>
-              <button
-                class="url-action-btn"
-                class:copied
-                onclick={handleCopyUrl}
-                aria-label={copied ? 'Copied' : 'Copy URL'}
-                title={copied ? 'Copied!' : 'Copy URL'}
-              >
-                {#if copied}
                   <svg
                     width="14"
                     height="14"
@@ -269,7 +245,123 @@
                     stroke-linecap="round"
                     stroke-linejoin="round"
                   >
-                    <polyline points="20 6 9 17 4 12"></polyline>
+                    <rect x="3" y="3" width="7" height="7"></rect>
+                    <rect x="14" y="3" width="7" height="7"></rect>
+                    <rect x="3" y="14" width="7" height="7"></rect>
+                    <rect x="14" y="14" width="3" height="3"></rect>
+                    <line x1="21" y1="14" x2="21" y2="14.01"></line>
+                    <line x1="21" y1="21" x2="21" y2="21.01"></line>
+                  </svg>
+                </button>
+                <button
+                  class="url-action-btn"
+                  class:copied
+                  onclick={handleCopyUrl}
+                  aria-label={copied ? 'Copied' : 'Copy URL'}
+                  title={copied ? 'Copied!' : 'Copy URL'}
+                >
+                  {#if copied}
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <polyline points="20 6 9 17 4 12"></polyline>
+                    </svg>
+                  {:else}
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    </svg>
+                  {/if}
+                </button>
+              </div>
+            </div>
+          {/if}
+        </div>
+
+        <div class="section-divider"></div>
+
+        <!-- Section: Configuration -->
+        <div class="section">
+          <h3 class="section-title">Configuration</h3>
+          <p class="description">Access kiri from outside your network via Cloudflare Tunnel.</p>
+
+          {#if !cloudflaredAvailable}
+            <div class="warning-banner">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+                ></path>
+                <line x1="12" y1="9" x2="12" y2="13"></line>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+              </svg>
+              <span>cloudflared is not installed. Run: <code>brew install cloudflared</code></span>
+            </div>
+          {/if}
+
+          <div class="control-row">
+            <div class="control-label">
+              <span class="label-text">Tunnel Token</span>
+              <span class="optional-badge">optional</span>
+            </div>
+            <div class="token-input-wrapper">
+              <input
+                type={showTunnelToken ? 'text' : 'password'}
+                class="token-input"
+                value={tunnelTokenInput}
+                oninput={handleTunnelTokenChange}
+                placeholder="Empty = Quick Tunnel"
+                spellcheck="false"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+              />
+              <button
+                class="token-toggle-btn"
+                onclick={() => (showTunnelToken = !showTunnelToken)}
+                aria-label={showTunnelToken ? 'Hide token' : 'Show token'}
+              >
+                {#if showTunnelToken}
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path
+                      d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"
+                    ></path>
+                    <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"
+                    ></path>
+                    <line x1="1" y1="1" x2="23" y2="23"></line>
                   </svg>
                 {:else}
                   <svg
@@ -282,113 +374,30 @@
                     stroke-linecap="round"
                     stroke-linejoin="round"
                   >
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                    <circle cx="12" cy="12" r="3"></circle>
                   </svg>
                 {/if}
               </button>
             </div>
           </div>
-        {/if}
 
-        <p class="description">Access kiri from outside your network via Cloudflare Tunnel.</p>
-
-        {#if !cloudflaredAvailable}
-          <div class="warning-banner">
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path
-                d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
-              ></path>
-              <line x1="12" y1="9" x2="12" y2="13"></line>
-              <line x1="12" y1="17" x2="12.01" y2="17"></line>
-            </svg>
-            <span>cloudflared is not installed. Run: <code>brew install cloudflared</code></span>
-          </div>
-        {/if}
-
-        <div class="control-row">
-          <div class="control-label">
-            <span class="label-text">Tunnel Token</span>
-            <span class="optional-badge">optional</span>
-          </div>
-          <div class="token-input-wrapper">
+          <div class="control-row">
+            <div class="control-label">
+              <span class="label-text">Port</span>
+            </div>
             <input
-              type={showTunnelToken ? 'text' : 'password'}
-              class="token-input"
-              value={tunnelTokenInput}
-              oninput={handleTunnelTokenChange}
-              placeholder="Empty = Quick Tunnel"
+              type="text"
+              class="port-input"
+              value={portInput}
+              oninput={handlePortChange}
+              placeholder="9876"
               spellcheck="false"
               autocomplete="off"
               autocorrect="off"
               autocapitalize="off"
             />
-            <button
-              class="token-toggle-btn"
-              onclick={() => (showTunnelToken = !showTunnelToken)}
-              aria-label={showTunnelToken ? 'Hide token' : 'Show token'}
-            >
-              {#if showTunnelToken}
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path
-                    d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"
-                  ></path>
-                  <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"
-                  ></path>
-                  <line x1="1" y1="1" x2="23" y2="23"></line>
-                </svg>
-              {:else}
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                  <circle cx="12" cy="12" r="3"></circle>
-                </svg>
-              {/if}
-            </button>
           </div>
-        </div>
-
-        <div class="control-row">
-          <div class="control-label">
-            <span class="label-text">Port</span>
-          </div>
-          <input
-            type="text"
-            class="port-input"
-            value={portInput}
-            oninput={handlePortChange}
-            placeholder="9876"
-            spellcheck="false"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="off"
-          />
         </div>
       </div>
 
@@ -529,6 +538,27 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+  }
+
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .section-title {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+  }
+
+  .section-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 0;
   }
 
   .description {
