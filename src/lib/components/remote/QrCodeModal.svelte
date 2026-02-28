@@ -16,9 +16,7 @@
   let copied = $state(false);
   let copyTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  const remoteUrl = $derived(
-    $remoteAccessStore.tunnelUrl ?? `http://localhost:${$remoteAccessStore.port}`
-  );
+  const tunnelUrl = $derived($remoteAccessStore.tunnelUrl);
 
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -40,8 +38,9 @@
   }
 
   async function handleCopy() {
+    if (!tunnelUrl) return;
     try {
-      await navigator.clipboard.writeText(remoteUrl);
+      await navigator.clipboard.writeText(tunnelUrl);
       copied = true;
       if (copyTimeout) clearTimeout(copyTimeout);
       copyTimeout = setTimeout(() => {
@@ -54,11 +53,10 @@
 
   let prevUrl = $state<string | null>(null);
 
-  async function loadQrCode() {
+  async function loadQrCode(url: string) {
     isLoading = true;
     try {
-      const tunnelUrl = $remoteAccessStore.tunnelUrl ?? undefined;
-      qrDataUri = await remoteAccessService.generateQrCode($remoteAccessStore.port, tunnelUrl);
+      qrDataUri = await remoteAccessService.generateQrCode($remoteAccessStore.port, url);
     } catch {
       qrDataUri = null;
     } finally {
@@ -66,12 +64,12 @@
     }
   }
 
-  // Regenerate QR code when tunnel URL changes (e.g. tunnel connects after modal opens)
+  // Generate QR code when tunnel URL becomes available or changes
   $effect(() => {
     const currentUrl = $remoteAccessStore.tunnelUrl;
-    if (currentUrl !== prevUrl) {
+    if (currentUrl && currentUrl !== prevUrl) {
       prevUrl = currentUrl;
-      loadQrCode();
+      loadQrCode(currentUrl);
     }
   });
 
@@ -158,11 +156,16 @@
         <div class="url-section">
           <span class="url-label">Remote URL</span>
           <div class="url-row">
-            <code class="url-text">{remoteUrl}</code>
+            {#if tunnelUrl}
+              <code class="url-text">{tunnelUrl}</code>
+            {:else}
+              <span class="url-generating">Generating...</span>
+            {/if}
             <button
               class="copy-btn"
               class:copied
               onclick={handleCopy}
+              disabled={!tunnelUrl}
               aria-label={copied ? 'Copied' : 'Copy URL'}
             >
               {#if copied}
@@ -435,6 +438,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
+  }
+
+  .url-generating {
+    flex: 1;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
   }
 
   .copy-btn {
