@@ -3009,8 +3009,9 @@
     align-items: center;
     justify-content: space-between;
     padding: var(--space-3) var(--space-4);
-    background: rgba(0, 0, 0, 0.2);
-    border-bottom: 1px solid var(--border-color);
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-glow);
+    border-bottom-color: rgba(125, 211, 252, 0.25);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
 
