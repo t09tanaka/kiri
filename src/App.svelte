@@ -414,7 +414,10 @@
               await eventService.emit('worktree-removed', { path: currentPath });
             }
           } catch (error) {
-            console.error('Failed to remove worktree:', error);
+            // Worktree removal may fail (e.g., locked files, git errors).
+            // The orphaned worktree will be cleaned up by pruneOrphanedAssignments
+            // when WorktreePanel is opened next time.
+            console.error(`Failed to remove worktree at ${currentPath}:`, error);
           }
         }
       }

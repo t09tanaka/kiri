@@ -31,7 +31,7 @@
     type ComposeNameReplacement,
   } from '@/lib/services/composeIsolationService';
   import type { ComposeIsolationConfig } from '@/lib/services/persistenceService';
-  import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
+  import { branchToWorktreeName, validateBranchName } from '@/lib/utils/gitWorktree';
   import { formatRelativeTime } from '@/lib/utils/dateFormat';
 
   interface Props {
@@ -99,6 +99,22 @@
   let isDetectingCompose = $state(false);
   let composeReplacements = $state<ComposeNameReplacement[]>([]);
 
+  // Settings save mutex to prevent concurrent read-modify-write races
+  let settingsSaveQueue: Promise<void> = Promise.resolve();
+  async function withSettingsLock<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = settingsSaveQueue;
+    let resolve!: () => void;
+    settingsSaveQueue = new Promise<void>((r) => {
+      resolve = r;
+    });
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      resolve();
+    }
+  }
+
   // Helper to force UI update - uses setTimeout to ensure render cycle completes
   async function forceUIUpdate(delayMs = 50): Promise<void> {
     await tick();
@@ -141,6 +157,10 @@
     const branchName = createName.trim();
     if (!branchName) return null;
 
+    // Git ref naming validation
+    const gitError = validateBranchName(branchName);
+    if (gitError) return gitError;
+
     const current = currentBranch();
     if (current && branchName === current) {
       return `Branch '${branchName}' is currently checked out. Cannot create a worktree for the current branch.`;
@@ -150,6 +170,13 @@
     if (used.has(branchName)) {
       const wt = worktrees.find((w) => w.branch === branchName && !w.is_main);
       return `Branch '${branchName}' is already checked out in worktree '${wt?.name ?? 'unknown'}'.`;
+    }
+
+    // Worktree directory name collision check
+    const wtName = branchToWorktreeName(branchName);
+    const existingNames = worktrees.filter((w) => !w.is_main).map((w) => w.name);
+    if (existingNames.includes(wtName)) {
+      return `A worktree with directory name '${wtName}' already exists.`;
     }
 
     return null;
@@ -190,14 +217,14 @@
   onMount(async () => {
     mounted = true;
     document.addEventListener('keydown', handleKeyDown, true);
-    document.addEventListener('click', handleDocumentClick, true);
-
     // Listen for worktree-removed event to refresh the list
     unlistenWorktreeRemoved = await eventService.listen<{ path: string }>(
       'worktree-removed',
       () => {
         loadWorktrees().catch(console.error);
         loadBranches().catch(console.error);
+        loadPortConfig().catch(console.error);
+        detectPortsForWorktree().catch(console.error);
       }
     );
 
@@ -233,13 +260,15 @@
   }
 
   async function saveCopySettings() {
-    try {
-      const settings = await loadProjectSettings(projectPath);
-      settings.worktreeCopyPatterns = userCopyPatterns;
-      await saveProjectSettings(projectPath, settings);
-    } catch (e) {
-      console.error('Failed to save copy settings:', e);
-    }
+    await withSettingsLock(async () => {
+      try {
+        const settings = await loadProjectSettings(projectPath);
+        settings.worktreeCopyPatterns = userCopyPatterns;
+        await saveProjectSettings(projectPath, settings);
+      } catch (e) {
+        console.error('Failed to save copy settings:', e);
+      }
+    });
   }
 
   function addCopyPattern() {
@@ -273,13 +302,15 @@
   }
 
   async function saveInitCommands() {
-    try {
-      const settings = await loadProjectSettings(projectPath);
-      settings.worktreeInitCommands = initCommands;
-      await saveProjectSettings(projectPath, settings);
-    } catch (e) {
-      console.error('Failed to save init commands:', e);
-    }
+    await withSettingsLock(async () => {
+      try {
+        const settings = await loadProjectSettings(projectPath);
+        settings.worktreeInitCommands = initCommands;
+        await saveProjectSettings(projectPath, settings);
+      } catch (e) {
+        console.error('Failed to save init commands:', e);
+      }
+    });
   }
 
   async function detectPackageManagers() {
@@ -327,13 +358,15 @@
 
   async function savePortConfig() {
     if (!portConfig) return;
-    try {
-      const settings = await loadProjectSettings(projectPath);
-      settings.portConfig = portConfig;
-      await saveProjectSettings(projectPath, settings);
-    } catch (e) {
-      console.error('Failed to save port config:', e);
-    }
+    await withSettingsLock(async () => {
+      try {
+        const settings = await loadProjectSettings(projectPath);
+        settings.portConfig = portConfig;
+        await saveProjectSettings(projectPath, settings);
+      } catch (e) {
+        console.error('Failed to save port config:', e);
+      }
+    });
   }
 
   async function detectPortsForWorktree(): Promise<void> {
@@ -584,8 +617,8 @@
 
   function removeTargetFile(pattern: string) {
     if (!portConfig) return;
-    // Prevent removing the default .env* pattern
-    if (pattern === '.env*') return;
+    // Prevent removing default target file patterns
+    if (DEFAULT_TARGET_FILES.includes(pattern)) return;
     portConfig = {
       ...portConfig,
       targetFiles: (portConfig.targetFiles ?? []).filter((p) => p !== pattern),
@@ -641,13 +674,15 @@
 
   async function saveComposeConfig() {
     if (!composeConfig) return;
-    try {
-      const settings = await loadProjectSettings(projectPath);
-      settings.composeIsolationConfig = composeConfig;
-      await saveProjectSettings(projectPath, settings);
-    } catch (e) {
-      console.error('Failed to save compose config:', e);
-    }
+    await withSettingsLock(async () => {
+      try {
+        const settings = await loadProjectSettings(projectPath);
+        settings.composeIsolationConfig = composeConfig;
+        await saveProjectSettings(projectPath, settings);
+      } catch (e) {
+        console.error('Failed to save compose config:', e);
+      }
+    });
   }
 
   async function detectComposeFilesForWorktree(): Promise<void> {
@@ -932,7 +967,6 @@
 
   onDestroy(() => {
     document.removeEventListener('keydown', handleKeyDown, true);
-    document.removeEventListener('click', handleDocumentClick, true);
     if (unlistenWorktreeRemoved) {
       unlistenWorktreeRemoved();
     }
@@ -950,10 +984,6 @@
         onClose();
       }
     }
-  }
-
-  function handleDocumentClick(_e: MouseEvent) {
-    // No longer needed for dropdown - using modal now
   }
 
   async function loadWorktrees(path?: string) {
@@ -982,6 +1012,7 @@
   }
 
   async function handleCreate() {
+    if (isCreating) return;
     if (!createName.trim()) return;
     if (!projectPath) {
       createError = 'Project path is not available';
@@ -989,7 +1020,7 @@
     }
 
     // Proceed with worktree creation using pre-configured port assignments
-    continueWorktreeCreation();
+    await continueWorktreeCreation();
   }
 
   async function continueWorktreeCreation() {
@@ -1031,8 +1062,7 @@
       );
 
       if (creationCancelled) {
-        await worktreeService.remove(currentProjectPath, wtName);
-        resetCreation();
+        await cleanupCancelledCreation(currentProjectPath, wtName);
         return;
       }
 
@@ -1043,6 +1073,7 @@
       // Step 2: Copy files
       updateTask('copy', 'running');
       await forceUIUpdate();
+      let copyFailed = false;
       const regularCopyPatterns = [...DEFAULT_WORKTREE_COPY_PATTERNS, ...userCopyPatterns];
       const disabledFiles = portConfig?.disabledTargetFiles ?? [];
       const enabledTargetFiles = (portConfig?.targetFiles ?? DEFAULT_TARGET_FILES).filter(
@@ -1075,9 +1106,7 @@
         } catch (copyError) {
           console.error('Failed to copy files:', copyError);
           updateTask('copy', 'failed', 'Copy failed');
-          if (hasPortAssignments) {
-            updateTask('port-remap', 'failed', 'Skipped due to copy failure');
-          }
+          copyFailed = true;
         }
       } else {
         updateTask('copy', 'completed', 'No copy patterns configured');
@@ -1086,7 +1115,7 @@
       await pauseBetweenTasks();
 
       // Step 2.5: Remap ports (register assignments)
-      if (hasPortAssignments) {
+      if (hasPortAssignments && !copyFailed) {
         updateTask('port-remap', 'running');
         await forceUIUpdate();
         try {
@@ -1107,6 +1136,10 @@
           console.error('Failed to register port assignments:', portError);
           updateTask('port-remap', 'failed', String(portError));
         }
+        await forceUIUpdate();
+        await pauseBetweenTasks();
+      } else if (hasPortAssignments && copyFailed) {
+        updateTask('port-remap', 'failed', 'Skipped due to copy failure');
         await forceUIUpdate();
         await pauseBetweenTasks();
       }
@@ -1137,8 +1170,7 @@
       }
 
       if (creationCancelled) {
-        await worktreeService.remove(currentProjectPath, wtName);
-        resetCreation();
+        await cleanupCancelledCreation(currentProjectPath, wtName);
         return;
       }
 
@@ -1171,8 +1203,7 @@
       }
 
       if (creationCancelled) {
-        await worktreeService.remove(currentProjectPath, wtName);
-        resetCreation();
+        await cleanupCancelledCreation(currentProjectPath, wtName);
         return;
       }
 
@@ -1180,7 +1211,7 @@
       updateTask('open-window', 'running');
       await forceUIUpdate();
 
-      openWorktreeWindow(wt, true);
+      await openWorktreeWindow(wt, true);
       loadWorktrees(currentProjectPath).catch(console.error);
 
       updateTask('open-window', 'completed');
@@ -1207,6 +1238,19 @@
     creationCancelled = false;
   }
 
+  async function cleanupCancelledCreation(currentProjectPath: string, wtName: string) {
+    try {
+      await worktreeService.remove(currentProjectPath, wtName);
+    } catch (e) {
+      console.error('Cleanup: remove worktree failed:', e);
+    }
+    if (portConfig && portConfig.worktreeAssignments?.[wtName]) {
+      portConfig = portIsolationService.removeWorktreeAssignments(portConfig, wtName);
+      await savePortConfig();
+    }
+    resetCreation();
+  }
+
   function resetOpen() {
     isProgressActive = false;
     progressTasks = [];
@@ -1214,6 +1258,9 @@
   }
 
   async function openWorktreeWindow(wt: WorktreeInfo, skipInit = false) {
+    // Prevent concurrent open when a creation or open flow is already running
+    if (!skipInit && isProgressActive) return;
+
     // If called from handleCreate (skipInit=true), just open the window
     if (skipInit) {
       try {
@@ -1500,7 +1547,7 @@
                     autofocus
                     oninput={() => handleNameInput()}
                     onkeydown={(e) => {
-                      if (e.key === 'Enter' && createName.trim()) handleCreate();
+                      if (e.key === 'Enter' && createName.trim() && !isCreating) handleCreate();
                     }}
                   />
                   {#if createName.trim()}
