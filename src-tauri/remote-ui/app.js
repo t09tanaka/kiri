@@ -87,7 +87,19 @@ function renderDashboard(data) {
 function renderProjects(projects, terminals) {
   if (projects.length === 0 && terminals.length === 0) {
     syncChildren(projectsEl, [
-      { key: '__empty', html: '<p class="empty-state">No open projects</p>' },
+      {
+        key: '__empty',
+        html:
+          '<div class="empty-state">' +
+          '<div class="empty-state-icon">' +
+          '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">' +
+          '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>' +
+          '</svg>' +
+          '</div>' +
+          '<p class="empty-state-text">No open projects</p>' +
+          '<p class="empty-state-hint">Tap "Open Project" to get started</p>' +
+          '</div>',
+      },
     ]);
     return;
   }
@@ -176,7 +188,10 @@ function buildProjectCard(p, terminals) {
 function renderRecentProjects(projects) {
   if (projects.length === 0) {
     syncChildren(recentProjectsEl, [
-      { key: '__empty', html: '<p class="empty-state">No recent projects</p>' },
+      {
+        key: '__empty',
+        html: '<p class="empty-state-text" style="padding:24px 16px;">No recent projects</p>',
+      },
     ]);
     return;
   }

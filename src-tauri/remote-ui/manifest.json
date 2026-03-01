@@ -3,8 +3,8 @@
   "short_name": "kiri",
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#0d1117",
-  "theme_color": "#0d1117",
+  "background_color": "#0a0e14",
+  "theme_color": "#0a0e14",
   "description": "Remote control for kiri terminal manager",
   "icons": []
 }

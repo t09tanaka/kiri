@@ -1,4 +1,4 @@
-var CACHE_NAME = 'kiri-remote-v2';
+var CACHE_NAME = 'kiri-remote-v3';
 
 self.addEventListener('install', function (e) {
   self.skipWaiting();
