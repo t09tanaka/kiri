@@ -1,4 +1,4 @@
-// kiri remote - PWA application logic (WebSocket-only, diff-based updates)
+// kiri remote - Application logic (WebSocket-only, diff-based updates)
 
 // ── State ─────────────────────────────────────────────
 var ws = null;
@@ -16,10 +16,6 @@ var bottomSheet = document.getElementById('bottom-sheet');
 
 // ── Initialize ────────────────────────────────────────
 function init() {
-  if ('serviceWorker' in navigator) {
-    var basePath = getBasePath();
-    navigator.serviceWorker.register(basePath + 'sw.js', { scope: basePath }).catch(function () {});
-  }
   connectWebSocket();
 }
 
