@@ -31,7 +31,7 @@
     type ComposeNameReplacement,
   } from '@/lib/services/composeIsolationService';
   import type { ComposeIsolationConfig } from '@/lib/services/persistenceService';
-  import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
+  import { branchToWorktreeName, validateBranchName } from '@/lib/utils/gitWorktree';
   import { formatRelativeTime } from '@/lib/utils/dateFormat';
 
   interface Props {
@@ -91,6 +91,7 @@
   let isDetectingPorts = $state(false);
   let selectedPorts = $state<Map<string, boolean>>(new Map());
   let portAssignments = $state<PortAssignment[]>([]);
+  let portOverflowWarnings = $state<string[]>([]);
   let newTargetFile = $state('');
 
   // Compose isolation state
@@ -98,6 +99,22 @@
   let detectedComposeFiles = $state<DetectedComposeFiles | null>(null);
   let isDetectingCompose = $state(false);
   let composeReplacements = $state<ComposeNameReplacement[]>([]);
+
+  // Settings save mutex to prevent concurrent read-modify-write races
+  let settingsSaveQueue: Promise<void> = Promise.resolve();
+  async function withSettingsLock<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = settingsSaveQueue;
+    let resolve!: () => void;
+    settingsSaveQueue = new Promise<void>((r) => {
+      resolve = r;
+    });
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      resolve();
+    }
+  }
 
   // Helper to force UI update - uses setTimeout to ensure render cycle completes
   async function forceUIUpdate(delayMs = 50): Promise<void> {
@@ -117,53 +134,62 @@
   const worktrees = $derived($worktreeStore.worktrees);
 
   // Check if current window is a worktree
-  const isCurrentWindowWorktree = $derived(() => currentContext?.is_worktree ?? false);
+  const isCurrentWindowWorktree = $derived(currentContext?.is_worktree ?? false);
 
   // Get the main worktree
-  const mainWorktree = $derived(() => worktrees.find((w) => w.is_main));
+  const mainWorktree = $derived.by(() => worktrees.find((w) => w.is_main));
 
   // Get linked worktrees
-  const linkedWorktrees = $derived(() => worktrees.filter((w) => !w.is_main && w.is_valid));
+  const linkedWorktrees = $derived.by(() => worktrees.filter((w) => !w.is_main && w.is_valid));
 
   // Get current branch name (HEAD)
-  const currentBranch = $derived(() => {
+  const currentBranch = $derived.by(() => {
     const headBranch = branches.find((b) => b.is_head);
     return headBranch?.name ?? null;
   });
 
   // Get branches that are already used by worktrees
-  const usedBranches = $derived(() => {
+  const usedBranches = $derived.by(() => {
     return new Set(worktrees.filter((w) => !w.is_main && w.branch).map((w) => w.branch!));
   });
 
   // Validate branch selection
-  const branchValidationError = $derived(() => {
+  const branchValidationError = $derived.by(() => {
     const branchName = createName.trim();
     if (!branchName) return null;
 
-    const current = currentBranch();
-    if (current && branchName === current) {
+    // Git ref naming validation
+    const gitError = validateBranchName(branchName);
+    if (gitError) return gitError;
+
+    if (currentBranch && branchName === currentBranch) {
       return `Branch '${branchName}' is currently checked out. Cannot create a worktree for the current branch.`;
     }
 
-    const used = usedBranches();
-    if (used.has(branchName)) {
+    if (usedBranches.has(branchName)) {
       const wt = worktrees.find((w) => w.branch === branchName && !w.is_main);
       return `Branch '${branchName}' is already checked out in worktree '${wt?.name ?? 'unknown'}'.`;
+    }
+
+    // Worktree directory name collision check
+    const wtName = branchToWorktreeName(branchName);
+    const existingNames = worktrees.filter((w) => !w.is_main).map((w) => w.name);
+    if (existingNames.includes(wtName)) {
+      return `A worktree with directory name '${wtName}' already exists.`;
     }
 
     return null;
   });
 
   // Filter branches for dropdown (exclude current and in-use)
-  const availableBranches = $derived(() => {
-    const current = currentBranch();
-    const used = usedBranches();
-    return branches.filter((b) => !b.is_head && b.name !== current && !used.has(b.name));
+  const availableBranches = $derived.by(() => {
+    return branches.filter(
+      (b) => !b.is_head && b.name !== currentBranch && !usedBranches.has(b.name)
+    );
   });
 
   // Compute worktree name (with '/' replaced by '-')
-  const worktreeName = $derived(() => {
+  const worktreeName = $derived.by(() => {
     const name = createName.trim();
     if (!name) return '';
     return branchToWorktreeName(name);
@@ -171,33 +197,33 @@
 
   // Rebuild compose replacements when worktree name changes
   $effect(() => {
-    void worktreeName();
+    // Track worktreeName to rebuild compose replacements when it changes
+    void worktreeName;
     if (detectedComposeFiles && composeConfig?.enabled) {
       rebuildComposeReplacements();
     }
   });
 
   // Compute worktree path preview
-  const pathPreview = $derived(() => {
-    const wtName = worktreeName();
-    if (!wtName || !projectPath) return '';
+  const pathPreview = $derived.by(() => {
+    if (!worktreeName || !projectPath) return '';
     const parts = projectPath.split('/');
     const repoName = parts[parts.length - 1] || parts[parts.length - 2] || 'repo';
     const parentPath = parts.slice(0, -1).join('/');
-    return `${parentPath}/${repoName}-${wtName}`;
+    return `${parentPath}/${repoName}-${worktreeName}`;
   });
 
   onMount(async () => {
     mounted = true;
     document.addEventListener('keydown', handleKeyDown, true);
-    document.addEventListener('click', handleDocumentClick, true);
-
     // Listen for worktree-removed event to refresh the list
     unlistenWorktreeRemoved = await eventService.listen<{ path: string }>(
       'worktree-removed',
       () => {
         loadWorktrees().catch(console.error);
         loadBranches().catch(console.error);
+        loadPortConfig().catch(console.error);
+        detectPortsForWorktree().catch(console.error);
       }
     );
 
@@ -233,13 +259,15 @@
   }
 
   async function saveCopySettings() {
-    try {
-      const settings = await loadProjectSettings(projectPath);
-      settings.worktreeCopyPatterns = userCopyPatterns;
-      await saveProjectSettings(projectPath, settings);
-    } catch (e) {
-      console.error('Failed to save copy settings:', e);
-    }
+    await withSettingsLock(async () => {
+      try {
+        const settings = await loadProjectSettings(projectPath);
+        settings.worktreeCopyPatterns = userCopyPatterns;
+        await saveProjectSettings(projectPath, settings);
+      } catch (e) {
+        console.error('Failed to save copy settings:', e);
+      }
+    });
   }
 
   function addCopyPattern() {
@@ -273,13 +301,15 @@
   }
 
   async function saveInitCommands() {
-    try {
-      const settings = await loadProjectSettings(projectPath);
-      settings.worktreeInitCommands = initCommands;
-      await saveProjectSettings(projectPath, settings);
-    } catch (e) {
-      console.error('Failed to save init commands:', e);
-    }
+    await withSettingsLock(async () => {
+      try {
+        const settings = await loadProjectSettings(projectPath);
+        settings.worktreeInitCommands = initCommands;
+        await saveProjectSettings(projectPath, settings);
+      } catch (e) {
+        console.error('Failed to save init commands:', e);
+      }
+    });
   }
 
   async function detectPackageManagers() {
@@ -294,7 +324,29 @@
     try {
       const settings = await loadProjectSettings(projectPath);
       if (settings.portConfig) {
-        portConfig = settings.portConfig;
+        let config = settings.portConfig;
+        let changed = false;
+
+        // Merge any new DEFAULT_TARGET_FILES entries into saved config
+        const merged = portIsolationService.mergeDefaultTargetFiles(config);
+        if (merged !== config) {
+          config = merged;
+          changed = true;
+        }
+
+        // Prune orphaned worktree assignments (e.g. from app quit / crash)
+        const existingWorktrees = await worktreeService.list(projectPath);
+        const existingNames = existingWorktrees.filter((w) => !w.is_main).map((w) => w.name);
+        const pruned = portIsolationService.pruneOrphanedAssignments(config, existingNames);
+        if (pruned !== config) {
+          config = pruned;
+          changed = true;
+        }
+
+        portConfig = config;
+        if (changed) {
+          await savePortConfig();
+        }
       } else {
         portConfig = portIsolationService.createDefaultConfig();
       }
@@ -305,13 +357,15 @@
 
   async function savePortConfig() {
     if (!portConfig) return;
-    try {
-      const settings = await loadProjectSettings(projectPath);
-      settings.portConfig = portConfig;
-      await saveProjectSettings(projectPath, settings);
-    } catch (e) {
-      console.error('Failed to save port config:', e);
-    }
+    await withSettingsLock(async () => {
+      try {
+        const settings = await loadProjectSettings(projectPath);
+        settings.portConfig = portConfig;
+        await saveProjectSettings(projectPath, settings);
+      } catch (e) {
+        console.error('Failed to save port config:', e);
+      }
+    });
   }
 
   async function detectPortsForWorktree(): Promise<void> {
@@ -329,7 +383,7 @@
         // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally using Map
         const newSelected = new Map<string, boolean>();
         for (const port of uniquePorts) {
-          newSelected.set(port.variable_name, true);
+          newSelected.set(`${port.variable_name}:${port.port_value}`, true);
         }
         selectedPorts = newSelected;
         // Allocate ports
@@ -375,43 +429,49 @@
   function allocatePortsForWorktree(): void {
     if (!detectedPorts || !portConfig) return;
 
-    const selectedVars = new Set(
+    const selectedKeys = new Set(
       Array.from(selectedPorts.entries())
         .filter(([, selected]) => selected)
-        .map(([name]) => name)
+        .map(([key]) => key)
     );
 
     const uniquePorts = portIsolationService.getAllUniquePorts(detectedPorts);
     const portsToAllocate = uniquePorts.filter(
-      (p) => selectedVars.has(p.variable_name) && isPortTransformable(p.variable_name)
+      (p) =>
+        selectedKeys.has(`${p.variable_name}:${p.port_value}`) &&
+        isPortTransformable(p.variable_name)
     );
 
     if (portsToAllocate.length === 0) {
       portAssignments = [];
+      portOverflowWarnings = [];
       return;
     }
 
     // Allocate ports using offset strategy
     const result = portIsolationService.allocatePortsWithOffset(portsToAllocate, portConfig);
     portAssignments = result.assignments;
+    portOverflowWarnings = result.overflowWarnings;
     if (result.overflowWarnings.length > 0) {
       console.warn('Port overflow warnings:', result.overflowWarnings);
     }
   }
 
-  function togglePortSelection(variableName: string) {
-    const current = selectedPorts.get(variableName) ?? true;
+  function togglePortSelection(portKey: string) {
+    const current = selectedPorts.get(portKey) ?? true;
     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally using Map
-    selectedPorts = new Map(selectedPorts).set(variableName, !current);
+    selectedPorts = new Map(selectedPorts).set(portKey, !current);
     allocatePortsForWorktree();
   }
 
-  function getAssignedPortValue(variableName: string): number | null {
-    const assignment = portAssignments.find((a) => a.variable_name === variableName);
+  function getAssignedPortValue(variableName: string, portValue: number): number | null {
+    const assignment = portAssignments.find(
+      (a) => a.variable_name === variableName && a.original_value === portValue
+    );
     return assignment?.assigned_value ?? null;
   }
 
-  function getPortSourceFiles(variableName: string): string[] {
+  function getPortSourceFiles(variableName: string, portValue?: number): string[] {
     if (!detectedPorts) return [];
     const allPorts = [
       ...detectedPorts.env_ports,
@@ -420,7 +480,11 @@
     ];
     const prefix = projectPath.endsWith('/') ? projectPath : `${projectPath}/`;
     return allPorts
-      .filter((p) => p.variable_name === variableName)
+      .filter(
+        (p) =>
+          p.variable_name === variableName &&
+          (portValue === undefined || p.port_value === portValue)
+      )
       .map((p) => {
         const rel = p.file_path.startsWith(prefix) ? p.file_path.slice(prefix.length) : p.file_path;
         return `${rel}:${p.line_number}`;
@@ -435,9 +499,12 @@
 
   // Count of selected AND transformable ports
   function getSelectedPortCount(): number {
-    return Array.from(selectedPorts.entries()).filter(
-      ([name, selected]) => selected && isPortTransformable(name)
-    ).length;
+    return Array.from(selectedPorts.entries()).filter(([key, selected]) => {
+      // Extract variable_name from composite key "variable_name:port_value"
+      const lastColon = key.lastIndexOf(':');
+      const variableName = lastColon >= 0 ? key.substring(0, lastColon) : key;
+      return selected && isPortTransformable(variableName);
+    }).length;
   }
 
   // Counts for execution summary
@@ -513,11 +580,16 @@
   }
 
   function getPortsTooltip(): string {
-    if (portAssignments.length === 0) return 'No ports to isolate';
+    if (portAssignments.length === 0 && portOverflowWarnings.length === 0)
+      return 'No ports to isolate';
     const lines = portAssignments.map(
       (a) => `  ${a.variable_name}: ${a.original_value} → ${a.assigned_value}`
     );
-    return `Port isolation:\n${lines.join('\n')}`;
+    let tooltip = `Port isolation:\n${lines.join('\n')}`;
+    if (portOverflowWarnings.length > 0) {
+      tooltip += `\n\n⚠ Overflow:\n${portOverflowWarnings.map((w) => `  ${w}`).join('\n')}`;
+    }
+    return tooltip;
   }
 
   function togglePortIsolation() {
@@ -551,8 +623,8 @@
 
   function removeTargetFile(pattern: string) {
     if (!portConfig) return;
-    // Prevent removing the default .env* pattern
-    if (pattern === '.env*') return;
+    // Prevent removing default target file patterns
+    if (DEFAULT_TARGET_FILES.includes(pattern)) return;
     portConfig = {
       ...portConfig,
       targetFiles: (portConfig.targetFiles ?? []).filter((p) => p !== pattern),
@@ -608,13 +680,15 @@
 
   async function saveComposeConfig() {
     if (!composeConfig) return;
-    try {
-      const settings = await loadProjectSettings(projectPath);
-      settings.composeIsolationConfig = composeConfig;
-      await saveProjectSettings(projectPath, settings);
-    } catch (e) {
-      console.error('Failed to save compose config:', e);
-    }
+    await withSettingsLock(async () => {
+      try {
+        const settings = await loadProjectSettings(projectPath);
+        settings.composeIsolationConfig = composeConfig;
+        await saveProjectSettings(projectPath, settings);
+      } catch (e) {
+        console.error('Failed to save compose config:', e);
+      }
+    });
   }
 
   async function detectComposeFilesForWorktree(): Promise<void> {
@@ -642,14 +716,13 @@
       composeReplacements = [];
       return;
     }
-    const wtName = worktreeName();
-    if (!wtName) {
+    if (!worktreeName) {
       composeReplacements = [];
       return;
     }
     composeReplacements = composeIsolationService.buildReplacements(
       detectedComposeFiles,
-      wtName,
+      worktreeName,
       composeConfig.disabledFiles ?? []
     );
   }
@@ -899,7 +972,6 @@
 
   onDestroy(() => {
     document.removeEventListener('keydown', handleKeyDown, true);
-    document.removeEventListener('click', handleDocumentClick, true);
     if (unlistenWorktreeRemoved) {
       unlistenWorktreeRemoved();
     }
@@ -917,10 +989,6 @@
         onClose();
       }
     }
-  }
-
-  function handleDocumentClick(_e: MouseEvent) {
-    // No longer needed for dropdown - using modal now
   }
 
   async function loadWorktrees(path?: string) {
@@ -949,6 +1017,7 @@
   }
 
   async function handleCreate() {
+    if (isCreating) return;
     if (!createName.trim()) return;
     if (!projectPath) {
       createError = 'Project path is not available';
@@ -956,7 +1025,7 @@
     }
 
     // Proceed with worktree creation using pre-configured port assignments
-    continueWorktreeCreation();
+    await continueWorktreeCreation();
   }
 
   async function continueWorktreeCreation() {
@@ -998,8 +1067,7 @@
       );
 
       if (creationCancelled) {
-        await worktreeService.remove(currentProjectPath, wtName);
-        resetCreation();
+        await cleanupCancelledCreation(currentProjectPath, wtName);
         return;
       }
 
@@ -1010,6 +1078,7 @@
       // Step 2: Copy files
       updateTask('copy', 'running');
       await forceUIUpdate();
+      let copyFailed = false;
       const regularCopyPatterns = [...DEFAULT_WORKTREE_COPY_PATTERNS, ...userCopyPatterns];
       const disabledFiles = portConfig?.disabledTargetFiles ?? [];
       const enabledTargetFiles = (portConfig?.targetFiles ?? DEFAULT_TARGET_FILES).filter(
@@ -1042,9 +1111,7 @@
         } catch (copyError) {
           console.error('Failed to copy files:', copyError);
           updateTask('copy', 'failed', 'Copy failed');
-          if (hasPortAssignments) {
-            updateTask('port-remap', 'failed', 'Skipped due to copy failure');
-          }
+          copyFailed = true;
         }
       } else {
         updateTask('copy', 'completed', 'No copy patterns configured');
@@ -1053,7 +1120,7 @@
       await pauseBetweenTasks();
 
       // Step 2.5: Remap ports (register assignments)
-      if (hasPortAssignments) {
+      if (hasPortAssignments && !copyFailed) {
         updateTask('port-remap', 'running');
         await forceUIUpdate();
         try {
@@ -1074,6 +1141,10 @@
           console.error('Failed to register port assignments:', portError);
           updateTask('port-remap', 'failed', String(portError));
         }
+        await forceUIUpdate();
+        await pauseBetweenTasks();
+      } else if (hasPortAssignments && copyFailed) {
+        updateTask('port-remap', 'failed', 'Skipped due to copy failure');
         await forceUIUpdate();
         await pauseBetweenTasks();
       }
@@ -1104,12 +1175,15 @@
       }
 
       if (creationCancelled) {
-        await worktreeService.remove(currentProjectPath, wtName);
-        resetCreation();
+        await cleanupCancelledCreation(currentProjectPath, wtName);
         return;
       }
 
       // Step 3: Run initialization commands
+      // TODO: Cancel currently does not interrupt a running init command process.
+      // This requires backend changes to support process termination (e.g. tracking
+      // child process PIDs in Rust and sending SIGTERM on cancel). For now, cancel
+      // only takes effect between commands, not during a running command.
       for (let i = 0; i < effectiveCommands.length; i++) {
         const cmd = effectiveCommands[i];
         if (creationCancelled) {
@@ -1138,8 +1212,7 @@
       }
 
       if (creationCancelled) {
-        await worktreeService.remove(currentProjectPath, wtName);
-        resetCreation();
+        await cleanupCancelledCreation(currentProjectPath, wtName);
         return;
       }
 
@@ -1147,7 +1220,7 @@
       updateTask('open-window', 'running');
       await forceUIUpdate();
 
-      openWorktreeWindow(wt, true);
+      await openWorktreeWindow(wt, true);
       loadWorktrees(currentProjectPath).catch(console.error);
 
       updateTask('open-window', 'completed');
@@ -1174,6 +1247,19 @@
     creationCancelled = false;
   }
 
+  async function cleanupCancelledCreation(currentProjectPath: string, wtName: string) {
+    try {
+      await worktreeService.remove(currentProjectPath, wtName);
+    } catch (e) {
+      console.error('Cleanup: remove worktree failed:', e);
+    }
+    if (portConfig && portConfig.worktreeAssignments?.[wtName]) {
+      portConfig = portIsolationService.removeWorktreeAssignments(portConfig, wtName);
+      await savePortConfig();
+    }
+    resetCreation();
+  }
+
   function resetOpen() {
     isProgressActive = false;
     progressTasks = [];
@@ -1181,6 +1267,9 @@
   }
 
   async function openWorktreeWindow(wt: WorktreeInfo, skipInit = false) {
+    // Prevent concurrent open when a creation or open flow is already running
+    if (!skipInit && isProgressActive) return;
+
     // If called from handleCreate (skipInit=true), just open the window
     if (skipInit) {
       try {
@@ -1344,20 +1433,20 @@
         <!-- Worktree Tree View -->
         <div class="worktree-tree">
           <!-- Main repository (parent) -->
-          {#if mainWorktree()}
-            {@const main = mainWorktree()}
-            <div class="tree-item tree-parent" class:is-current={!isCurrentWindowWorktree()}>
+          {#if mainWorktree}
+            {@const main = mainWorktree}
+            <div class="tree-item tree-parent" class:is-current={!isCurrentWindowWorktree}>
               <span class="tree-indicator"></span>
               <span class="tree-branch">{main?.branch ?? 'detached'}</span>
-              {#if !isCurrentWindowWorktree()}
+              {#if !isCurrentWindowWorktree}
                 <span class="tree-label label-current">CURRENT</span>
               {/if}
             </div>
           {/if}
 
           <!-- Linked worktrees (children) -->
-          {#each linkedWorktrees() as wt, i (wt.path)}
-            {@const isLast = i === linkedWorktrees().length - 1}
+          {#each linkedWorktrees as wt, i (wt.path)}
+            {@const isLast = i === linkedWorktrees.length - 1}
             <button
               type="button"
               class="tree-item tree-child"
@@ -1467,7 +1556,7 @@
                     autofocus
                     oninput={() => handleNameInput()}
                     onkeydown={(e) => {
-                      if (e.key === 'Enter' && createName.trim()) handleCreate();
+                      if (e.key === 'Enter' && createName.trim() && !isCreating) handleCreate();
                     }}
                   />
                   {#if createName.trim()}
@@ -1484,7 +1573,7 @@
                   class="branch-select-btn"
                   title="Select existing branch"
                   onclick={() => (showBranchDropdown = true)}
-                  disabled={availableBranches().length === 0}
+                  disabled={availableBranches.length === 0}
                 >
                   <svg
                     width="14"
@@ -1504,13 +1593,13 @@
               {#if createName.trim()}
                 <div class="path-preview">
                   <span class="preview-label">Path:</span>
-                  <span class="preview-path">{pathPreview()}</span>
+                  <span class="preview-path">{pathPreview}</span>
                 </div>
               {/if}
             </div>
 
-            {#if branchValidationError()}
-              <div class="form-error form-warning">{branchValidationError()}</div>
+            {#if branchValidationError}
+              <div class="form-error form-warning">{branchValidationError}</div>
             {/if}
 
             {#if createError}
@@ -1522,7 +1611,7 @@
                 type="button"
                 class="btn btn-primary"
                 onclick={() => handleCreate()}
-                disabled={!createName.trim() || isCreating || !!branchValidationError()}
+                disabled={!createName.trim() || isCreating || !!branchValidationError}
               >
                 {#if isCreating}
                   <Spinner size="sm" /> Creating...
@@ -1695,7 +1784,7 @@
         </button>
       </div>
       <div class="branch-modal-body">
-        {#each availableBranches() as b (b.name)}
+        {#each availableBranches as b (b.name)}
           <button type="button" class="branch-item" onclick={() => handleSelectBranch(b.name)}>
             <svg
               class="branch-icon-small"
@@ -1717,7 +1806,7 @@
             {/if}
           </button>
         {/each}
-        {#if availableBranches().length === 0}
+        {#if availableBranches.length === 0}
           <div class="empty-state">No available branches</div>
         {/if}
       </div>
@@ -1969,11 +2058,12 @@
                     </tr>
                   </thead>
                   <tbody>
-                    {#each getUniquePorts() as port (port.variable_name)}
-                      {@const isSelected = selectedPorts.get(port.variable_name) ?? true}
+                    {#each getUniquePorts() as port (`${port.variable_name}:${port.port_value}`)}
+                      {@const portKey = `${port.variable_name}:${port.port_value}`}
+                      {@const isSelected = selectedPorts.get(portKey) ?? true}
                       {@const transformable = isPortTransformable(port.variable_name)}
-                      {@const assigned = getAssignedPortValue(port.variable_name)}
-                      {@const sources = getPortSourceFiles(port.variable_name)}
+                      {@const assigned = getAssignedPortValue(port.variable_name, port.port_value)}
+                      {@const sources = getPortSourceFiles(port.variable_name, port.port_value)}
                       <tr
                         class="port-table-row"
                         class:disabled={!isSelected && transformable}
@@ -1985,7 +2075,7 @@
                             class="port-checkbox"
                             checked={isSelected && transformable}
                             disabled={!transformable}
-                            onchange={() => togglePortSelection(port.variable_name)}
+                            onchange={() => togglePortSelection(portKey)}
                           />
                         </td>
                         <td class="port-col-var">
@@ -2012,6 +2102,13 @@
               {#if getSelectedPortCount() > 0}
                 <div class="port-summary">
                   {getSelectedPortCount()} port{getSelectedPortCount() !== 1 ? 's' : ''} will be transformed
+                </div>
+              {/if}
+              {#if portOverflowWarnings.length > 0}
+                <div class="port-overflow-warnings">
+                  {#each portOverflowWarnings as warning (warning)}
+                    <div class="port-overflow-warning">{warning}</div>
+                  {/each}
                 </div>
               {/if}
             {:else}
@@ -2912,8 +3009,9 @@
     align-items: center;
     justify-content: space-between;
     padding: var(--space-3) var(--space-4);
-    background: rgba(0, 0, 0, 0.2);
-    border-bottom: 1px solid var(--border-color);
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid var(--border-glow);
+    border-bottom-color: rgba(125, 211, 252, 0.25);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   }
 
@@ -3708,6 +3806,20 @@
     font-size: 11px;
     color: var(--accent-color);
     padding: var(--space-2) 0;
+  }
+
+  .port-overflow-warnings {
+    margin-top: var(--space-2);
+  }
+
+  .port-overflow-warning {
+    font-size: 11px;
+    color: var(--accent3-color);
+    background: rgba(252, 211, 77, 0.08);
+    border: 1px solid rgba(252, 211, 77, 0.2);
+    border-radius: var(--radius-sm);
+    padding: var(--space-1) var(--space-2);
+    margin-bottom: var(--space-1);
   }
 
   .port-empty {

@@ -6,11 +6,13 @@ use std::fs;
 use std::path::Path;
 
 // Regex patterns for port detection
-const ENV_PORT_PATTERN: &str = r"^([A-Z_]*PORT[A-Z_]*)=(\d+)";
+// Matches both uppercase and lowercase variable names containing "port" (case-insensitive)
+const ENV_PORT_PATTERN: &str = r#"^(?:export\s+)?([A-Za-z_]*[Pp][Oo][Rr][Tt][A-Za-z_]*)=["']?(\d+)["']?"#;
 // Pattern for URLs with ports: VAR_URL=protocol://host:PORT or VAR_URL=protocol://user:pass@host:PORT
-const ENV_URL_PORT_PATTERN: &str = r"^([A-Z][A-Z0-9_]*_URL)=\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:(\d+)";
+// Matches both uppercase and lowercase variable names ending with _URL
+const ENV_URL_PORT_PATTERN: &str = r#"^(?:export\s+)?([A-Za-z][A-Za-z0-9_]*_(?:[Uu][Rr][Ll]))=["']?\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:(\d+)["']?"#;
 const DOCKERFILE_EXPOSE_PATTERN: &str = r"^EXPOSE\s+(\d+)";
-const COMPOSE_PORT_PATTERN: &str = r#"^\s*-\s*["']?(\d+):(\d+)["']?"#;
+const COMPOSE_PORT_PATTERN: &str = r#"^\s*-\s*["']?(?:\d+\.\d+\.\d+\.\d+:)?(\d+):(\d+)["']?"#;
 // Pattern for port flags in package.json scripts: -p PORT, --port PORT, --port=PORT
 const SCRIPT_PORT_PATTERN: &str = r"(?:--port[= ]|-p )(\d+)";
 
@@ -135,12 +137,18 @@ pub fn detect_ports_in_dockerfile(content: &str, file_path: &str) -> Vec<PortSou
 /// Detect port mappings in docker-compose.yml content
 pub fn detect_ports_in_compose(content: &str, file_path: &str) -> Vec<PortSource> {
     let re = Regex::new(COMPOSE_PORT_PATTERN).unwrap();
+    let port_range_re = Regex::new(r"\d+-\d+:\d+-\d+").unwrap();
     let mut ports = Vec::new();
 
     for (line_num, line) in content.lines().enumerate() {
         let trimmed = line.trim();
         // Skip comments
         if trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Skip port range mappings (e.g., "3000-3010:3000-3010")
+        if port_range_re.is_match(trimmed) {
             continue;
         }
 
@@ -416,17 +424,26 @@ pub fn transform_env_content(
     let mut result = String::new();
     let mut replacements = Vec::new();
 
-    // Build a map of variable_name -> assignment
-    let assignment_map: HashMap<&str, &PortAssignment> = assignments
-        .iter()
-        .map(|a| (a.variable_name.as_str(), a))
-        .collect();
+    // Build a map of variable_name -> assignments (multiple assignments possible for same var)
+    let mut assignment_map: HashMap<&str, Vec<&PortAssignment>> = HashMap::new();
+    for a in assignments {
+        assignment_map
+            .entry(a.variable_name.as_str())
+            .or_default()
+            .push(a);
+    }
 
     let port_re = Regex::new(ENV_PORT_PATTERN).unwrap();
+    // Replacement regex that preserves export prefix and quotes
+    // Supports both uppercase and lowercase variable names containing "port"
+    let port_replace_re = Regex::new(r#"^((?:export\s+)?[A-Za-z_]*[Pp][Oo][Rr][Tt][A-Za-z_]*=)(["']?)(\d+)(["']?)"#).unwrap();
     // For URL replacement, capture the part before the port and the port itself
-    // Pattern: (VAR_URL=...://host):PORT -> captures prefix and port separately
+    // Pattern: (export? VAR_URL=...://host):PORT(quote?) -> captures prefix, port, trailing quote
+    // Supports both uppercase and lowercase variable names ending with _URL
     let url_re =
-        Regex::new(r"^([A-Z][A-Z0-9_]*_URL=\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+):(\d+)").unwrap();
+        Regex::new(r#"^(?:export\s+)?([A-Za-z][A-Za-z0-9_]*_(?:[Uu][Rr][Ll]))=["']?\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:(\d+)["']?"#).unwrap();
+    let url_replace_re =
+        Regex::new(r#"^((?:export\s+)?[A-Za-z][A-Za-z0-9_]*_(?:[Uu][Rr][Ll])=["']?\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:)(\d+)(["']?)"#).unwrap();
 
     for (line_num, line) in content.lines().enumerate() {
         let trimmed = line.trim();
@@ -438,47 +455,69 @@ pub fn transform_env_content(
             continue;
         }
 
-        // Check for PORT variables (e.g., PORT=3000)
+        // Check for PORT variables (e.g., PORT=3000, PORT="3000", export PORT=3000)
         if let Some(caps) = port_re.captures(trimmed) {
             if let Some(var_name) = caps.get(1) {
-                if let Some(assignment) = assignment_map.get(var_name.as_str()) {
-                    // Replace the port value
-                    let new_line = port_re.replace(line, |caps: &regex::Captures| {
-                        format!("{}={}", &caps[1], assignment.assigned_value)
-                    });
-                    result.push_str(&new_line);
-                    result.push('\n');
-                    replacements.push(PortReplacement {
-                        variable_name: var_name.as_str().to_string(),
-                        original_value: assignment.original_value,
-                        new_value: assignment.assigned_value,
-                        line_number: (line_num + 1) as u32,
-                    });
-                    continue;
+                if let Some(assignments_for_var) = assignment_map.get(var_name.as_str()) {
+                    // Parse the port value from the line to match against original_value
+                    if let Some(port_str) = caps.get(2) {
+                        if let Ok(port_val) = port_str.as_str().parse::<u16>() {
+                            if let Some(assignment) =
+                                assignments_for_var.iter().find(|a| a.original_value == port_val)
+                            {
+                                // Replace the port value, preserving export prefix and quotes
+                                let assigned = assignment.assigned_value;
+                                let orig = assignment.original_value;
+                                let new_line =
+                                    port_replace_re.replace(line, |caps: &regex::Captures| {
+                                        format!("{}{}{}{}", &caps[1], &caps[2], assigned, &caps[4])
+                                    });
+                                result.push_str(&new_line);
+                                result.push('\n');
+                                replacements.push(PortReplacement {
+                                    variable_name: var_name.as_str().to_string(),
+                                    original_value: orig,
+                                    new_value: assigned,
+                                    line_number: (line_num + 1) as u32,
+                                });
+                                continue;
+                            }
+                        }
+                    }
                 }
             }
         }
         // Check for URL variables with ports (e.g., REDIS_URL=redis://localhost:6379)
         else if let Some(caps) = url_re.captures(trimmed) {
-            // Extract variable name from the prefix (VAR_URL=...)
-            if let Some(prefix) = caps.get(1) {
-                let prefix_str = prefix.as_str();
-                if let Some(eq_pos) = prefix_str.find('=') {
-                    let var_name = &prefix_str[..eq_pos];
-                    if let Some(assignment) = assignment_map.get(var_name) {
-                        // Replace the port in the URL
-                        let new_line = url_re.replace(line, |caps: &regex::Captures| {
-                            format!("{}:{}", &caps[1], assignment.assigned_value)
-                        });
-                        result.push_str(&new_line);
-                        result.push('\n');
-                        replacements.push(PortReplacement {
-                            variable_name: var_name.to_string(),
-                            original_value: assignment.original_value,
-                            new_value: assignment.assigned_value,
-                            line_number: (line_num + 1) as u32,
-                        });
-                        continue;
+            // Extract variable name
+            if let Some(var_name_match) = caps.get(1) {
+                let var_name = var_name_match.as_str();
+                if let Some(assignments_for_var) = assignment_map.get(var_name) {
+                    // Parse the port value from the URL to match against original_value
+                    if let Some(port_str) = caps.get(2) {
+                        if let Ok(port_val) = port_str.as_str().parse::<u16>() {
+                            if let Some(assignment) = assignments_for_var
+                                .iter()
+                                .find(|a| a.original_value == port_val)
+                            {
+                                // Replace the port in the URL, preserving quotes
+                                let assigned = assignment.assigned_value;
+                                let orig = assignment.original_value;
+                                let new_line =
+                                    url_replace_re.replace(line, |caps: &regex::Captures| {
+                                        format!("{}{}{}", &caps[1], assigned, &caps[3])
+                                    });
+                                result.push_str(&new_line);
+                                result.push('\n');
+                                replacements.push(PortReplacement {
+                                    variable_name: var_name.to_string(),
+                                    original_value: orig,
+                                    new_value: assigned,
+                                    line_number: (line_num + 1) as u32,
+                                });
+                                continue;
+                            }
+                        }
                     }
                 }
             }
@@ -544,12 +583,19 @@ pub fn transform_generic_content(content: &str, assignments: &[PortAssignment]) 
 /// Container-internal ports (right side of host:container) are preserved.
 pub fn transform_compose_content(content: &str, assignments: &[PortAssignment]) -> String {
     let re = Regex::new(COMPOSE_PORT_PATTERN).unwrap();
-    // Extended pattern to also capture optional /protocol suffix
-    let re_full = Regex::new(r#"^(\s*-\s*["']?)(\d+):(\d+)(/\w+)?(["']?)(.*)$"#).unwrap();
+    let port_range_re = Regex::new(r"\d+-\d+:\d+-\d+").unwrap();
+    // Extended pattern to also capture optional IP prefix and /protocol suffix
+    let re_full = Regex::new(r#"^(\s*-\s*["']?(?:\d+\.\d+\.\d+\.\d+:)?)(\d+):(\d+)(/\w+)?(["']?)(.*)$"#).unwrap();
 
     let mut result_lines: Vec<String> = Vec::new();
 
     for line in content.lines() {
+        // Skip port range mappings (e.g., "3000-3010:3000-3010")
+        if port_range_re.is_match(line) {
+            result_lines.push(line.to_string());
+            continue;
+        }
+
         // Check if this line is a port mapping
         if re.is_match(line) {
             if let Some(caps) = re_full.captures(line) {
@@ -772,32 +818,57 @@ pub fn copy_files_with_port_transformation(
         transformed_files: &mut Vec<String>,
         errors: &mut Vec<String>,
     ) {
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    copy_directory_recursive(
-                        &path,
-                        source,
-                        target,
-                        assignments,
-                        copied_files,
-                        skipped_files,
-                        transformed_files,
-                        errors,
-                    );
-                } else if path.is_file() {
-                    copy_file_with_transform(
-                        &path,
-                        source,
-                        target,
-                        assignments,
-                        copied_files,
-                        skipped_files,
-                        transformed_files,
-                        errors,
-                    );
+        match fs::read_dir(dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    match entry {
+                        Ok(e) => {
+                            let path = e.path();
+                            if path.is_dir() {
+                                copy_directory_recursive(
+                                    &path,
+                                    source,
+                                    target,
+                                    assignments,
+                                    copied_files,
+                                    skipped_files,
+                                    transformed_files,
+                                    errors,
+                                );
+                            } else if path.is_file() {
+                                copy_file_with_transform(
+                                    &path,
+                                    source,
+                                    target,
+                                    assignments,
+                                    copied_files,
+                                    skipped_files,
+                                    transformed_files,
+                                    errors,
+                                );
+                            } else if path
+                                .symlink_metadata()
+                                .map(|m| m.file_type().is_symlink())
+                                .unwrap_or(false)
+                            {
+                                errors.push(format!(
+                                    "Skipping dangling symlink: {}",
+                                    path.display()
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            errors.push(format!(
+                                "Failed to read entry in {}: {}",
+                                dir.display(),
+                                e
+                            ));
+                        }
+                    }
                 }
+            }
+            Err(e) => {
+                errors.push(format!("Failed to read directory {}: {}", dir.display(), e));
             }
         }
     }
@@ -833,6 +904,15 @@ pub fn copy_files_with_port_transformation(
                                     &mut transformed_files,
                                     &mut errors,
                                 );
+                            } else if path
+                                .symlink_metadata()
+                                .map(|m| m.file_type().is_symlink())
+                                .unwrap_or(false)
+                            {
+                                errors.push(format!(
+                                    "Skipping dangling symlink: {}",
+                                    path.display()
+                                ));
                             }
                         }
                         Err(e) => {
@@ -2095,5 +2175,506 @@ DATABASE_URL=postgres://user:pass@localhost:5432/mydb
         // Only host port changes; container port stays as 3000
         assert!(result.contains("8180:3000"), "Expected 8180:3000, got:\n{}", result);
         assert!(!result.contains("8180:3100"), "Container port should not change");
+    }
+
+    #[test]
+    fn test_transform_env_content_same_var_different_ports() {
+        // Simulates .env with DATABASE_URL pointing to port 5432
+        let content_env = "DATABASE_URL=postgresql://localhost:5432/mydb\n";
+        // Simulates .env.test with DATABASE_URL pointing to port 5434
+        let content_test = "DATABASE_URL=postgresql://localhost:5434/testdb\n";
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "DATABASE_URL".to_string(),
+                original_value: 5432,
+                assigned_value: 5532,
+            },
+            PortAssignment {
+                variable_name: "DATABASE_URL".to_string(),
+                original_value: 5434,
+                assigned_value: 5534,
+            },
+        ];
+
+        let result_env = transform_env_content(content_env, &assignments);
+        assert!(result_env.content.contains(":5532/mydb"), "Expected port 5532 in .env, got: {}", result_env.content);
+        assert!(!result_env.content.contains(":5432"), "Port 5432 should be replaced");
+
+        let result_test = transform_env_content(content_test, &assignments);
+        assert!(result_test.content.contains(":5534/testdb"), "Expected port 5534 in .env.test, got: {}", result_test.content);
+        assert!(!result_test.content.contains(":5434"), "Port 5434 should be replaced");
+    }
+
+    #[test]
+    fn test_transform_env_content_same_var_same_port() {
+        // Same variable name AND same port value - should work as before
+        let content = "PORT=3000\n";
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            },
+        ];
+
+        let result = transform_env_content(content, &assignments);
+        assert!(result.content.contains("PORT=3100"));
+    }
+
+    #[test]
+    fn test_transform_env_content_port_var_same_name_different_values() {
+        // PORT variable (not URL) with same name, different values
+        let content1 = "DB_PORT=5432\n";
+        let content2 = "DB_PORT=5434\n";
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "DB_PORT".to_string(),
+                original_value: 5432,
+                assigned_value: 5532,
+            },
+            PortAssignment {
+                variable_name: "DB_PORT".to_string(),
+                original_value: 5434,
+                assigned_value: 5534,
+            },
+        ];
+
+        let result1 = transform_env_content(content1, &assignments);
+        assert!(result1.content.contains("DB_PORT=5532"), "Got: {}", result1.content);
+
+        let result2 = transform_env_content(content2, &assignments);
+        assert!(result2.content.contains("DB_PORT=5534"), "Got: {}", result2.content);
+    }
+
+    // === Tests for IP-bound compose port patterns ===
+
+    #[test]
+    fn test_detect_ports_in_compose_ip_bound() {
+        let content = r#"
+services:
+  web:
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "0.0.0.0:8080:8080"
+      - "3306:3306"
+"#;
+
+        let ports = detect_ports_in_compose(content, "docker-compose.yml");
+        assert_eq!(ports.len(), 3);
+
+        assert_eq!(ports[0].variable_name, "COMPOSE:3000");
+        assert_eq!(ports[0].port_value, 3000);
+        assert_eq!(ports[1].variable_name, "COMPOSE:8080");
+        assert_eq!(ports[1].port_value, 8080);
+        assert_eq!(ports[2].variable_name, "COMPOSE:3306");
+        assert_eq!(ports[2].port_value, 3306);
+    }
+
+    #[test]
+    fn test_transform_compose_content_ip_bound() {
+        let content = r#"services:
+  web:
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "0.0.0.0:8080:8080"
+"#;
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "COMPOSE:3000".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            },
+            PortAssignment {
+                variable_name: "COMPOSE:8080".to_string(),
+                original_value: 8080,
+                assigned_value: 8180,
+            },
+        ];
+
+        let result = transform_compose_content(content, &assignments);
+        assert!(
+            result.contains("127.0.0.1:3100:3000"),
+            "Expected IP-bound port transformed, got: {}",
+            result
+        );
+        assert!(
+            result.contains("0.0.0.0:8180:8080"),
+            "Expected IP-bound port transformed, got: {}",
+            result
+        );
+    }
+
+    // === Tests for port range exclusion ===
+
+    #[test]
+    fn test_detect_ports_in_compose_skips_port_ranges() {
+        let content = r#"
+services:
+  web:
+    ports:
+      - "3000:3000"
+      - "3100-3110:3100-3110"
+      - "8080:8080"
+"#;
+
+        let ports = detect_ports_in_compose(content, "docker-compose.yml");
+        assert_eq!(ports.len(), 2);
+
+        assert_eq!(ports[0].port_value, 3000);
+        assert_eq!(ports[1].port_value, 8080);
+    }
+
+    #[test]
+    fn test_transform_compose_content_skips_port_ranges() {
+        let content = r#"services:
+  web:
+    ports:
+      - "3000:3000"
+      - "3100-3110:3100-3110"
+      - "8080:8080"
+"#;
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "COMPOSE:3000".to_string(),
+                original_value: 3000,
+                assigned_value: 3200,
+            },
+        ];
+
+        let result = transform_compose_content(content, &assignments);
+        assert!(result.contains("3200:3000"), "Expected port transformed, got: {}", result);
+        assert!(
+            result.contains("3100-3110:3100-3110"),
+            "Port range should be unchanged, got: {}",
+            result
+        );
+    }
+
+    // === Tests for quoted env values ===
+
+    #[test]
+    fn test_detect_ports_in_env_file_quoted_values() {
+        let content = r#"
+PORT="3000"
+DB_PORT='5432'
+API_PORT=8080
+"#;
+
+        let ports = detect_ports_in_env_file(content, ".env");
+        assert_eq!(ports.len(), 3);
+
+        assert_eq!(ports[0].variable_name, "PORT");
+        assert_eq!(ports[0].port_value, 3000);
+        assert_eq!(ports[1].variable_name, "DB_PORT");
+        assert_eq!(ports[1].port_value, 5432);
+        assert_eq!(ports[2].variable_name, "API_PORT");
+        assert_eq!(ports[2].port_value, 8080);
+    }
+
+    #[test]
+    fn test_transform_env_content_preserves_quotes() {
+        let content = r#"PORT="3000"
+DB_PORT='5432'
+API_PORT=8080
+"#;
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 20000,
+            },
+            PortAssignment {
+                variable_name: "DB_PORT".to_string(),
+                original_value: 5432,
+                assigned_value: 20001,
+            },
+            PortAssignment {
+                variable_name: "API_PORT".to_string(),
+                original_value: 8080,
+                assigned_value: 20002,
+            },
+        ];
+
+        let result = transform_env_content(content, &assignments);
+        assert!(
+            result.content.contains("PORT=\"20000\""),
+            "Expected double quotes preserved, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("DB_PORT='20001'"),
+            "Expected single quotes preserved, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("API_PORT=20002"),
+            "Expected unquoted value, got: {}",
+            result.content
+        );
+    }
+
+    // === Tests for export prefix ===
+
+    #[test]
+    fn test_detect_ports_in_env_file_export_prefix() {
+        let content = r#"
+export PORT=3000
+export DB_PORT=5432
+API_PORT=8080
+"#;
+
+        let ports = detect_ports_in_env_file(content, ".env");
+        assert_eq!(ports.len(), 3);
+
+        assert_eq!(ports[0].variable_name, "PORT");
+        assert_eq!(ports[0].port_value, 3000);
+        assert_eq!(ports[1].variable_name, "DB_PORT");
+        assert_eq!(ports[1].port_value, 5432);
+        assert_eq!(ports[2].variable_name, "API_PORT");
+        assert_eq!(ports[2].port_value, 8080);
+    }
+
+    #[test]
+    fn test_transform_env_content_preserves_export_prefix() {
+        let content = r#"export PORT=3000
+export DB_PORT="5432"
+API_PORT=8080
+"#;
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 20000,
+            },
+            PortAssignment {
+                variable_name: "DB_PORT".to_string(),
+                original_value: 5432,
+                assigned_value: 20001,
+            },
+            PortAssignment {
+                variable_name: "API_PORT".to_string(),
+                original_value: 8080,
+                assigned_value: 20002,
+            },
+        ];
+
+        let result = transform_env_content(content, &assignments);
+        assert!(
+            result.content.contains("export PORT=20000"),
+            "Expected export prefix preserved, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("export DB_PORT=\"20001\""),
+            "Expected export prefix and quotes preserved, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("API_PORT=20002"),
+            "Expected no export prefix for non-export line, got: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_detect_ports_in_env_file_export_with_url() {
+        let content = r#"
+export REDIS_URL=redis://localhost:6379
+DATABASE_URL=postgres://localhost:5432/mydb
+"#;
+
+        let ports = detect_ports_in_env_file(content, ".env");
+        assert_eq!(ports.len(), 2);
+
+        assert_eq!(ports[0].variable_name, "REDIS_URL");
+        assert_eq!(ports[0].port_value, 6379);
+        assert_eq!(ports[1].variable_name, "DATABASE_URL");
+        assert_eq!(ports[1].port_value, 5432);
+    }
+
+    #[test]
+    fn test_transform_env_content_export_url() {
+        let content = r#"export REDIS_URL=redis://localhost:6379
+DATABASE_URL=postgres://localhost:5432/mydb
+"#;
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "REDIS_URL".to_string(),
+                original_value: 6379,
+                assigned_value: 20001,
+            },
+            PortAssignment {
+                variable_name: "DATABASE_URL".to_string(),
+                original_value: 5432,
+                assigned_value: 20002,
+            },
+        ];
+
+        let result = transform_env_content(content, &assignments);
+        assert!(
+            result.content.contains("export REDIS_URL=redis://localhost:20001"),
+            "Expected export prefix preserved for URL, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("DATABASE_URL=postgres://localhost:20002/mydb"),
+            "Expected URL port replaced, got: {}",
+            result.content
+        );
+    }
+
+    #[test]
+    fn test_detect_ports_in_env_file_export_with_quotes_combined() {
+        // Test combined: export + quotes
+        let content = r#"
+export PORT="3000"
+export DB_PORT='5432'
+"#;
+
+        let ports = detect_ports_in_env_file(content, ".env");
+        assert_eq!(ports.len(), 2);
+
+        assert_eq!(ports[0].variable_name, "PORT");
+        assert_eq!(ports[0].port_value, 3000);
+        assert_eq!(ports[1].variable_name, "DB_PORT");
+        assert_eq!(ports[1].port_value, 5432);
+    }
+
+    // === Tests for lowercase env variable names (M8) ===
+
+    #[test]
+    fn test_detect_ports_in_env_file_lowercase_names() {
+        let content = r#"
+db_port=5432
+my_Port=8080
+PORT=3000
+api_port_number=9090
+"#;
+
+        let ports = detect_ports_in_env_file(content, ".env");
+        assert_eq!(ports.len(), 4);
+
+        assert_eq!(ports[0].variable_name, "db_port");
+        assert_eq!(ports[0].port_value, 5432);
+
+        assert_eq!(ports[1].variable_name, "my_Port");
+        assert_eq!(ports[1].port_value, 8080);
+
+        assert_eq!(ports[2].variable_name, "PORT");
+        assert_eq!(ports[2].port_value, 3000);
+
+        assert_eq!(ports[3].variable_name, "api_port_number");
+        assert_eq!(ports[3].port_value, 9090);
+    }
+
+    #[test]
+    fn test_detect_ports_in_env_file_mixed_case_port_keyword() {
+        let content = r#"
+server_Port=4000
+my_PORT_value=5000
+httpPort=6000
+"#;
+
+        let ports = detect_ports_in_env_file(content, ".env");
+        assert_eq!(ports.len(), 3);
+
+        assert_eq!(ports[0].variable_name, "server_Port");
+        assert_eq!(ports[0].port_value, 4000);
+
+        assert_eq!(ports[1].variable_name, "my_PORT_value");
+        assert_eq!(ports[1].port_value, 5000);
+
+        assert_eq!(ports[2].variable_name, "httpPort");
+        assert_eq!(ports[2].port_value, 6000);
+    }
+
+    #[test]
+    fn test_transform_env_content_lowercase_names() {
+        let content = r#"db_port=5432
+my_Port=8080
+PORT=3000
+"#;
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "db_port".to_string(),
+                original_value: 5432,
+                assigned_value: 20001,
+            },
+            PortAssignment {
+                variable_name: "my_Port".to_string(),
+                original_value: 8080,
+                assigned_value: 20002,
+            },
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 20003,
+            },
+        ];
+
+        let result = transform_env_content(content, &assignments);
+
+        assert!(
+            result.content.contains("db_port=20001"),
+            "Expected lowercase var transformed, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("my_Port=20002"),
+            "Expected mixed case var transformed, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("PORT=20003"),
+            "Expected uppercase var transformed, got: {}",
+            result.content
+        );
+        assert_eq!(result.replacements.len(), 3);
+    }
+
+    #[test]
+    fn test_detect_ports_in_env_file_lowercase_url() {
+        let content = r#"
+redis_url=redis://localhost:6379
+database_Url=postgres://localhost:5432/mydb
+"#;
+
+        let ports = detect_ports_in_env_file(content, ".env");
+        assert_eq!(ports.len(), 2);
+
+        assert_eq!(ports[0].variable_name, "redis_url");
+        assert_eq!(ports[0].port_value, 6379);
+
+        assert_eq!(ports[1].variable_name, "database_Url");
+        assert_eq!(ports[1].port_value, 5432);
+    }
+
+    #[test]
+    fn test_transform_env_content_lowercase_url() {
+        let content = r#"redis_url=redis://localhost:6379
+"#;
+
+        let assignments = vec![PortAssignment {
+            variable_name: "redis_url".to_string(),
+            original_value: 6379,
+            assigned_value: 20001,
+        }];
+
+        let result = transform_env_content(content, &assignments);
+
+        assert!(
+            result.content.contains("redis_url=redis://localhost:20001"),
+            "Expected lowercase URL var transformed, got: {}",
+            result.content
+        );
+        assert_eq!(result.replacements.len(), 1);
     }
 }
