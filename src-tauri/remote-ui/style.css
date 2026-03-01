@@ -234,11 +234,6 @@ body {
   border-color: var(--border-glow);
 }
 
-.project-card.terminals-only {
-  border-style: dashed;
-  border-color: var(--border-subtle);
-}
-
 .card-header {
   display: flex;
   align-items: center;
@@ -254,11 +249,6 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
-}
-
-.terminals-label {
-  font-size: 13px;
-  color: var(--text-secondary);
 }
 
 .branch-badge {
@@ -281,7 +271,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .card-meta {
@@ -306,56 +296,72 @@ body {
   justify-content: flex-end;
 }
 
-/* ── Terminals inside project card ─────────────────── */
+/* ── Close button (top-right of card) ──────────────── */
 
-.card-terminals {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 8px 0 10px;
-  padding: 8px;
-  background: rgba(13, 17, 23, 0.5);
-  border-radius: var(--radius-sm);
-  border: 1px solid rgba(240, 246, 252, 0.05);
-}
-
-.terminal-item {
+.btn-close {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
-  border-radius: 4px;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
 }
 
-.terminal-dot {
+.btn-close:active {
+  color: var(--color-danger);
+  background: rgba(248, 113, 113, 0.1);
+}
+
+/* ── Terminal tags (inline) ────────────────────────── */
+
+.card-terminal-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.terminal-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: rgba(13, 17, 23, 0.6);
+  border: 1px solid rgba(240, 246, 252, 0.08);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.terminal-tag.active {
+  color: var(--text-primary);
+}
+
+.terminal-tag-dot {
+  display: inline-block;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
-.terminal-dot.active {
+.terminal-tag.active .terminal-tag-dot {
   background: var(--color-success);
   box-shadow: 0 0 4px rgba(74, 222, 128, 0.4);
 }
 
-.terminal-dot.idle {
+.terminal-tag.idle .terminal-tag-dot {
   background: var(--color-idle);
-}
-
-.terminal-process {
-  font-size: 13px;
-  color: var(--text-secondary);
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.terminal-id {
-  font-size: 11px;
-  color: var(--text-muted);
-  flex-shrink: 0;
 }
 
 /* ── Buttons ────────────────────────────────────────── */
@@ -382,17 +388,6 @@ body {
 
 .btn-primary:active {
   background: #60bfed;
-  transform: scale(0.97);
-}
-
-.btn-danger {
-  background: transparent;
-  color: var(--color-danger);
-  border: 1px solid rgba(248, 113, 113, 0.3);
-}
-
-.btn-danger:active {
-  background: rgba(248, 113, 113, 0.1);
   transform: scale(0.97);
 }
 

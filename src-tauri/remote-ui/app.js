@@ -94,32 +94,41 @@ function renderProjects(projects, terminals) {
 
   var items = [];
 
-  projects.forEach(function (p) {
-    // Find terminals associated with this project (by path prefix matching in cwd if available)
-    var projectTerminals = [];
-    var remainingTerminals = [];
-    terminals.forEach(function (t) {
-      if (t.cwd && t.cwd.indexOf(p.path) === 0) {
-        projectTerminals.push(t);
-      } else {
-        remainingTerminals.push(t);
-      }
-    });
-    terminals = remainingTerminals;
+  // Distribute terminals to projects by cwd match, rest go to first project
+  var unmatched = terminals.slice();
+  var projectTerminalMap = {};
 
-    items.push({
-      key: 'project-' + p.path,
-      html: buildProjectCard(p, projectTerminals),
-    });
+  projects.forEach(function (p) {
+    projectTerminalMap[p.path] = [];
   });
 
-  // Remaining terminals (not associated with any project)
-  if (terminals.length > 0) {
-    items.push({
-      key: '__terminals',
-      html: buildTerminalsCard(terminals),
-    });
+  // First pass: match by cwd
+  var stillUnmatched = [];
+  unmatched.forEach(function (t) {
+    var matched = false;
+    if (t.cwd) {
+      projects.forEach(function (p) {
+        if (!matched && t.cwd.indexOf(p.path) === 0) {
+          projectTerminalMap[p.path].push(t);
+          matched = true;
+        }
+      });
+    }
+    if (!matched) stillUnmatched.push(t);
+  });
+
+  // Unmatched terminals go to the first project
+  if (stillUnmatched.length > 0 && projects.length > 0) {
+    projectTerminalMap[projects[0].path] =
+      projectTerminalMap[projects[0].path].concat(stillUnmatched);
   }
+
+  projects.forEach(function (p) {
+    items.push({
+      key: 'project-' + p.path,
+      html: buildProjectCard(p, projectTerminalMap[p.path] || []),
+    });
+  });
 
   syncChildren(projectsEl, items);
 }
@@ -131,61 +140,36 @@ function buildProjectCard(p, terminals) {
     escapeHtml(p.name) +
     '</span>' +
     (p.branch ? '<span class="branch-badge">' + escapeHtml(p.branch) + '</span>' : '') +
+    '<button class="btn-close" onclick="closeProject(\'' +
+    escapeAttr(p.path) +
+    '\')" aria-label="Close">' +
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<line x1="18" y1="6" x2="6" y2="18"></line>' +
+    '<line x1="6" y1="6" x2="18" y2="18"></line>' +
+    '</svg>' +
+    '</button>' +
     '</div>' +
     '<div class="card-path">' +
     escapeHtml(shortenPath(p.path)) +
     '</div>';
 
   if (terminals.length > 0) {
-    html += '<div class="card-terminals">';
+    html += '<div class="card-terminal-tags">';
     terminals.forEach(function (t) {
+      var name = t.processName ? escapeHtml(t.processName) : 'idle';
       html +=
-        '<div class="terminal-item">' +
-        '<span class="terminal-dot ' +
+        '<span class="terminal-tag ' +
         (t.isAlive ? 'active' : 'idle') +
-        '"></span>' +
-        '<span class="terminal-process">' +
-        (t.processName ? escapeHtml(t.processName) : 'idle') +
-        '</span>' +
-        '<span class="terminal-id">#' +
+        '">' +
+        '<span class="terminal-tag-dot"></span>' +
+        name +
+        ' #' +
         t.id +
-        '</span>' +
-        '</div>';
+        '</span>';
     });
     html += '</div>';
   }
 
-  html +=
-    '<div class="card-actions">' +
-    '<button class="btn btn-danger btn-sm" onclick="closeProject(\'' +
-    escapeAttr(p.path) +
-    '\')">Close</button>' +
-    '</div>';
-
-  return html;
-}
-
-function buildTerminalsCard(terminals) {
-  var html =
-    '<div class="card-header">' +
-    '<span class="project-name terminals-label">Terminals</span>' +
-    '</div>' +
-    '<div class="card-terminals">';
-  terminals.forEach(function (t) {
-    html +=
-      '<div class="terminal-item">' +
-      '<span class="terminal-dot ' +
-      (t.isAlive ? 'active' : 'idle') +
-      '"></span>' +
-      '<span class="terminal-process">' +
-      (t.processName ? escapeHtml(t.processName) : 'idle') +
-      '</span>' +
-      '<span class="terminal-id">#' +
-      t.id +
-      '</span>' +
-      '</div>';
-  });
-  html += '</div>';
   return html;
 }
 
@@ -257,8 +241,7 @@ function syncChildren(container, items) {
       // Create new node
       var div = document.createElement('div');
       div.setAttribute('data-key', item.key);
-      div.className = item.key === '__empty' || item.key === '__terminals' ? '' : 'project-card';
-      if (item.key === '__terminals') div.className = 'project-card terminals-only';
+      div.className = item.key === '__empty' ? '' : 'project-card';
       div.innerHTML = item.html;
       newNodes.push(div);
     }
