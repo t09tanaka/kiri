@@ -6,9 +6,11 @@ use std::fs;
 use std::path::Path;
 
 // Regex patterns for port detection
-const ENV_PORT_PATTERN: &str = r#"^(?:export\s+)?([A-Z_]*PORT[A-Z_]*)=["']?(\d+)["']?"#;
+// Matches both uppercase and lowercase variable names containing "port" (case-insensitive)
+const ENV_PORT_PATTERN: &str = r#"^(?:export\s+)?([A-Za-z_]*[Pp][Oo][Rr][Tt][A-Za-z_]*)=["']?(\d+)["']?"#;
 // Pattern for URLs with ports: VAR_URL=protocol://host:PORT or VAR_URL=protocol://user:pass@host:PORT
-const ENV_URL_PORT_PATTERN: &str = r#"^(?:export\s+)?([A-Z][A-Z0-9_]*_URL)=["']?\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:(\d+)["']?"#;
+// Matches both uppercase and lowercase variable names ending with _URL
+const ENV_URL_PORT_PATTERN: &str = r#"^(?:export\s+)?([A-Za-z][A-Za-z0-9_]*_(?:[Uu][Rr][Ll]))=["']?\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:(\d+)["']?"#;
 const DOCKERFILE_EXPOSE_PATTERN: &str = r"^EXPOSE\s+(\d+)";
 const COMPOSE_PORT_PATTERN: &str = r#"^\s*-\s*["']?(?:\d+\.\d+\.\d+\.\d+:)?(\d+):(\d+)["']?"#;
 // Pattern for port flags in package.json scripts: -p PORT, --port PORT, --port=PORT
@@ -433,13 +435,15 @@ pub fn transform_env_content(
 
     let port_re = Regex::new(ENV_PORT_PATTERN).unwrap();
     // Replacement regex that preserves export prefix and quotes
-    let port_replace_re = Regex::new(r#"^((?:export\s+)?[A-Z_]*PORT[A-Z_]*=)(["']?)(\d+)(["']?)"#).unwrap();
+    // Supports both uppercase and lowercase variable names containing "port"
+    let port_replace_re = Regex::new(r#"^((?:export\s+)?[A-Za-z_]*[Pp][Oo][Rr][Tt][A-Za-z_]*=)(["']?)(\d+)(["']?)"#).unwrap();
     // For URL replacement, capture the part before the port and the port itself
     // Pattern: (export? VAR_URL=...://host):PORT(quote?) -> captures prefix, port, trailing quote
+    // Supports both uppercase and lowercase variable names ending with _URL
     let url_re =
-        Regex::new(r#"^(?:export\s+)?([A-Z][A-Z0-9_]*_URL)=["']?\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:(\d+)["']?"#).unwrap();
+        Regex::new(r#"^(?:export\s+)?([A-Za-z][A-Za-z0-9_]*_(?:[Uu][Rr][Ll]))=["']?\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:(\d+)["']?"#).unwrap();
     let url_replace_re =
-        Regex::new(r#"^((?:export\s+)?[A-Z][A-Z0-9_]*_URL=["']?\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:)(\d+)(["']?)"#).unwrap();
+        Regex::new(r#"^((?:export\s+)?[A-Za-z][A-Za-z0-9_]*_(?:[Uu][Rr][Ll])=["']?\S+://(?:[^:@/]+(?::[^@/]+)?@)?[^:/]+:)(\d+)(["']?)"#).unwrap();
 
     for (line_num, line) in content.lines().enumerate() {
         let trimmed = line.trim();
@@ -814,32 +818,57 @@ pub fn copy_files_with_port_transformation(
         transformed_files: &mut Vec<String>,
         errors: &mut Vec<String>,
     ) {
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    copy_directory_recursive(
-                        &path,
-                        source,
-                        target,
-                        assignments,
-                        copied_files,
-                        skipped_files,
-                        transformed_files,
-                        errors,
-                    );
-                } else if path.is_file() {
-                    copy_file_with_transform(
-                        &path,
-                        source,
-                        target,
-                        assignments,
-                        copied_files,
-                        skipped_files,
-                        transformed_files,
-                        errors,
-                    );
+        match fs::read_dir(dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    match entry {
+                        Ok(e) => {
+                            let path = e.path();
+                            if path.is_dir() {
+                                copy_directory_recursive(
+                                    &path,
+                                    source,
+                                    target,
+                                    assignments,
+                                    copied_files,
+                                    skipped_files,
+                                    transformed_files,
+                                    errors,
+                                );
+                            } else if path.is_file() {
+                                copy_file_with_transform(
+                                    &path,
+                                    source,
+                                    target,
+                                    assignments,
+                                    copied_files,
+                                    skipped_files,
+                                    transformed_files,
+                                    errors,
+                                );
+                            } else if path
+                                .symlink_metadata()
+                                .map(|m| m.file_type().is_symlink())
+                                .unwrap_or(false)
+                            {
+                                errors.push(format!(
+                                    "Skipping dangling symlink: {}",
+                                    path.display()
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            errors.push(format!(
+                                "Failed to read entry in {}: {}",
+                                dir.display(),
+                                e
+                            ));
+                        }
+                    }
                 }
+            }
+            Err(e) => {
+                errors.push(format!("Failed to read directory {}: {}", dir.display(), e));
             }
         }
     }
@@ -875,6 +904,15 @@ pub fn copy_files_with_port_transformation(
                                     &mut transformed_files,
                                     &mut errors,
                                 );
+                            } else if path
+                                .symlink_metadata()
+                                .map(|m| m.file_type().is_symlink())
+                                .unwrap_or(false)
+                            {
+                                errors.push(format!(
+                                    "Skipping dangling symlink: {}",
+                                    path.display()
+                                ));
                             }
                         }
                         Err(e) => {
@@ -2507,5 +2545,136 @@ export DB_PORT='5432'
         assert_eq!(ports[0].port_value, 3000);
         assert_eq!(ports[1].variable_name, "DB_PORT");
         assert_eq!(ports[1].port_value, 5432);
+    }
+
+    // === Tests for lowercase env variable names (M8) ===
+
+    #[test]
+    fn test_detect_ports_in_env_file_lowercase_names() {
+        let content = r#"
+db_port=5432
+my_Port=8080
+PORT=3000
+api_port_number=9090
+"#;
+
+        let ports = detect_ports_in_env_file(content, ".env");
+        assert_eq!(ports.len(), 4);
+
+        assert_eq!(ports[0].variable_name, "db_port");
+        assert_eq!(ports[0].port_value, 5432);
+
+        assert_eq!(ports[1].variable_name, "my_Port");
+        assert_eq!(ports[1].port_value, 8080);
+
+        assert_eq!(ports[2].variable_name, "PORT");
+        assert_eq!(ports[2].port_value, 3000);
+
+        assert_eq!(ports[3].variable_name, "api_port_number");
+        assert_eq!(ports[3].port_value, 9090);
+    }
+
+    #[test]
+    fn test_detect_ports_in_env_file_mixed_case_port_keyword() {
+        let content = r#"
+server_Port=4000
+my_PORT_value=5000
+httpPort=6000
+"#;
+
+        let ports = detect_ports_in_env_file(content, ".env");
+        assert_eq!(ports.len(), 3);
+
+        assert_eq!(ports[0].variable_name, "server_Port");
+        assert_eq!(ports[0].port_value, 4000);
+
+        assert_eq!(ports[1].variable_name, "my_PORT_value");
+        assert_eq!(ports[1].port_value, 5000);
+
+        assert_eq!(ports[2].variable_name, "httpPort");
+        assert_eq!(ports[2].port_value, 6000);
+    }
+
+    #[test]
+    fn test_transform_env_content_lowercase_names() {
+        let content = r#"db_port=5432
+my_Port=8080
+PORT=3000
+"#;
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "db_port".to_string(),
+                original_value: 5432,
+                assigned_value: 20001,
+            },
+            PortAssignment {
+                variable_name: "my_Port".to_string(),
+                original_value: 8080,
+                assigned_value: 20002,
+            },
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 20003,
+            },
+        ];
+
+        let result = transform_env_content(content, &assignments);
+
+        assert!(
+            result.content.contains("db_port=20001"),
+            "Expected lowercase var transformed, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("my_Port=20002"),
+            "Expected mixed case var transformed, got: {}",
+            result.content
+        );
+        assert!(
+            result.content.contains("PORT=20003"),
+            "Expected uppercase var transformed, got: {}",
+            result.content
+        );
+        assert_eq!(result.replacements.len(), 3);
+    }
+
+    #[test]
+    fn test_detect_ports_in_env_file_lowercase_url() {
+        let content = r#"
+redis_url=redis://localhost:6379
+database_Url=postgres://localhost:5432/mydb
+"#;
+
+        let ports = detect_ports_in_env_file(content, ".env");
+        assert_eq!(ports.len(), 2);
+
+        assert_eq!(ports[0].variable_name, "redis_url");
+        assert_eq!(ports[0].port_value, 6379);
+
+        assert_eq!(ports[1].variable_name, "database_Url");
+        assert_eq!(ports[1].port_value, 5432);
+    }
+
+    #[test]
+    fn test_transform_env_content_lowercase_url() {
+        let content = r#"redis_url=redis://localhost:6379
+"#;
+
+        let assignments = vec![PortAssignment {
+            variable_name: "redis_url".to_string(),
+            original_value: 6379,
+            assigned_value: 20001,
+        }];
+
+        let result = transform_env_content(content, &assignments);
+
+        assert!(
+            result.content.contains("redis_url=redis://localhost:20001"),
+            "Expected lowercase URL var transformed, got: {}",
+            result.content
+        );
+        assert_eq!(result.replacements.len(), 1);
     }
 }

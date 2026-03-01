@@ -272,29 +272,65 @@ pub fn create_worktree(
     })
 }
 
-/// Remove a worktree by name (prune it)
+/// Remove a worktree by name (prune it).
+/// If `force` is true, locked worktrees will be unlocked before removal.
+/// If `force` is false and the worktree is locked, an error is returned with
+/// a descriptive message including the lock reason if available.
 pub fn remove_worktree(repo_path: String, name: String) -> Result<(), String> {
+    remove_worktree_with_options(repo_path, name, false)
+}
+
+/// Remove a worktree by name with optional force flag.
+/// When `force` is true, locked worktrees are automatically unlocked before removal.
+pub fn remove_worktree_with_options(
+    repo_path: String,
+    name: String,
+    force: bool,
+) -> Result<(), String> {
     let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
 
     let wt = repo
         .find_worktree(&name)
         .map_err(|e| format!("Worktree '{}' not found: {}", name, e))?;
 
-    let is_locked = !matches!(wt.is_locked(), Ok(git2::WorktreeLockStatus::Unlocked));
+    let lock_status = wt.is_locked();
+    let is_locked = !matches!(lock_status, Ok(git2::WorktreeLockStatus::Unlocked));
+
     if is_locked {
-        return Err(format!("Worktree '{}' is locked", name));
+        if force {
+            // Unlock the worktree before removing
+            wt.unlock().map_err(|e| {
+                format!(
+                    "Failed to unlock worktree '{}': {}. You may need to manually remove the lock.",
+                    name, e
+                )
+            })?;
+        } else {
+            // Build a descriptive error message including the lock reason if available
+            let reason_msg = match &lock_status {
+                Ok(git2::WorktreeLockStatus::Locked(Some(reason))) => {
+                    format!(" (reason: {})", reason)
+                }
+                _ => String::new(),
+            };
+            return Err(format!(
+                "Worktree '{}' is locked{}. Use force option to unlock and remove it.",
+                name, reason_msg
+            ));
+        }
     }
 
     // Get the worktree path before pruning
     let wt_path = wt.path().to_path_buf();
 
     // Prune the worktree (removes git metadata)
-    wt.prune(Some(
-        &mut git2::WorktreePruneOptions::new()
-            .valid(true)
-            .working_tree(true),
-    ))
-    .map_err(|e| e.to_string())?;
+    let mut prune_opts = git2::WorktreePruneOptions::new();
+    prune_opts.valid(true).working_tree(true);
+    if force {
+        prune_opts.locked(true);
+    }
+    wt.prune(Some(&mut prune_opts))
+        .map_err(|e| e.to_string())?;
 
     // Remove the directory if it still exists
     if wt_path.exists() {
@@ -491,21 +527,48 @@ pub fn copy_files_to_worktree(
         skipped_files: &mut Vec<String>,
         errors: &mut Vec<String>,
     ) {
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    copy_directory_recursive(
-                        &path,
-                        source,
-                        target,
-                        copied_files,
-                        skipped_files,
-                        errors,
-                    );
-                } else if path.is_file() {
-                    copy_file(&path, source, target, copied_files, skipped_files, errors);
+        match fs::read_dir(dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    match entry {
+                        Ok(e) => {
+                            let path = e.path();
+                            if path.is_dir() {
+                                copy_directory_recursive(
+                                    &path,
+                                    source,
+                                    target,
+                                    copied_files,
+                                    skipped_files,
+                                    errors,
+                                );
+                            } else if path.is_file() {
+                                copy_file(
+                                    &path, source, target, copied_files, skipped_files, errors,
+                                );
+                            } else if path
+                                .symlink_metadata()
+                                .map(|m| m.file_type().is_symlink())
+                                .unwrap_or(false)
+                            {
+                                errors.push(format!(
+                                    "Skipping dangling symlink: {}",
+                                    path.display()
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            errors.push(format!(
+                                "Failed to read entry in {}: {}",
+                                dir.display(),
+                                e
+                            ));
+                        }
+                    }
                 }
+            }
+            Err(e) => {
+                errors.push(format!("Failed to read directory {}: {}", dir.display(), e));
             }
         }
     }
@@ -539,6 +602,15 @@ pub fn copy_files_to_worktree(
                                     &mut skipped_files,
                                     &mut errors,
                                 );
+                            } else if path
+                                .symlink_metadata()
+                                .map(|m| m.file_type().is_symlink())
+                                .unwrap_or(false)
+                            {
+                                errors.push(format!(
+                                    "Skipping dangling symlink: {}",
+                                    path.display()
+                                ));
                             }
                         }
                         Err(e) => {
@@ -1962,6 +2034,198 @@ mod tests {
             cmd.contains("cd 'it'\\''s-a-project'"),
             "Expected escaped single quote in command, got: {}",
             cmd
+        );
+    }
+
+    // === Tests for dangling symlinks (M9) ===
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_files_to_worktree_dangling_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create a valid file
+        fs::write(source_dir.path().join(".env"), "PORT=3000").unwrap();
+
+        // Create a dangling symlink (points to non-existent target)
+        let symlink_path = source_dir.path().join(".env.link");
+        symlink("/nonexistent/target/file", &symlink_path).unwrap();
+
+        let result = copy_files_to_worktree(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string()],
+        );
+
+        assert!(result.is_ok());
+        let copy_result = result.unwrap();
+
+        // The valid file should be copied
+        assert_eq!(copy_result.copied_files.len(), 1);
+        assert!(copy_result.copied_files.contains(&".env".to_string()));
+
+        // The dangling symlink should be reported in errors
+        assert!(
+            !copy_result.errors.is_empty(),
+            "Expected an error for the dangling symlink"
+        );
+        assert!(
+            copy_result.errors.iter().any(|e| e.contains("dangling symlink")),
+            "Expected 'dangling symlink' error, got: {:?}",
+            copy_result.errors
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_directory_recursive_dangling_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create a directory with a mix of files and dangling symlinks
+        let sub = source_dir.path().join("config");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("settings.json"), "{}").unwrap();
+
+        // Create a dangling symlink inside the directory
+        symlink("/nonexistent/target", sub.join("broken_link")).unwrap();
+
+        let result = copy_files_to_worktree(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["config".to_string()],
+        );
+
+        assert!(result.is_ok());
+        let copy_result = result.unwrap();
+
+        // The valid file should be copied
+        assert_eq!(copy_result.copied_files.len(), 1);
+
+        // The dangling symlink should be reported
+        assert!(
+            copy_result.errors.iter().any(|e| e.contains("dangling symlink")),
+            "Expected 'dangling symlink' error, got: {:?}",
+            copy_result.errors
+        );
+    }
+
+    // === Tests for locked worktree handling (H6) ===
+
+    #[test]
+    fn test_remove_locked_worktree_returns_descriptive_error() {
+        let dir = tempdir().unwrap();
+        let repo = create_repo_with_commit(dir.path());
+
+        // Create a worktree
+        let wt = create_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "locked-wt".to_string(),
+            Some("locked-wt".to_string()),
+            true,
+        )
+        .unwrap();
+
+        // Lock the worktree
+        let git_wt = repo.find_worktree("locked-wt").unwrap();
+        git_wt.lock(Some("test lock reason")).unwrap();
+
+        // Attempt to remove without force should fail with descriptive error
+        let result = remove_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "locked-wt".to_string(),
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("is locked"),
+            "Expected 'is locked' in error, got: {}",
+            err
+        );
+        assert!(
+            err.contains("force"),
+            "Expected hint about force option, got: {}",
+            err
+        );
+
+        // Worktree should still exist
+        assert!(Path::new(&wt.path).exists());
+    }
+
+    #[test]
+    fn test_remove_locked_worktree_with_force() {
+        let dir = tempdir().unwrap();
+        let repo = create_repo_with_commit(dir.path());
+
+        // Create a worktree
+        let wt = create_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "force-remove-wt".to_string(),
+            Some("force-remove-wt".to_string()),
+            true,
+        )
+        .unwrap();
+
+        // Lock the worktree
+        let git_wt = repo.find_worktree("force-remove-wt").unwrap();
+        git_wt.lock(Some("test reason")).unwrap();
+
+        // Force remove should succeed
+        let result = remove_worktree_with_options(
+            dir.path().to_string_lossy().to_string(),
+            "force-remove-wt".to_string(),
+            true,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Force remove of locked worktree should succeed, got: {:?}",
+            result.err()
+        );
+
+        // Worktree directory should be removed
+        assert!(!Path::new(&wt.path).exists());
+
+        // Worktree should no longer be in the list
+        let list = list_worktrees(dir.path().to_string_lossy().to_string()).unwrap();
+        assert_eq!(list.len(), 1, "Only main worktree should remain");
+    }
+
+    #[test]
+    fn test_remove_locked_worktree_error_includes_reason() {
+        let dir = tempdir().unwrap();
+        let repo = create_repo_with_commit(dir.path());
+
+        // Create a worktree
+        create_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "reason-wt".to_string(),
+            Some("reason-wt".to_string()),
+            true,
+        )
+        .unwrap();
+
+        // Lock with a reason
+        let git_wt = repo.find_worktree("reason-wt").unwrap();
+        git_wt.lock(Some("important work in progress")).unwrap();
+
+        let result = remove_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "reason-wt".to_string(),
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("important work in progress"),
+            "Expected lock reason in error message, got: {}",
+            err
         );
     }
 }
