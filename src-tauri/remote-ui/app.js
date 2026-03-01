@@ -1,16 +1,18 @@
-// kiri remote - PWA application logic (WebSocket-only, optimistic UI)
+// kiri remote - PWA application logic (WebSocket-only, diff-based updates)
 
 // ── State ─────────────────────────────────────────────
 var ws = null;
 var reconnectTimer = null;
 var lastStatus = null;
+var bottomSheetOpen = false;
 
 // ── DOM elements ──────────────────────────────────────
 var statusDot = document.getElementById('status-dot');
 var statusText = document.getElementById('status-text');
-var openProjectsEl = document.getElementById('open-projects');
+var projectsEl = document.getElementById('projects');
 var recentProjectsEl = document.getElementById('recent-projects');
-var terminalsEl = document.getElementById('terminals');
+var bottomSheetBackdrop = document.getElementById('bottom-sheet-backdrop');
+var bottomSheet = document.getElementById('bottom-sheet');
 
 // ── Initialize ────────────────────────────────────────
 function init() {
@@ -74,52 +76,70 @@ function setStatus(state, text) {
   statusText.textContent = text;
 }
 
-// ── Render ────────────────────────────────────────────
+// ── Render (diff-based, no innerHTML replacement) ─────
 function renderDashboard(data) {
-  renderOpenProjects(data.openProjects || []);
-  renderTerminals(data.terminals || []);
-  renderRecentProjects(data.recentProjects || []);
+  renderProjects(data.openProjects || [], data.terminals || []);
+  if (bottomSheetOpen) {
+    renderRecentProjects(data.recentProjects || []);
+  }
 }
 
-function renderOpenProjects(projects) {
-  if (projects.length === 0) {
-    openProjectsEl.innerHTML = '<p class="empty-state">No open projects</p>';
+function renderProjects(projects, terminals) {
+  if (projects.length === 0 && terminals.length === 0) {
+    syncChildren(projectsEl, [
+      { key: '__empty', html: '<p class="empty-state">No open projects</p>' },
+    ]);
     return;
   }
 
-  openProjectsEl.innerHTML = projects
-    .map(function (p) {
-      return (
-        '<div class="project-card open">' +
-        '<div class="card-header">' +
-        '<span class="project-name">' +
-        escapeHtml(p.name) +
-        '</span>' +
-        (p.branch ? '<span class="branch-badge">' + escapeHtml(p.branch) + '</span>' : '') +
-        '</div>' +
-        '<div class="card-path">' +
-        escapeHtml(p.path) +
-        '</div>' +
-        '<div class="card-actions">' +
-        '<button class="btn btn-danger btn-sm" onclick="closeProject(\'' +
-        escapeAttr(p.path) +
-        '\')">Close</button>' +
-        '</div>' +
-        '</div>'
-      );
-    })
-    .join('');
-}
+  var items = [];
 
-function renderTerminals(terminals) {
-  if (terminals.length === 0) {
-    terminalsEl.innerHTML = '<p class="empty-state">No terminals</p>';
-    return;
+  projects.forEach(function (p) {
+    // Find terminals associated with this project (by path prefix matching in cwd if available)
+    var projectTerminals = [];
+    var remainingTerminals = [];
+    terminals.forEach(function (t) {
+      if (t.cwd && t.cwd.indexOf(p.path) === 0) {
+        projectTerminals.push(t);
+      } else {
+        remainingTerminals.push(t);
+      }
+    });
+    terminals = remainingTerminals;
+
+    items.push({
+      key: 'project-' + p.path,
+      html: buildProjectCard(p, projectTerminals),
+    });
+  });
+
+  // Remaining terminals (not associated with any project)
+  if (terminals.length > 0) {
+    items.push({
+      key: '__terminals',
+      html: buildTerminalsCard(terminals),
+    });
   }
 
-  terminalsEl.innerHTML = terminals
-    .map(function (t) {
-      return (
+  syncChildren(projectsEl, items);
+}
+
+function buildProjectCard(p, terminals) {
+  var html =
+    '<div class="card-header">' +
+    '<span class="project-name">' +
+    escapeHtml(p.name) +
+    '</span>' +
+    (p.branch ? '<span class="branch-badge">' + escapeHtml(p.branch) + '</span>' : '') +
+    '</div>' +
+    '<div class="card-path">' +
+    escapeHtml(shortenPath(p.path)) +
+    '</div>';
+
+  if (terminals.length > 0) {
+    html += '<div class="card-terminals">';
+    terminals.forEach(function (t) {
+      html +=
         '<div class="terminal-item">' +
         '<span class="terminal-dot ' +
         (t.isAlive ? 'active' : 'idle') +
@@ -130,22 +150,57 @@ function renderTerminals(terminals) {
         '<span class="terminal-id">#' +
         t.id +
         '</span>' +
-        '</div>'
-      );
-    })
-    .join('');
+        '</div>';
+    });
+    html += '</div>';
+  }
+
+  html +=
+    '<div class="card-actions">' +
+    '<button class="btn btn-danger btn-sm" onclick="closeProject(\'' +
+    escapeAttr(p.path) +
+    '\')">Close</button>' +
+    '</div>';
+
+  return html;
+}
+
+function buildTerminalsCard(terminals) {
+  var html =
+    '<div class="card-header">' +
+    '<span class="project-name terminals-label">Terminals</span>' +
+    '</div>' +
+    '<div class="card-terminals">';
+  terminals.forEach(function (t) {
+    html +=
+      '<div class="terminal-item">' +
+      '<span class="terminal-dot ' +
+      (t.isAlive ? 'active' : 'idle') +
+      '"></span>' +
+      '<span class="terminal-process">' +
+      (t.processName ? escapeHtml(t.processName) : 'idle') +
+      '</span>' +
+      '<span class="terminal-id">#' +
+      t.id +
+      '</span>' +
+      '</div>';
+  });
+  html += '</div>';
+  return html;
 }
 
 function renderRecentProjects(projects) {
   if (projects.length === 0) {
-    recentProjectsEl.innerHTML = '<p class="empty-state">No recent projects</p>';
+    syncChildren(recentProjectsEl, [
+      { key: '__empty', html: '<p class="empty-state">No recent projects</p>' },
+    ]);
     return;
   }
 
-  recentProjectsEl.innerHTML = projects
-    .map(function (p) {
-      return (
-        '<div class="project-card recent">' +
+  var items = projects.map(function (p) {
+    return {
+      key: 'recent-' + p.path,
+      html:
         '<div class="card-header">' +
         '<span class="project-name">' +
         escapeHtml(p.name) +
@@ -153,17 +208,93 @@ function renderRecentProjects(projects) {
         (p.gitBranch ? '<span class="branch-badge">' + escapeHtml(p.gitBranch) + '</span>' : '') +
         '</div>' +
         '<div class="card-meta">' +
+        '<span>' +
+        escapeHtml(shortenPath(p.path)) +
+        '</span>' +
+        '<span class="meta-dot">·</span>' +
+        '<span>' +
         timeAgo(p.lastOpened) +
+        '</span>' +
         '</div>' +
         '<div class="card-actions">' +
         '<button class="btn btn-primary btn-sm" onclick="openProject(\'' +
         escapeAttr(p.path) +
         '\')">Open</button>' +
-        '</div>' +
-        '</div>'
-      );
-    })
-    .join('');
+        '</div>',
+    };
+  });
+
+  syncChildren(recentProjectsEl, items);
+}
+
+// ── DOM diff helper (keyed reconciliation) ────────────
+// Prevents full innerHTML replacement to avoid animation flickering.
+function syncChildren(container, items) {
+  var existingMap = {};
+  var existingNodes = [];
+  for (var i = 0; i < container.children.length; i++) {
+    var child = container.children[i];
+    var key = child.getAttribute('data-key');
+    if (key) {
+      existingMap[key] = child;
+    }
+    existingNodes.push(child);
+  }
+
+  // Build new node list
+  var newKeys = {};
+  var newNodes = [];
+  items.forEach(function (item) {
+    newKeys[item.key] = true;
+    if (existingMap[item.key]) {
+      // Update content if changed
+      var el = existingMap[item.key];
+      if (el.innerHTML !== item.html) {
+        el.innerHTML = item.html;
+      }
+      newNodes.push(el);
+    } else {
+      // Create new node
+      var div = document.createElement('div');
+      div.setAttribute('data-key', item.key);
+      div.className = item.key === '__empty' || item.key === '__terminals' ? '' : 'project-card';
+      if (item.key === '__terminals') div.className = 'project-card terminals-only';
+      div.innerHTML = item.html;
+      newNodes.push(div);
+    }
+  });
+
+  // Remove nodes that are no longer needed
+  for (var k = 0; k < existingNodes.length; k++) {
+    var node = existingNodes[k];
+    var nodeKey = node.getAttribute('data-key');
+    if (!nodeKey || !newKeys[nodeKey]) {
+      container.removeChild(node);
+    }
+  }
+
+  // Append/reorder nodes
+  for (var j = 0; j < newNodes.length; j++) {
+    if (container.children[j] !== newNodes[j]) {
+      container.insertBefore(newNodes[j], container.children[j] || null);
+    }
+  }
+}
+
+// ── Bottom Sheet ──────────────────────────────────────
+function openBottomSheet() {
+  bottomSheetOpen = true;
+  if (lastStatus) {
+    renderRecentProjects(lastStatus.recentProjects || []);
+  }
+  bottomSheetBackdrop.classList.add('visible');
+  bottomSheet.classList.add('visible');
+}
+
+function closeBottomSheet() {
+  bottomSheetOpen = false;
+  bottomSheetBackdrop.classList.remove('visible');
+  bottomSheet.classList.remove('visible');
 }
 
 // ── Actions (Optimistic UI) ──────────────────────────
@@ -186,6 +317,7 @@ function openProject(path) {
       renderDashboard(lastStatus);
     }
   }
+  closeBottomSheet();
   sendAction({ action: 'openProject', path: path });
 }
 
@@ -225,6 +357,19 @@ function escapeHtml(str) {
 
 function escapeAttr(str) {
   return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
+}
+
+function shortenPath(path) {
+  var home = '/Users/';
+  var idx = path.indexOf(home);
+  if (idx === 0) {
+    var rest = path.substring(home.length);
+    var slashIdx = rest.indexOf('/');
+    if (slashIdx !== -1) {
+      return '~' + rest.substring(slashIdx);
+    }
+  }
+  return path;
 }
 
 function timeAgo(timestamp) {

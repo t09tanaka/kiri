@@ -24,26 +24,55 @@
       <main id="main-content">
         <div id="dashboard-screen" class="screen">
           <section class="section">
-            <h2 class="section-title">Open Projects</h2>
-            <div id="open-projects" class="project-list">
+            <div class="section-header">
+              <h2 class="section-title">Projects</h2>
+              <button
+                id="open-project-btn"
+                class="btn btn-open-project"
+                onclick="openBottomSheet()"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Open Project
+              </button>
+            </div>
+            <div id="projects" class="project-list">
               <p class="empty-state">No open projects</p>
-            </div>
-          </section>
-          <section class="section">
-            <h2 class="section-title">Terminals</h2>
-            <div id="terminals" class="terminal-list">
-              <p class="empty-state">No terminals</p>
-            </div>
-          </section>
-          <section class="section">
-            <h2 class="section-title">Recent Projects</h2>
-            <div id="recent-projects" class="project-list">
-              <p class="empty-state">No recent projects</p>
             </div>
           </section>
         </div>
       </main>
     </div>
+
+    <!-- Bottom Sheet for Recent Projects -->
+    <div
+      id="bottom-sheet-backdrop"
+      class="bottom-sheet-backdrop"
+      onclick="closeBottomSheet()"
+    ></div>
+    <div id="bottom-sheet" class="bottom-sheet">
+      <div class="bottom-sheet-handle-area" onclick="closeBottomSheet()">
+        <div class="bottom-sheet-handle"></div>
+      </div>
+      <div class="bottom-sheet-header">
+        <h2 class="bottom-sheet-title">Recent Projects</h2>
+      </div>
+      <div id="recent-projects" class="bottom-sheet-content">
+        <p class="empty-state">No recent projects</p>
+      </div>
+    </div>
+
     <script src="app.js"></script>
   </body>
 </html>

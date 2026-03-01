@@ -147,30 +147,22 @@ body {
 /* ── Screens ────────────────────────────────────────── */
 
 .screen {
-  animation: fadeIn 0.3s ease;
+  /* No animation to prevent flicker */
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* ── Dashboard ──────────────────────────────────────── */
+/* ── Section ───────────────────────────────────────── */
 
 .section {
-  padding: 20px 16px 0;
+  padding: 20px 16px 20px;
   padding-left: calc(16px + var(--safe-area-left));
   padding-right: calc(16px + var(--safe-area-right));
 }
 
-.section:last-child {
-  padding-bottom: 20px;
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
 }
 
 .section-title {
@@ -179,7 +171,6 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
-  margin-bottom: 12px;
 }
 
 .empty-state {
@@ -187,6 +178,34 @@ body {
   color: var(--text-muted);
   font-size: 14px;
   padding: 24px 16px;
+}
+
+/* ── Open Project button ───────────────────────────── */
+
+.btn-open-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent-color);
+  background: transparent;
+  border: 1px solid var(--border-glow);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.btn-open-project:active {
+  background: rgba(125, 211, 252, 0.08);
+  transform: scale(0.97);
+}
+
+.btn-open-project svg {
+  flex-shrink: 0;
 }
 
 /* ── Project cards ──────────────────────────────────── */
@@ -207,7 +226,7 @@ body {
   transition:
     border-color var(--transition-fast),
     background var(--transition-fast);
-  animation: cardFadeIn 0.3s ease;
+  /* No animation - prevents flicker on WS updates */
 }
 
 .project-card:active {
@@ -215,15 +234,9 @@ body {
   border-color: var(--border-glow);
 }
 
-@keyframes cardFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.project-card.terminals-only {
+  border-style: dashed;
+  border-color: var(--border-subtle);
 }
 
 .card-header {
@@ -241,6 +254,11 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 1;
+}
+
+.terminals-label {
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 .branch-badge {
@@ -267,9 +285,19 @@ body {
 }
 
 .card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   color: var(--text-muted);
   margin-bottom: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta-dot {
+  opacity: 0.5;
 }
 
 .card-actions {
@@ -278,28 +306,30 @@ body {
   justify-content: flex-end;
 }
 
-/* ── Terminal list ──────────────────────────────────── */
+/* ── Terminals inside project card ─────────────────── */
 
-.terminal-list {
+.card-terminals {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+  margin: 8px 0 10px;
+  padding: 8px;
+  background: rgba(13, 17, 23, 0.5);
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(240, 246, 252, 0.05);
 }
 
 .terminal-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  animation: cardFadeIn 0.3s ease;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 4px;
 }
 
 .terminal-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -314,8 +344,8 @@ body {
 }
 
 .terminal-process {
-  font-size: 14px;
-  color: var(--text-primary);
+  font-size: 13px;
+  color: var(--text-secondary);
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -323,7 +353,7 @@ body {
 }
 
 .terminal-id {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-muted);
   flex-shrink: 0;
 }
@@ -371,61 +401,89 @@ body {
   font-size: 13px;
 }
 
-/* ── Input fields ───────────────────────────────────── */
+/* ── Bottom Sheet ──────────────────────────────────── */
 
-input[type='password'],
-input[type='text'] {
-  width: 100%;
-  padding: 12px 14px;
-  font-size: 15px;
-  font-family: inherit;
-  color: var(--text-primary);
-  background: var(--bg-input);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  outline: none;
-  transition:
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
-  -webkit-appearance: none;
-  appearance: none;
-}
-
-input[type='password']:focus,
-input[type='text']:focus {
-  border-color: var(--accent-color);
-  box-shadow: 0 0 0 3px rgba(125, 211, 252, 0.15);
-}
-
-input[type='password']::placeholder,
-input[type='text']::placeholder {
-  color: var(--text-muted);
-}
-
-/* ── Toast ──────────────────────────────────────────── */
-
-.toast {
+.bottom-sheet-backdrop {
   position: fixed;
-  bottom: calc(24px + var(--safe-area-bottom));
-  left: 50%;
-  transform: translateX(-50%) translateY(100px);
-  padding: 12px 20px;
-  background: var(--bg-glass);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid var(--border-glow);
-  border-radius: var(--radius-md);
-  font-size: 14px;
-  color: var(--text-primary);
+  inset: 0;
   z-index: 200;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   opacity: 0;
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
   pointer-events: none;
+  transition: opacity 0.3s ease;
 }
 
-.toast.visible {
-  transform: translateX(-50%) translateY(0);
+.bottom-sheet-backdrop.visible {
   opacity: 1;
+  pointer-events: auto;
+}
+
+.bottom-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 210;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-glow);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  padding-bottom: var(--safe-area-bottom);
+}
+
+.bottom-sheet.visible {
+  transform: translateY(0);
+}
+
+.bottom-sheet-handle-area {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 6px;
+  cursor: pointer;
+}
+
+.bottom-sheet-handle {
+  width: 36px;
+  height: 4px;
+  background: var(--text-muted);
+  border-radius: 2px;
+  opacity: 0.4;
+}
+
+.bottom-sheet-header {
+  display: flex;
+  align-items: center;
+  padding: 4px 20px 12px;
+  padding-left: calc(20px + var(--safe-area-left));
+  padding-right: calc(20px + var(--safe-area-right));
+}
+
+.bottom-sheet-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.bottom-sheet-content {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 16px 16px;
+  padding-left: calc(16px + var(--safe-area-left));
+  padding-right: calc(16px + var(--safe-area-right));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bottom-sheet-content .project-card {
+  background: var(--bg-card);
 }
 
 /* ── Scrollbar (WebKit) ─────────────────────────────── */
