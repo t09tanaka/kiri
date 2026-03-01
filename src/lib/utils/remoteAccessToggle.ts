@@ -39,28 +39,28 @@ export async function toggleRemoteAccess(
       await saveRemoteAccessSettings(settings);
       return null;
     } else {
-      // Check if cloudflared is available before starting
-      const cloudflaredAvailable = await remoteAccessService.isCloudflaredAvailable();
-      if (!cloudflaredAvailable) {
-        opts.onError('cloudflared is not installed. Run: brew install cloudflared');
-        return null;
-      }
       opts.onError('');
 
-      // Start server, then tunnel
+      // Start server unconditionally (works on LAN without cloudflared)
       const authToken = await remoteAccessService.startServer(settings.port);
       remoteAccessStore.setServerRunning(true);
       remoteAccessStore.setPort(settings.port);
       remoteAccessStore.setAuthToken(authToken);
       settings.enabled = true;
 
+      // Conditionally start tunnel if cloudflared is available
       let tunnelUrl: string | null = null;
-      try {
-        const token = settings.tunnelToken?.trim() || null;
-        tunnelUrl = await remoteAccessService.startTunnel(token, settings.port);
-        remoteAccessStore.setTunnelRunning(true, tunnelUrl ?? undefined);
-      } catch {
-        // Tunnel failed - server stays running
+      const cloudflaredAvailable = await remoteAccessService.isCloudflaredAvailable();
+      if (cloudflaredAvailable) {
+        try {
+          const token = settings.tunnelToken?.trim() || null;
+          tunnelUrl = await remoteAccessService.startTunnel(token, settings.port);
+          remoteAccessStore.setTunnelRunning(true, tunnelUrl ?? undefined);
+        } catch {
+          // Tunnel failed - server stays running
+          remoteAccessStore.setTunnelRunning(false);
+        }
+      } else {
         remoteAccessStore.setTunnelRunning(false);
       }
 

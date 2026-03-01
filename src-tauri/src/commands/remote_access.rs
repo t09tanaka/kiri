@@ -228,7 +228,10 @@ async fn handle_status_ws(mut socket: WebSocket, state: AppState) {
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                let status = collect_full_status(&state);
+                let state_clone = state.clone();
+                let status = tokio::task::spawn_blocking(move || {
+                    collect_full_status(&state_clone)
+                }).await.ok().flatten();
                 match status {
                     Some(data) => {
                         let json = serde_json::to_string(&data).unwrap_or_default();
@@ -273,6 +276,18 @@ async fn handle_client_action(state: &AppState, action: ClientAction) {
                 Ok(p) => p.to_string_lossy().into_owned(),
                 Err(_) => return, // path does not exist — ignore
             };
+
+            // Defense-in-depth: restrict to paths under $HOME
+            if let Some(home) = dirs::home_dir() {
+                let home_str = home.to_string_lossy();
+                if !canonical.starts_with(home_str.as_ref()) {
+                    log::warn!(
+                        "remote_access: rejected openProject outside $HOME: {}",
+                        canonical
+                    );
+                    return;
+                }
+            }
 
             use tauri::Manager;
             let registry = app.state::<crate::commands::WindowRegistryState>();
