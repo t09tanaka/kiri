@@ -376,8 +376,10 @@
       // Main window: signal non-main windows that app is quitting
       if (isMainWindow) {
         await eventService.emit('app-quitting', {});
-        // Brief delay to let non-main windows receive the signal
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // Delay to let non-main windows receive and process the quit signal.
+        // 300ms provides enough time for event propagation and handler execution
+        // across multiple windows, which 100ms was sometimes insufficient for.
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
       // For worktree windows, automatically delete the worktree (skip when app is quitting)

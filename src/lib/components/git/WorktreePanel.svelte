@@ -91,6 +91,7 @@
   let isDetectingPorts = $state(false);
   let selectedPorts = $state<Map<string, boolean>>(new Map());
   let portAssignments = $state<PortAssignment[]>([]);
+  let portOverflowWarnings = $state<string[]>([]);
   let newTargetFile = $state('');
 
   // Compose isolation state
@@ -133,27 +134,27 @@
   const worktrees = $derived($worktreeStore.worktrees);
 
   // Check if current window is a worktree
-  const isCurrentWindowWorktree = $derived(() => currentContext?.is_worktree ?? false);
+  const isCurrentWindowWorktree = $derived(currentContext?.is_worktree ?? false);
 
   // Get the main worktree
-  const mainWorktree = $derived(() => worktrees.find((w) => w.is_main));
+  const mainWorktree = $derived.by(() => worktrees.find((w) => w.is_main));
 
   // Get linked worktrees
-  const linkedWorktrees = $derived(() => worktrees.filter((w) => !w.is_main && w.is_valid));
+  const linkedWorktrees = $derived.by(() => worktrees.filter((w) => !w.is_main && w.is_valid));
 
   // Get current branch name (HEAD)
-  const currentBranch = $derived(() => {
+  const currentBranch = $derived.by(() => {
     const headBranch = branches.find((b) => b.is_head);
     return headBranch?.name ?? null;
   });
 
   // Get branches that are already used by worktrees
-  const usedBranches = $derived(() => {
+  const usedBranches = $derived.by(() => {
     return new Set(worktrees.filter((w) => !w.is_main && w.branch).map((w) => w.branch!));
   });
 
   // Validate branch selection
-  const branchValidationError = $derived(() => {
+  const branchValidationError = $derived.by(() => {
     const branchName = createName.trim();
     if (!branchName) return null;
 
@@ -161,13 +162,11 @@
     const gitError = validateBranchName(branchName);
     if (gitError) return gitError;
 
-    const current = currentBranch();
-    if (current && branchName === current) {
+    if (currentBranch && branchName === currentBranch) {
       return `Branch '${branchName}' is currently checked out. Cannot create a worktree for the current branch.`;
     }
 
-    const used = usedBranches();
-    if (used.has(branchName)) {
+    if (usedBranches.has(branchName)) {
       const wt = worktrees.find((w) => w.branch === branchName && !w.is_main);
       return `Branch '${branchName}' is already checked out in worktree '${wt?.name ?? 'unknown'}'.`;
     }
@@ -183,14 +182,14 @@
   });
 
   // Filter branches for dropdown (exclude current and in-use)
-  const availableBranches = $derived(() => {
-    const current = currentBranch();
-    const used = usedBranches();
-    return branches.filter((b) => !b.is_head && b.name !== current && !used.has(b.name));
+  const availableBranches = $derived.by(() => {
+    return branches.filter(
+      (b) => !b.is_head && b.name !== currentBranch && !usedBranches.has(b.name)
+    );
   });
 
   // Compute worktree name (with '/' replaced by '-')
-  const worktreeName = $derived(() => {
+  const worktreeName = $derived.by(() => {
     const name = createName.trim();
     if (!name) return '';
     return branchToWorktreeName(name);
@@ -198,20 +197,20 @@
 
   // Rebuild compose replacements when worktree name changes
   $effect(() => {
-    void worktreeName();
+    // Track worktreeName to rebuild compose replacements when it changes
+    void worktreeName;
     if (detectedComposeFiles && composeConfig?.enabled) {
       rebuildComposeReplacements();
     }
   });
 
   // Compute worktree path preview
-  const pathPreview = $derived(() => {
-    const wtName = worktreeName();
-    if (!wtName || !projectPath) return '';
+  const pathPreview = $derived.by(() => {
+    if (!worktreeName || !projectPath) return '';
     const parts = projectPath.split('/');
     const repoName = parts[parts.length - 1] || parts[parts.length - 2] || 'repo';
     const parentPath = parts.slice(0, -1).join('/');
-    return `${parentPath}/${repoName}-${wtName}`;
+    return `${parentPath}/${repoName}-${worktreeName}`;
   });
 
   onMount(async () => {
@@ -445,12 +444,14 @@
 
     if (portsToAllocate.length === 0) {
       portAssignments = [];
+      portOverflowWarnings = [];
       return;
     }
 
     // Allocate ports using offset strategy
     const result = portIsolationService.allocatePortsWithOffset(portsToAllocate, portConfig);
     portAssignments = result.assignments;
+    portOverflowWarnings = result.overflowWarnings;
     if (result.overflowWarnings.length > 0) {
       console.warn('Port overflow warnings:', result.overflowWarnings);
     }
@@ -579,11 +580,16 @@
   }
 
   function getPortsTooltip(): string {
-    if (portAssignments.length === 0) return 'No ports to isolate';
+    if (portAssignments.length === 0 && portOverflowWarnings.length === 0)
+      return 'No ports to isolate';
     const lines = portAssignments.map(
       (a) => `  ${a.variable_name}: ${a.original_value} → ${a.assigned_value}`
     );
-    return `Port isolation:\n${lines.join('\n')}`;
+    let tooltip = `Port isolation:\n${lines.join('\n')}`;
+    if (portOverflowWarnings.length > 0) {
+      tooltip += `\n\n⚠ Overflow:\n${portOverflowWarnings.map((w) => `  ${w}`).join('\n')}`;
+    }
+    return tooltip;
   }
 
   function togglePortIsolation() {
@@ -710,14 +716,13 @@
       composeReplacements = [];
       return;
     }
-    const wtName = worktreeName();
-    if (!wtName) {
+    if (!worktreeName) {
       composeReplacements = [];
       return;
     }
     composeReplacements = composeIsolationService.buildReplacements(
       detectedComposeFiles,
-      wtName,
+      worktreeName,
       composeConfig.disabledFiles ?? []
     );
   }
@@ -1175,6 +1180,10 @@
       }
 
       // Step 3: Run initialization commands
+      // TODO: Cancel currently does not interrupt a running init command process.
+      // This requires backend changes to support process termination (e.g. tracking
+      // child process PIDs in Rust and sending SIGTERM on cancel). For now, cancel
+      // only takes effect between commands, not during a running command.
       for (let i = 0; i < effectiveCommands.length; i++) {
         const cmd = effectiveCommands[i];
         if (creationCancelled) {
@@ -1424,20 +1433,20 @@
         <!-- Worktree Tree View -->
         <div class="worktree-tree">
           <!-- Main repository (parent) -->
-          {#if mainWorktree()}
-            {@const main = mainWorktree()}
-            <div class="tree-item tree-parent" class:is-current={!isCurrentWindowWorktree()}>
+          {#if mainWorktree}
+            {@const main = mainWorktree}
+            <div class="tree-item tree-parent" class:is-current={!isCurrentWindowWorktree}>
               <span class="tree-indicator"></span>
               <span class="tree-branch">{main?.branch ?? 'detached'}</span>
-              {#if !isCurrentWindowWorktree()}
+              {#if !isCurrentWindowWorktree}
                 <span class="tree-label label-current">CURRENT</span>
               {/if}
             </div>
           {/if}
 
           <!-- Linked worktrees (children) -->
-          {#each linkedWorktrees() as wt, i (wt.path)}
-            {@const isLast = i === linkedWorktrees().length - 1}
+          {#each linkedWorktrees as wt, i (wt.path)}
+            {@const isLast = i === linkedWorktrees.length - 1}
             <button
               type="button"
               class="tree-item tree-child"
@@ -1564,7 +1573,7 @@
                   class="branch-select-btn"
                   title="Select existing branch"
                   onclick={() => (showBranchDropdown = true)}
-                  disabled={availableBranches().length === 0}
+                  disabled={availableBranches.length === 0}
                 >
                   <svg
                     width="14"
@@ -1584,13 +1593,13 @@
               {#if createName.trim()}
                 <div class="path-preview">
                   <span class="preview-label">Path:</span>
-                  <span class="preview-path">{pathPreview()}</span>
+                  <span class="preview-path">{pathPreview}</span>
                 </div>
               {/if}
             </div>
 
-            {#if branchValidationError()}
-              <div class="form-error form-warning">{branchValidationError()}</div>
+            {#if branchValidationError}
+              <div class="form-error form-warning">{branchValidationError}</div>
             {/if}
 
             {#if createError}
@@ -1602,7 +1611,7 @@
                 type="button"
                 class="btn btn-primary"
                 onclick={() => handleCreate()}
-                disabled={!createName.trim() || isCreating || !!branchValidationError()}
+                disabled={!createName.trim() || isCreating || !!branchValidationError}
               >
                 {#if isCreating}
                   <Spinner size="sm" /> Creating...
@@ -1775,7 +1784,7 @@
         </button>
       </div>
       <div class="branch-modal-body">
-        {#each availableBranches() as b (b.name)}
+        {#each availableBranches as b (b.name)}
           <button type="button" class="branch-item" onclick={() => handleSelectBranch(b.name)}>
             <svg
               class="branch-icon-small"
@@ -1797,7 +1806,7 @@
             {/if}
           </button>
         {/each}
-        {#if availableBranches().length === 0}
+        {#if availableBranches.length === 0}
           <div class="empty-state">No available branches</div>
         {/if}
       </div>
@@ -2093,6 +2102,13 @@
               {#if getSelectedPortCount() > 0}
                 <div class="port-summary">
                   {getSelectedPortCount()} port{getSelectedPortCount() !== 1 ? 's' : ''} will be transformed
+                </div>
+              {/if}
+              {#if portOverflowWarnings.length > 0}
+                <div class="port-overflow-warnings">
+                  {#each portOverflowWarnings as warning (warning)}
+                    <div class="port-overflow-warning">{warning}</div>
+                  {/each}
                 </div>
               {/if}
             {:else}
@@ -3789,6 +3805,20 @@
     font-size: 11px;
     color: var(--accent-color);
     padding: var(--space-2) 0;
+  }
+
+  .port-overflow-warnings {
+    margin-top: var(--space-2);
+  }
+
+  .port-overflow-warning {
+    font-size: 11px;
+    color: var(--accent3-color);
+    background: rgba(252, 211, 77, 0.08);
+    border: 1px solid rgba(252, 211, 77, 0.2);
+    border-radius: var(--radius-sm);
+    padding: var(--space-1) var(--space-2);
+    margin-bottom: var(--space-1);
   }
 
   .port-empty {
