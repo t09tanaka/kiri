@@ -52,7 +52,7 @@ fn fuzzy_match(query: &str, target: &str) -> Option<i32> {
                 }
             }
 
-            if i == 0 || target_chars.get(i.saturating_sub(1)).map_or(false, |c| {
+            if i == 0 || target_chars.get(i.saturating_sub(1)).is_some_and(|c| {
                 *c == '/' || *c == '\\' || *c == '_' || *c == '-' || *c == '.'
             }) {
                 score += 10;

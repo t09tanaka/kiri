@@ -206,17 +206,15 @@ pub fn create_worktree(
 
     // Check if branch is already used by another worktree
     let worktrees = repo.worktrees().map_err(|e| e.to_string())?;
-    for wt_name in worktrees.iter() {
-        if let Some(wt_name) = wt_name {
-            if let Ok(wt) = repo.find_worktree(wt_name) {
-                let wt_branch = get_worktree_branch(wt.path());
-                if let Some(ref wt_br) = wt_branch {
-                    if wt_br == &branch_name {
-                        return Err(format!(
-                            "Branch '{}' is already checked out in worktree '{}'",
-                            branch_name, wt_name
-                        ));
-                    }
+    for wt_name in worktrees.iter().flatten() {
+        if let Ok(wt) = repo.find_worktree(wt_name) {
+            let wt_branch = get_worktree_branch(wt.path());
+            if let Some(ref wt_br) = wt_branch {
+                if wt_br == &branch_name {
+                    return Err(format!(
+                        "Branch '{}' is already checked out in worktree '{}'",
+                        branch_name, wt_name
+                    ));
                 }
             }
         }
@@ -255,9 +253,13 @@ pub fn create_worktree(
         .name()
         .ok_or("Invalid branch reference name")?;
 
-    repo.worktree(&name, &wt_path, Some(&git2::WorktreeAddOptions::new().reference(
-        Some(&repo.find_reference(ref_name).map_err(|e| e.to_string())?),
-    )))
+    repo.worktree(
+        &name,
+        &wt_path,
+        Some(git2::WorktreeAddOptions::new().reference(Some(
+            &repo.find_reference(ref_name).map_err(|e| e.to_string())?,
+        ))),
+    )
     .map_err(|e| e.to_string())?;
 
     let wt_branch = get_worktree_branch(&wt_path);
