@@ -808,6 +808,7 @@ body {
 
 .bottom-sheet-content .project-card {
   background: var(--bg-card);
+  flex-shrink: 0;
 }
 
 /* ── Scrollbar (WebKit) ──────────────────────────────── */
