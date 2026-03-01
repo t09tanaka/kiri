@@ -12,6 +12,8 @@
   import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
   import CommitHistoryModal from '@/lib/components/git/CommitHistoryModal.svelte';
   import WorktreePanel from '@/lib/components/git/WorktreePanel.svelte';
+  import RemoteAccessSettings from '@/lib/components/settings/RemoteAccessSettings.svelte';
+  import QrCodeModal from '@/lib/components/remote/QrCodeModal.svelte';
   import EditorModal from '@/lib/components/editor/EditorModal.svelte';
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { contentSearchStore, isContentSearchOpen } from '@/lib/stores/contentSearchStore';
@@ -21,6 +23,7 @@
   import { diffViewStore } from '@/lib/stores/diffViewStore';
   import { commitHistoryStore } from '@/lib/stores/commitHistoryStore';
   import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
+  import { remoteAccessViewStore } from '@/lib/stores/remoteAccessViewStore';
   import { worktreeStore, isWorktree, isSubdirectoryOfRepo } from '@/lib/stores/worktreeStore';
   import { toastStore } from '@/lib/stores/toastStore';
   import { worktreeService } from '@/lib/services/worktreeService';
@@ -29,7 +32,10 @@
   import { PeekEditor } from '@/lib/components/peek';
   import { gitStore } from '@/lib/stores/gitStore';
   import { projectStore, isProjectOpen } from '@/lib/stores/projectStore';
-  import { settingsStore } from '@/lib/stores/settingsStore';
+  import { settingsStore, startupCommand } from '@/lib/stores/settingsStore';
+  import { isRemoteActive } from '@/lib/stores/remoteAccessStore';
+  import { toggleRemoteAccess } from '@/lib/utils/remoteAccessToggle';
+  import type { StartupCommand } from '@/lib/services/persistenceService';
   import { performanceService } from '@/lib/services/performanceService';
   import { setupLongTaskObserver } from '@/lib/utils/performanceMarker';
   import {
@@ -48,6 +54,16 @@
   let showShortcuts = $state(false);
   let windowLabel = $state('');
   let isAppQuitting = $state(false);
+
+  // Sync tools state to macOS menu bar
+  $effect(() => {
+    const remoteOn = $isRemoteActive;
+    const cmd = $startupCommand;
+    emit('update-tools-menu', {
+      remoteAccessOn: remoteOn,
+      startupCommand: cmd,
+    });
+  });
 
   async function handleOpenDirectory() {
     const selected = await open({
@@ -173,6 +189,13 @@
       return;
     }
 
+    // Cmd+Shift+R: Toggle Remote Access Settings
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'r') {
+      e.preventDefault();
+      remoteAccessViewStore.toggleSettings();
+      return;
+    }
+
     // Cmd+Shift+F: Toggle Content Search (only when project is open)
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f' && $isProjectOpen) {
       e.preventDefault();
@@ -288,7 +311,11 @@
 
       // Register this window with the project path (for focus_or_create_window)
       try {
-        await windowService.registerWindow(windowLabel, decodedPath);
+        await windowService.registerWindow(
+          windowLabel,
+          decodedPath,
+          worktreeContext?.is_worktree ?? false
+        );
       } catch (e) {
         console.error('Failed to register window:', e);
       }
@@ -469,6 +496,41 @@
       await projectStore.clearRecentProjects();
     });
 
+    // Listen for menu-toggle-remote event from Tools menu
+    const unlistenMenuToggleRemote = await listen('menu-toggle-remote', async () => {
+      // Open QR modal immediately for instant feedback (before any async work)
+      if (!get(isRemoteActive)) {
+        remoteAccessViewStore.openQrModal();
+      }
+      const result = await toggleRemoteAccess({
+        onToggling: () => {},
+        onError: (msg) => {
+          if (msg) {
+            toastStore.error(msg);
+            remoteAccessViewStore.closeQrModal();
+          }
+        },
+      });
+      // Close QR modal if toggle failed
+      if (!result && !get(isRemoteActive)) {
+        remoteAccessViewStore.closeQrModal();
+      }
+    });
+
+    // Listen for menu-set-startup-command event from Tools menu
+    const unlistenMenuStartupCmd = await listen<string>(
+      'menu-set-startup-command',
+      async (event) => {
+        const cmd = event.payload as StartupCommand;
+        settingsStore.setStartupCommand(cmd);
+      }
+    );
+
+    // Listen for menu-show-qr-code event from Tools menu
+    const unlistenMenuShowQr = await listen('menu-show-qr-code', () => {
+      remoteAccessViewStore.openQrModal();
+    });
+
     performanceService.markStartupPhase('app-mount-complete');
 
     return () => {
@@ -482,6 +544,9 @@
       unlistenMenuNewWindow?.();
       unlistenOpenRecent();
       unlistenClearRecent();
+      unlistenMenuToggleRemote();
+      unlistenMenuStartupCmd();
+      unlistenMenuShowQr();
       cleanupLongTaskObserver();
     };
   });
@@ -555,6 +620,14 @@
 {:else}
   <StartScreen />
   <KeyboardShortcuts isOpen={showShortcuts} onClose={() => (showShortcuts = false)} />
+{/if}
+
+{#if $remoteAccessViewStore.isSettingsOpen}
+  <RemoteAccessSettings onClose={() => remoteAccessViewStore.closeSettings()} />
+{/if}
+
+{#if $remoteAccessViewStore.isQrModalOpen}
+  <QrCodeModal onClose={() => remoteAccessViewStore.closeQrModal()} />
 {/if}
 
 <!-- Global Toast notifications -->

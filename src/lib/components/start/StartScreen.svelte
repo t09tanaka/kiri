@@ -5,13 +5,20 @@
     STARTUP_COMMANDS,
     type StartupCommand,
   } from '@/lib/services/persistenceService';
+  import { remoteAccessService } from '@/lib/services/remoteAccessService';
   import { projectStore, recentProjects, type RecentProject } from '@/lib/stores/projectStore';
+  import { remoteAccessStore, isRemoteActive } from '@/lib/stores/remoteAccessStore';
+  import { remoteAccessViewStore } from '@/lib/stores/remoteAccessViewStore';
   import { settingsStore, startupCommand } from '@/lib/stores/settingsStore';
   import { tabStore } from '@/lib/stores/tabStore';
+  import { toggleRemoteAccess } from '@/lib/utils/remoteAccessToggle';
   import RecentProjectItem from './RecentProjectItem.svelte';
   import { onMount } from 'svelte';
 
   let mounted = $state(false);
+  let isTogglingRemote = $state(false);
+  let remoteError = $state<string | null>(null);
+  let cloudflaredAvailable = $state(true);
 
   async function handleOpenDirectory() {
     const selected = await dialogService.openDirectory();
@@ -38,6 +45,31 @@
     saveSettings(settingsStore.getStateForPersistence());
   }
 
+  async function handleRemoteToggle() {
+    if (isTogglingRemote) return;
+    // Check cloudflared availability before attempting to turn on
+    if (!$isRemoteActive && !cloudflaredAvailable) {
+      remoteError = 'cloudflared is not installed. Run: brew install cloudflared';
+      return;
+    }
+    // Open QR modal immediately for instant feedback (before any async work)
+    if (!$isRemoteActive) {
+      remoteAccessViewStore.openQrModal();
+    }
+    const result = await toggleRemoteAccess({
+      onToggling: (v) => (isTogglingRemote = v),
+      onError: (msg) => {
+        remoteError = msg || null;
+        // Close QR modal on error (e.g. cloudflared not available)
+        if (msg) remoteAccessViewStore.closeQrModal();
+      },
+    });
+    // Close QR modal if toggle failed (result is null when turning ON means error)
+    if (!result && !$isRemoteActive) {
+      remoteAccessViewStore.closeQrModal();
+    }
+  }
+
   function handleKeyDown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
       e.preventDefault();
@@ -45,8 +77,19 @@
     }
   }
 
-  onMount(() => {
+  onMount(async () => {
     mounted = true;
+    try {
+      const running = await remoteAccessService.isRunning();
+      remoteAccessStore.setServerRunning(running);
+    } catch {
+      // Backend not ready yet
+    }
+    try {
+      cloudflaredAvailable = await remoteAccessService.isCloudflaredAvailable();
+    } catch {
+      cloudflaredAvailable = false;
+    }
   });
 </script>
 
@@ -183,6 +226,64 @@
         {/each}
       </div>
     </div>
+
+    <div class="startup-command-row">
+      <span class="startup-label">
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+          <line x1="8" y1="21" x2="16" y2="21"></line>
+          <line x1="12" y1="17" x2="12" y2="21"></line>
+        </svg>
+        Remote Access
+      </span>
+      <div class="remote-controls">
+        <button
+          class="remote-lightswitch"
+          class:active={$isRemoteActive}
+          onclick={handleRemoteToggle}
+          disabled={isTogglingRemote}
+          aria-label={$isRemoteActive ? 'Stop remote access' : 'Start remote access'}
+        >
+          <span class="lightswitch-track">
+            <span class="lightswitch-thumb"></span>
+          </span>
+        </button>
+        <button
+          class="remote-settings-btn"
+          onclick={() => remoteAccessViewStore.openSettings()}
+          aria-label="Remote access settings"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="3"></circle>
+            <path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+            ></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    {#if remoteError}
+      <p class="remote-error">{remoteError}</p>
+    {/if}
 
     {#if $recentProjects.length > 0}
       <section class="recent-section">
@@ -676,6 +777,90 @@
   .segment-option.active {
     background: var(--accent-subtle);
     color: var(--accent-color);
+  }
+
+  /* ===== Remote Access Row ===== */
+  .remote-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .remote-lightswitch {
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .remote-lightswitch:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .lightswitch-track {
+    display: block;
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    position: relative;
+    transition: all var(--transition-fast);
+  }
+
+  .remote-lightswitch.active .lightswitch-track {
+    background: rgba(125, 211, 252, 0.2);
+    border-color: var(--accent-color);
+  }
+
+  .lightswitch-thumb {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: all var(--transition-fast);
+  }
+
+  .remote-lightswitch.active .lightswitch-thumb {
+    left: 18px;
+    background: var(--accent-color);
+  }
+
+  .remote-settings-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: calc(var(--radius-md) - 3px);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .remote-settings-btn:hover {
+    color: var(--accent-color);
+    background: rgba(125, 211, 252, 0.04);
+    border-color: var(--border-color);
+  }
+
+  /* ===== Remote Error ===== */
+  .remote-error {
+    margin-top: var(--space-2);
+    padding: 0 var(--space-1);
+    font-size: 11px;
+    color: var(--accent3-color);
+    text-align: right;
+    opacity: 0.85;
   }
 
   /* ===== Recent Section ===== */

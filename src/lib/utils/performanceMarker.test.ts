@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock performanceService
 vi.mock('@/lib/services/performanceService', () => ({
@@ -10,7 +10,14 @@ vi.mock('@/lib/services/performanceService', () => ({
 
 // Import after mocking
 import { performanceService } from '@/lib/services/performanceService';
-import { measure, measureAsync, mark, measureBetween, withTiming } from './performanceMarker';
+import {
+  measure,
+  measureAsync,
+  mark,
+  measureBetween,
+  withTiming,
+  setupLongTaskObserver,
+} from './performanceMarker';
 
 describe('performanceMarker', () => {
   beforeEach(() => {
@@ -176,5 +183,214 @@ describe('performanceMarker', () => {
       await expect(wrapped()).rejects.toThrow('fail');
       expect(mockStop).toHaveBeenCalled();
     });
+  });
+
+  describe('setupLongTaskObserver', () => {
+    let originalPerformanceObserver: typeof PerformanceObserver | undefined;
+
+    beforeEach(() => {
+      originalPerformanceObserver = (
+        window as unknown as { PerformanceObserver?: typeof PerformanceObserver }
+      ).PerformanceObserver;
+    });
+
+    afterEach(() => {
+      if (originalPerformanceObserver !== undefined) {
+        (
+          window as unknown as { PerformanceObserver: typeof PerformanceObserver }
+        ).PerformanceObserver = originalPerformanceObserver;
+      } else {
+        delete (window as unknown as { PerformanceObserver?: typeof PerformanceObserver })
+          .PerformanceObserver;
+      }
+    });
+
+    it('should return no-op when not in development mode', async () => {
+      vi.resetModules();
+      vi.stubEnv('DEV', false);
+
+      const mod = await import('./performanceMarker');
+      const cleanup = mod.setupLongTaskObserver();
+
+      expect(typeof cleanup).toBe('function');
+      expect(() => cleanup()).not.toThrow();
+
+      vi.unstubAllEnvs();
+    });
+  });
+});
+
+describe('performanceMarker (production mode)', () => {
+  it('should no-op all functions when not in dev mode', async () => {
+    vi.resetModules();
+    vi.stubEnv('DEV', false);
+
+    const mod = await import('./performanceMarker');
+
+    // measure should still execute the function but not warn
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = mod.measure('test', () => 42);
+    expect(result).toBe(42);
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    // measureAsync should still execute the function but not warn
+    const asyncResult = await mod.measureAsync('test', async () => 'hello');
+    expect(asyncResult).toBe('hello');
+    expect(warnSpy).not.toHaveBeenCalled();
+
+    // mark should be no-op
+    const markSpy = vi.spyOn(performance, 'mark').mockImplementation(() => ({}) as PerformanceMark);
+    mod.mark('test-mark');
+    expect(markSpy).not.toHaveBeenCalled();
+    markSpy.mockRestore();
+
+    // measureBetween should be no-op
+    const measureSpy = vi
+      .spyOn(performance, 'measure')
+      .mockImplementation(() => ({}) as PerformanceMeasure);
+    mod.measureBetween('test', 'start', 'end');
+    expect(measureSpy).not.toHaveBeenCalled();
+    measureSpy.mockRestore();
+
+    // withTiming should return the original function
+    const fn = (x: number) => x * 2;
+    const wrapped = mod.withTiming('test', fn);
+    expect(wrapped).toBe(fn); // Should be the exact same function reference
+
+    warnSpy.mockRestore();
+    vi.unstubAllEnvs();
+  });
+});
+
+// Remaining setupLongTaskObserver tests (dev mode - uses direct imports)
+describe('setupLongTaskObserver (dev mode)', () => {
+  let originalPerformanceObserver: typeof PerformanceObserver | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    originalPerformanceObserver = (
+      window as unknown as { PerformanceObserver?: typeof PerformanceObserver }
+    ).PerformanceObserver;
+  });
+
+  afterEach(() => {
+    if (originalPerformanceObserver !== undefined) {
+      (
+        window as unknown as { PerformanceObserver: typeof PerformanceObserver }
+      ).PerformanceObserver = originalPerformanceObserver;
+    } else {
+      delete (window as unknown as { PerformanceObserver?: typeof PerformanceObserver })
+        .PerformanceObserver;
+    }
+  });
+
+  it('should warn and return no-op when PerformanceObserver is not available', () => {
+    delete (window as unknown as { PerformanceObserver?: typeof PerformanceObserver })
+      .PerformanceObserver;
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const cleanup = setupLongTaskObserver();
+
+    expect(warnSpy).toHaveBeenCalledWith('[Perf] PerformanceObserver not available');
+    expect(typeof cleanup).toBe('function');
+    expect(() => cleanup()).not.toThrow();
+
+    warnSpy.mockRestore();
+  });
+
+  it('should create observer and return disconnect cleanup function', () => {
+    const mockDisconnect = vi.fn();
+    const mockObserve = vi.fn();
+
+    class MockPerformanceObserver {
+      observe = mockObserve;
+      disconnect = mockDisconnect;
+      constructor(_callback: PerformanceObserverCallback) {}
+    }
+
+    (window as unknown as { PerformanceObserver: typeof PerformanceObserver }).PerformanceObserver =
+      MockPerformanceObserver as unknown as typeof PerformanceObserver;
+
+    const cleanup = setupLongTaskObserver();
+
+    expect(mockObserve).toHaveBeenCalledWith({ entryTypes: ['longtask'] });
+
+    cleanup();
+    expect(mockDisconnect).toHaveBeenCalled();
+  });
+
+  it('should track long tasks with duration > 50ms via callback', () => {
+    let capturedCallback: (list: { getEntries: () => { duration: number }[] }) => void;
+
+    class MockPerformanceObserver {
+      observe = vi.fn();
+      disconnect = vi.fn();
+      constructor(callback: PerformanceObserverCallback) {
+        capturedCallback = callback as unknown as typeof capturedCallback;
+      }
+    }
+
+    (window as unknown as { PerformanceObserver: typeof PerformanceObserver }).PerformanceObserver =
+      MockPerformanceObserver as unknown as typeof PerformanceObserver;
+
+    setupLongTaskObserver();
+
+    capturedCallback!({
+      getEntries: () => [{ duration: 30 }, { duration: 80 }, { duration: 51 }, { duration: 50 }],
+    });
+
+    expect(performanceService.trackLongTask).toHaveBeenCalledTimes(2);
+    expect(performanceService.trackLongTask).toHaveBeenCalledWith(80);
+    expect(performanceService.trackLongTask).toHaveBeenCalledWith(51);
+  });
+
+  it('should not track tasks with duration <= 50ms', () => {
+    let capturedCallback: (list: { getEntries: () => { duration: number }[] }) => void;
+
+    class MockPerformanceObserver {
+      observe = vi.fn();
+      disconnect = vi.fn();
+      constructor(callback: PerformanceObserverCallback) {
+        capturedCallback = callback as unknown as typeof capturedCallback;
+      }
+    }
+
+    (window as unknown as { PerformanceObserver: typeof PerformanceObserver }).PerformanceObserver =
+      MockPerformanceObserver as unknown as typeof PerformanceObserver;
+
+    setupLongTaskObserver();
+
+    capturedCallback!({
+      getEntries: () => [{ duration: 10 }, { duration: 50 }, { duration: 49 }],
+    });
+
+    expect(performanceService.trackLongTask).not.toHaveBeenCalled();
+  });
+
+  it('should catch errors and warn when observer.observe throws', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    class MockPerformanceObserver {
+      observe() {
+        throw new Error('longtask not supported');
+      }
+      disconnect = vi.fn();
+      constructor(_callback: PerformanceObserverCallback) {}
+    }
+
+    (window as unknown as { PerformanceObserver: typeof PerformanceObserver }).PerformanceObserver =
+      MockPerformanceObserver as unknown as typeof PerformanceObserver;
+
+    const cleanup = setupLongTaskObserver();
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[Perf] Long task observer not supported:',
+      expect.any(Error)
+    );
+    expect(typeof cleanup).toBe('function');
+    expect(() => cleanup()).not.toThrow();
+
+    warnSpy.mockRestore();
   });
 });

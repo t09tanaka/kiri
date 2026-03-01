@@ -29,6 +29,7 @@
         { keys: ['⌘', '⇧', 'F'], description: 'Search in Project' },
         { keys: ['⌘', 'B'], description: 'Toggle Sidebar' },
         { keys: ['⌘', '⇧', 'N'], description: 'New Window' },
+        { keys: ['⌘', '⇧', 'R'], description: 'Remote Access' },
         { keys: ['?'], description: 'Show Shortcuts' },
       ],
     },

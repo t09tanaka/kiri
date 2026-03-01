@@ -64,6 +64,13 @@ describe('formatRelativeTime', () => {
     const timestamp = Math.floor(now / 1000) + 60 * 60; // 1 hour in future
     expect(formatRelativeTime(timestamp, now)).toBe('15 Jan 2026');
   });
+
+  it('uses Date.now() when now parameter is not provided', () => {
+    // Use a timestamp from 2 minutes ago (relative to real current time)
+    const timestamp = Math.floor(Date.now() / 1000) - 120;
+    const result = formatRelativeTime(timestamp);
+    expect(result).toBe('2mins ago');
+  });
 });
 
 describe('formatDate', () => {

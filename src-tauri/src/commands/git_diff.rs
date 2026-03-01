@@ -101,3 +101,228 @@ pub fn get_file_diff_internal(repo: &Repository, repo_path: &str, file_path: &st
 
     diff_text
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_is_image_file_png() {
+        assert!(is_image_file("photo.png"));
+    }
+
+    #[test]
+    fn test_is_image_file_jpg() {
+        assert!(is_image_file("image.jpg"));
+    }
+
+    #[test]
+    fn test_is_image_file_jpeg_case_insensitive() {
+        assert!(is_image_file("Photo.JPEG"));
+    }
+
+    #[test]
+    fn test_is_image_file_svg() {
+        assert!(is_image_file("icon.svg"));
+    }
+
+    #[test]
+    fn test_is_image_file_not_image() {
+        assert!(!is_image_file("readme.txt"));
+    }
+
+    #[test]
+    fn test_is_image_file_no_extension() {
+        assert!(!is_image_file("Makefile"));
+    }
+
+    #[test]
+    fn test_get_current_file_base64_existing() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("test.bin"), b"\x00\x01\x02").unwrap();
+
+        let result = get_current_file_base64(
+            dir.path().to_str().unwrap(),
+            "test.bin",
+        );
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "AAEC");
+    }
+
+    #[test]
+    fn test_get_current_file_base64_nonexistent() {
+        let dir = tempdir().unwrap();
+        let result = get_current_file_base64(
+            dir.path().to_str().unwrap(),
+            "nonexistent.bin",
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_original_file_base64_not_committed() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        // No commits, so head() will fail
+        let result = get_original_file_base64(&repo, "file.txt");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_original_file_base64_committed() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+
+        // Create and commit a file
+        fs::write(dir.path().join("test.txt"), "hello").unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_path(std::path::Path::new("test.txt"))
+            .unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+
+        let result = get_original_file_base64(&repo, "test.txt");
+        assert!(result.is_some());
+        // "hello" in base64
+        assert_eq!(result.unwrap(), "aGVsbG8=");
+    }
+
+    #[test]
+    fn test_get_original_file_base64_file_not_in_tree() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+
+        // Commit a different file
+        fs::write(dir.path().join("other.txt"), "data").unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_path(std::path::Path::new("other.txt"))
+            .unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+
+        // Try to get a file that doesn't exist in the tree
+        let result = get_original_file_base64(&repo, "nonexistent.txt");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_get_file_diff_internal_untracked_file() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        // Create an untracked file
+        fs::write(dir.path().join("new.txt"), "line1\nline2").unwrap();
+
+        let diff = get_file_diff_internal(
+            &repo,
+            dir.path().to_str().unwrap(),
+            "new.txt",
+        );
+        assert!(diff.contains("+ line1"));
+        assert!(diff.contains("+ line2"));
+    }
+
+    #[test]
+    fn test_get_file_diff_internal_no_changes() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+
+        // Commit a file
+        fs::write(dir.path().join("stable.txt"), "content").unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_path(std::path::Path::new("stable.txt"))
+            .unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+
+        // No changes
+        let diff = get_file_diff_internal(
+            &repo,
+            dir.path().to_str().unwrap(),
+            "stable.txt",
+        );
+        assert!(diff.is_empty());
+    }
+
+    #[test]
+    fn test_get_file_diff_internal_modified_file() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+
+        // Commit a file
+        fs::write(dir.path().join("mod.txt"), "original").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(std::path::Path::new("mod.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+
+        // Modify the file
+        fs::write(dir.path().join("mod.txt"), "modified").unwrap();
+
+        let diff = get_file_diff_internal(
+            &repo,
+            dir.path().to_str().unwrap(),
+            "mod.txt",
+        );
+        assert!(!diff.is_empty());
+        assert!(diff.contains("- original") || diff.contains("-original"));
+        assert!(diff.contains("+ modified") || diff.contains("+modified"));
+    }
+
+    #[test]
+    fn test_get_file_diff_internal_staged_change() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = git2::Signature::now("Test", "test@test.com").unwrap();
+
+        // Commit initial
+        fs::write(dir.path().join("staged.txt"), "before").unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_path(std::path::Path::new("staged.txt"))
+            .unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+
+        // Modify and stage
+        fs::write(dir.path().join("staged.txt"), "after").unwrap();
+        let mut index = repo.index().unwrap();
+        index
+            .add_path(std::path::Path::new("staged.txt"))
+            .unwrap();
+        index.write().unwrap();
+
+        let diff = get_file_diff_internal(
+            &repo,
+            dir.path().to_str().unwrap(),
+            "staged.txt",
+        );
+        // Staged changes should be detected via diff_tree_to_index fallback
+        assert!(!diff.is_empty());
+    }
+}

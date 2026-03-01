@@ -98,6 +98,78 @@ export function getDefaultSettings(): PersistedSettings {
 }
 
 // ============================================================================
+// Remote Access Settings
+// ============================================================================
+
+/**
+ * Remote access settings for the built-in server
+ */
+export interface RemoteAccessSettings {
+  enabled: boolean;
+  port: number;
+  authToken: string | null;
+  tunnelToken: string | null; // Cloudflare tunnel token (null = Quick Tunnel)
+  tunnelUrl: string | null; // Named Tunnel URL (null when using Quick Tunnel)
+}
+
+export const DEFAULT_REMOTE_ACCESS_SETTINGS: RemoteAccessSettings = {
+  enabled: false,
+  port: 9876,
+  authToken: null,
+  tunnelToken: null,
+  tunnelUrl: null,
+};
+
+/**
+ * Load remote access settings
+ */
+export async function loadRemoteAccessSettings(): Promise<RemoteAccessSettings> {
+  try {
+    const s = await getStore();
+    await s.reload();
+
+    const settings = await s.get<
+      RemoteAccessSettings & {
+        cloudflare?: { enabled?: boolean; tunnelToken?: string | null };
+      }
+    >('remoteAccess');
+    if (!settings) {
+      return { ...DEFAULT_REMOTE_ACCESS_SETTINGS };
+    }
+
+    // Migrate from old CloudflareConfig format
+    const tunnelToken =
+      settings.tunnelToken ??
+      settings.cloudflare?.tunnelToken ??
+      DEFAULT_REMOTE_ACCESS_SETTINGS.tunnelToken;
+
+    return {
+      enabled: settings.enabled ?? DEFAULT_REMOTE_ACCESS_SETTINGS.enabled,
+      port: settings.port ?? DEFAULT_REMOTE_ACCESS_SETTINGS.port,
+      authToken: settings.authToken ?? DEFAULT_REMOTE_ACCESS_SETTINGS.authToken,
+      tunnelToken,
+      tunnelUrl: settings.tunnelUrl ?? DEFAULT_REMOTE_ACCESS_SETTINGS.tunnelUrl,
+    };
+  } catch (error) {
+    console.error('Failed to load remote access settings:', error);
+    return { ...DEFAULT_REMOTE_ACCESS_SETTINGS };
+  }
+}
+
+/**
+ * Save remote access settings
+ */
+export async function saveRemoteAccessSettings(settings: RemoteAccessSettings): Promise<void> {
+  try {
+    const s = await getStore();
+    await s.set('remoteAccess', settings);
+    await s.save();
+  } catch (error) {
+    console.error('Failed to save remote access settings:', error);
+  }
+}
+
+// ============================================================================
 // Project-specific settings
 // ============================================================================
 
