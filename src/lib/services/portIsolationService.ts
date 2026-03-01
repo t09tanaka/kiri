@@ -115,39 +115,42 @@ export const portIsolationService = {
     invoke('copy_files_with_ports', { sourcePath, targetPath, patterns, assignments }),
 
   /**
-   * Get all unique env ports (deduplicated by variable name)
+   * Get all unique env ports (deduplicated by variable name + port value pair)
    */
   getUniqueEnvPorts: (detected: DetectedPorts): PortSource[] => {
     const seen = new Map<string, PortSource>();
     for (const port of detected.env_ports) {
-      if (!seen.has(port.variable_name)) {
-        seen.set(port.variable_name, port);
+      const key = `${port.variable_name}:${port.port_value}`;
+      if (!seen.has(key)) {
+        seen.set(key, port);
       }
     }
     return Array.from(seen.values());
   },
 
   /**
-   * Get all unique compose ports (deduplicated by variable name)
+   * Get all unique compose ports (deduplicated by variable name + port value pair)
    */
   getUniqueComposePorts: (detected: DetectedPorts): PortSource[] => {
     const seen = new Map<string, PortSource>();
     for (const port of detected.compose_ports) {
-      if (!seen.has(port.variable_name)) {
-        seen.set(port.variable_name, port);
+      const key = `${port.variable_name}:${port.port_value}`;
+      if (!seen.has(key)) {
+        seen.set(key, port);
       }
     }
     return Array.from(seen.values());
   },
 
   /**
-   * Get all unique script ports (deduplicated by variable name)
+   * Get all unique script ports (deduplicated by variable name + port value pair)
    */
   getUniqueScriptPorts: (detected: DetectedPorts): PortSource[] => {
     const seen = new Map<string, PortSource>();
     for (const port of detected.script_ports) {
-      if (!seen.has(port.variable_name)) {
-        seen.set(port.variable_name, port);
+      const key = `${port.variable_name}:${port.port_value}`;
+      if (!seen.has(key)) {
+        seen.set(key, port);
       }
     }
     return Array.from(seen.values());
@@ -223,6 +226,69 @@ export const portIsolationService = {
     worktreeAssignments: {},
     targetFiles: [...DEFAULT_TARGET_FILES],
   }),
+
+  /**
+   * Merge new DEFAULT_TARGET_FILES entries into a saved portConfig.
+   * - Adds any new defaults that are not already in targetFiles
+   * - Does NOT re-add patterns the user has explicitly disabled
+   * - Preserves user-added custom patterns
+   * Returns the same config object if no changes are needed.
+   */
+  mergeDefaultTargetFiles: (config: PersistencePortConfig): PersistencePortConfig => {
+    const currentTargetFiles = config.targetFiles ?? [];
+    const disabledFiles = config.disabledTargetFiles ?? [];
+
+    const newPatterns: string[] = [];
+    for (const defaultPattern of DEFAULT_TARGET_FILES) {
+      const alreadyInTarget = currentTargetFiles.includes(defaultPattern);
+      const explicitlyDisabled = disabledFiles.includes(defaultPattern);
+
+      if (!alreadyInTarget && !explicitlyDisabled) {
+        newPatterns.push(defaultPattern);
+      }
+    }
+
+    if (newPatterns.length === 0) {
+      return config;
+    }
+
+    return {
+      ...config,
+      targetFiles: [...currentTargetFiles, ...newPatterns],
+    };
+  },
+
+  /**
+   * Remove worktreeAssignments entries for worktrees that no longer exist.
+   * Called during loadPortConfig to clean up after app quit / crash.
+   * Returns the same config object if no changes are needed.
+   */
+  pruneOrphanedAssignments: (
+    config: PersistencePortConfig,
+    existingWorktreeNames: string[]
+  ): PersistencePortConfig => {
+    if (!config.worktreeAssignments) {
+      return config;
+    }
+
+    const existingSet = new Set(existingWorktreeNames);
+    const assignmentKeys = Object.keys(config.worktreeAssignments);
+    const orphanedKeys = assignmentKeys.filter((key) => !existingSet.has(key));
+
+    if (orphanedKeys.length === 0) {
+      return config;
+    }
+
+    const pruned = { ...config.worktreeAssignments };
+    for (const key of orphanedKeys) {
+      delete pruned[key];
+    }
+
+    return {
+      ...config,
+      worktreeAssignments: pruned,
+    };
+  },
 
   /**
    * Get all worktree indices currently in use by existing worktrees.

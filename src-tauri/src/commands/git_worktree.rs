@@ -246,7 +246,7 @@ pub fn create_worktree(
     // git2's worktree API requires a reference
     let reference = repo
         .find_branch(&branch_name, git2::BranchType::Local)
-        .expect("Branch should exist after creation");
+        .map_err(|e| format!("Failed to find branch '{}' after creation: {}", branch_name, e))?;
 
     let ref_name = reference
         .get()
@@ -274,29 +274,65 @@ pub fn create_worktree(
     })
 }
 
-/// Remove a worktree by name (prune it)
+/// Remove a worktree by name (prune it).
+/// If `force` is true, locked worktrees will be unlocked before removal.
+/// If `force` is false and the worktree is locked, an error is returned with
+/// a descriptive message including the lock reason if available.
 pub fn remove_worktree(repo_path: String, name: String) -> Result<(), String> {
+    remove_worktree_with_options(repo_path, name, false)
+}
+
+/// Remove a worktree by name with optional force flag.
+/// When `force` is true, locked worktrees are automatically unlocked before removal.
+pub fn remove_worktree_with_options(
+    repo_path: String,
+    name: String,
+    force: bool,
+) -> Result<(), String> {
     let repo = Repository::open(&repo_path).map_err(|e| e.to_string())?;
 
     let wt = repo
         .find_worktree(&name)
         .map_err(|e| format!("Worktree '{}' not found: {}", name, e))?;
 
-    let is_locked = !matches!(wt.is_locked(), Ok(git2::WorktreeLockStatus::Unlocked));
+    let lock_status = wt.is_locked();
+    let is_locked = !matches!(lock_status, Ok(git2::WorktreeLockStatus::Unlocked));
+
     if is_locked {
-        return Err(format!("Worktree '{}' is locked", name));
+        if force {
+            // Unlock the worktree before removing
+            wt.unlock().map_err(|e| {
+                format!(
+                    "Failed to unlock worktree '{}': {}. You may need to manually remove the lock.",
+                    name, e
+                )
+            })?;
+        } else {
+            // Build a descriptive error message including the lock reason if available
+            let reason_msg = match &lock_status {
+                Ok(git2::WorktreeLockStatus::Locked(Some(reason))) => {
+                    format!(" (reason: {})", reason)
+                }
+                _ => String::new(),
+            };
+            return Err(format!(
+                "Worktree '{}' is locked{}. Use force option to unlock and remove it.",
+                name, reason_msg
+            ));
+        }
     }
 
     // Get the worktree path before pruning
     let wt_path = wt.path().to_path_buf();
 
     // Prune the worktree (removes git metadata)
-    wt.prune(Some(
-        &mut git2::WorktreePruneOptions::new()
-            .valid(true)
-            .working_tree(true),
-    ))
-    .map_err(|e| e.to_string())?;
+    let mut prune_opts = git2::WorktreePruneOptions::new();
+    prune_opts.valid(true).working_tree(true);
+    if force {
+        prune_opts.locked(true);
+    }
+    wt.prune(Some(&mut prune_opts))
+        .map_err(|e| e.to_string())?;
 
     // Remove the directory if it still exists
     if wt_path.exists() {
@@ -497,21 +533,48 @@ pub fn copy_files_to_worktree(
         skipped_files: &mut Vec<String>,
         errors: &mut Vec<String>,
     ) {
-        if let Ok(entries) = fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    copy_directory_recursive(
-                        &path,
-                        source,
-                        target,
-                        copied_files,
-                        skipped_files,
-                        errors,
-                    );
-                } else if path.is_file() {
-                    copy_file(&path, source, target, copied_files, skipped_files, errors);
+        match fs::read_dir(dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    match entry {
+                        Ok(e) => {
+                            let path = e.path();
+                            if path.is_dir() {
+                                copy_directory_recursive(
+                                    &path,
+                                    source,
+                                    target,
+                                    copied_files,
+                                    skipped_files,
+                                    errors,
+                                );
+                            } else if path.is_file() {
+                                copy_file(
+                                    &path, source, target, copied_files, skipped_files, errors,
+                                );
+                            } else if path
+                                .symlink_metadata()
+                                .map(|m| m.file_type().is_symlink())
+                                .unwrap_or(false)
+                            {
+                                errors.push(format!(
+                                    "Skipping dangling symlink: {}",
+                                    path.display()
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            errors.push(format!(
+                                "Failed to read entry in {}: {}",
+                                dir.display(),
+                                e
+                            ));
+                        }
+                    }
                 }
+            }
+            Err(e) => {
+                errors.push(format!("Failed to read directory {}: {}", dir.display(), e));
             }
         }
     }
@@ -545,6 +608,15 @@ pub fn copy_files_to_worktree(
                                     &mut skipped_files,
                                     &mut errors,
                                 );
+                            } else if path
+                                .symlink_metadata()
+                                .map(|m| m.file_type().is_symlink())
+                                .unwrap_or(false)
+                            {
+                                errors.push(format!(
+                                    "Skipping dangling symlink: {}",
+                                    path.display()
+                                ));
                             }
                         }
                         Err(e) => {
@@ -725,7 +797,7 @@ pub fn detect_package_managers(project_path: String) -> Result<Vec<PackageManage
                 continue;
             }
 
-            let prefix = format!("cd {} && ", dir_name);
+            let prefix = format!("cd '{}' && ", dir_name.replace('\'', "'\\''"));
             let subdir_results = detect_package_managers_in_dir(&entry_path, &prefix);
             results.extend(subdir_results);
         }
@@ -1755,7 +1827,7 @@ mod tests {
         let pms = result.unwrap();
         assert_eq!(pms.len(), 1);
         assert_eq!(pms[0].name, "cargo");
-        assert_eq!(pms[0].command, "cd src-tauri && cargo build");
+        assert_eq!(pms[0].command, "cd 'src-tauri' && cargo build");
     }
 
     #[test]
@@ -1783,7 +1855,7 @@ mod tests {
         // Subdirectory cargo
         let cargo = pms.iter().find(|p| p.name == "cargo");
         assert!(cargo.is_some());
-        assert_eq!(cargo.unwrap().command, "cd src-tauri && cargo build");
+        assert_eq!(cargo.unwrap().command, "cd 'src-tauri' && cargo build");
     }
 
     #[test]
@@ -1825,7 +1897,7 @@ mod tests {
         let pms = result.unwrap();
         assert_eq!(pms.len(), 1);
         assert_eq!(pms[0].name, "pip");
-        assert_eq!(pms[0].command, "cd backend && pip install -r requirements.txt");
+        assert_eq!(pms[0].command, "cd 'backend' && pip install -r requirements.txt");
     }
 
     #[test]
@@ -1847,7 +1919,7 @@ mod tests {
         // Should return both: root npm + subdirectory yarn
         let root_npm = pms.iter().find(|p| p.command == "npm install");
         assert!(root_npm.is_some());
-        let subdir_yarn = pms.iter().find(|p| p.command == "cd frontend && yarn install");
+        let subdir_yarn = pms.iter().find(|p| p.command == "cd 'frontend' && yarn install");
         assert!(subdir_yarn.is_some());
     }
 
@@ -2256,6 +2328,123 @@ mod tests {
         let copy_result = result.unwrap();
         assert!(copy_result.copied_files.is_empty());
         assert!(copy_result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_create_worktree_find_branch_returns_error_not_panic() {
+        // Verify that create_worktree returns an error instead of panicking
+        // when find_branch fails after branch creation.
+        // This test verifies the .map_err() fix (previously used .expect()).
+        let dir = tempdir().unwrap();
+        create_repo_with_commit(dir.path());
+
+        // A normal worktree creation should succeed without panicking
+        let result = create_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "test-no-panic".to_string(),
+            Some("test-no-panic".to_string()),
+            true,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_detect_package_managers_quotes_dir_with_spaces() {
+        // Verify that directory names with spaces are properly quoted in commands
+        let dir = tempdir().unwrap();
+
+        // Create a subdirectory with spaces
+        let sub = dir.path().join("my project");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("package.json"), "{}").unwrap();
+        fs::write(sub.join("package-lock.json"), "{}").unwrap();
+
+        let results = detect_package_managers(dir.path().to_string_lossy().to_string()).unwrap();
+
+        // Find the result for the subdirectory
+        let sub_result = results.iter().find(|r| r.command.contains("my project"));
+        assert!(
+            sub_result.is_some(),
+            "Should find package manager for dir with spaces"
+        );
+
+        let cmd = &sub_result.unwrap().command;
+        // Verify the directory name is quoted with single quotes
+        assert!(
+            cmd.contains("cd 'my project'"),
+            "Expected quoted dir name in command, got: {}",
+            cmd
+        );
+    }
+
+    #[test]
+    fn test_detect_package_managers_quotes_dir_with_single_quote() {
+        // Verify that directory names containing single quotes are properly escaped
+        let dir = tempdir().unwrap();
+
+        // Create a subdirectory with a single quote in the name
+        let sub = dir.path().join("it's-a-project");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("package.json"), "{}").unwrap();
+        fs::write(sub.join("package-lock.json"), "{}").unwrap();
+
+        let results = detect_package_managers(dir.path().to_string_lossy().to_string()).unwrap();
+
+        // Find the result for the subdirectory
+        let sub_result = results.iter().find(|r| r.command.contains("it"));
+        assert!(
+            sub_result.is_some(),
+            "Should find package manager for dir with single quote"
+        );
+
+        let cmd = &sub_result.unwrap().command;
+        // Verify the single quote is properly escaped
+        assert!(
+            cmd.contains("cd 'it'\\''s-a-project'"),
+            "Expected escaped single quote in command, got: {}",
+            cmd
+        );
+    }
+
+    // === Tests for dangling symlinks (M9) ===
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_files_to_worktree_dangling_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create a valid file
+        fs::write(source_dir.path().join(".env"), "PORT=3000").unwrap();
+
+        // Create a dangling symlink (points to non-existent target)
+        let symlink_path = source_dir.path().join(".env.link");
+        symlink("/nonexistent/target/file", &symlink_path).unwrap();
+
+        let result = copy_files_to_worktree(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string()],
+        );
+
+        assert!(result.is_ok());
+        let copy_result = result.unwrap();
+        // The valid file should be copied
+        assert_eq!(copy_result.copied_files.len(), 1);
+        assert!(copy_result.copied_files.contains(&".env".to_string()));
+
+        // The dangling symlink should be reported in errors
+        assert!(
+            !copy_result.errors.is_empty(),
+            "Expected an error for the dangling symlink"
+        );
+        assert!(
+            copy_result.errors.iter().any(|e| e.contains("dangling symlink")),
+            "Expected 'dangling symlink' error, got: {:?}",
+            copy_result.errors
+        );
     }
 
     #[test]
@@ -2726,12 +2915,48 @@ mod tests {
         assert_eq!(branches[4].name, "old");
     }
 
-    /// Test remove_worktree with a locked worktree.
-    /// Covers line 285: `return Err("Worktree is locked")`
+    #[cfg(unix)]
     #[test]
-    fn test_remove_worktree_locked() {
+    fn test_copy_directory_recursive_dangling_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create a directory with a mix of files and dangling symlinks
+        let sub = source_dir.path().join("config");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("settings.json"), "{}").unwrap();
+
+        // Create a dangling symlink inside the directory
+        symlink("/nonexistent/target", sub.join("broken_link")).unwrap();
+
+        let result = copy_files_to_worktree(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["config".to_string()],
+        );
+
+        assert!(result.is_ok());
+        let copy_result = result.unwrap();
+
+        // The valid file should be copied
+        assert_eq!(copy_result.copied_files.len(), 1);
+
+        // The dangling symlink should be reported
+        assert!(
+            copy_result.errors.iter().any(|e| e.contains("dangling symlink")),
+            "Expected 'dangling symlink' error, got: {:?}",
+            copy_result.errors
+        );
+    }
+
+    // === Tests for locked worktree handling (H6) ===
+
+    #[test]
+    fn test_remove_locked_worktree_returns_descriptive_error() {
         let dir = tempdir().unwrap();
-        create_repo_with_commit(dir.path());
+        let repo = create_repo_with_commit(dir.path());
 
         // Create a worktree
         let wt = create_worktree(
@@ -2743,11 +2968,10 @@ mod tests {
         .unwrap();
 
         // Lock the worktree
-        let repo = Repository::open(dir.path()).unwrap();
         let git_wt = repo.find_worktree("locked-wt").unwrap();
-        git_wt.lock(None).unwrap();
+        git_wt.lock(Some("test lock reason")).unwrap();
 
-        // Try to remove the locked worktree
+        // Attempt to remove without force should fail with descriptive error
         let result = remove_worktree(
             dir.path().to_string_lossy().to_string(),
             "locked-wt".to_string(),
@@ -2756,13 +2980,89 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
-            err.contains("locked"),
-            "Expected 'locked' error, got: {}",
+            err.contains("is locked"),
+            "Expected 'is locked' in error, got: {}",
+            err
+        );
+        assert!(
+            err.contains("force"),
+            "Expected hint about force option, got: {}",
             err
         );
 
-        // Verify worktree directory still exists
+        // Worktree should still exist
         assert!(Path::new(&wt.path).exists());
+    }
+
+    #[test]
+    fn test_remove_locked_worktree_with_force() {
+        let dir = tempdir().unwrap();
+        let repo = create_repo_with_commit(dir.path());
+
+        // Create a worktree
+        let wt = create_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "force-remove-wt".to_string(),
+            Some("force-remove-wt".to_string()),
+            true,
+        )
+        .unwrap();
+
+        // Lock the worktree
+        let git_wt = repo.find_worktree("force-remove-wt").unwrap();
+        git_wt.lock(Some("test reason")).unwrap();
+
+        // Force remove should succeed
+        let result = remove_worktree_with_options(
+            dir.path().to_string_lossy().to_string(),
+            "force-remove-wt".to_string(),
+            true,
+        );
+
+        assert!(
+            result.is_ok(),
+            "Force remove of locked worktree should succeed, got: {:?}",
+            result.err()
+        );
+
+        // Worktree directory should be removed
+        assert!(!Path::new(&wt.path).exists());
+
+        // Worktree should no longer be in the list
+        let list = list_worktrees(dir.path().to_string_lossy().to_string()).unwrap();
+        assert_eq!(list.len(), 1, "Only main worktree should remain");
+    }
+
+    #[test]
+    fn test_remove_locked_worktree_error_includes_reason() {
+        let dir = tempdir().unwrap();
+        let repo = create_repo_with_commit(dir.path());
+
+        // Create a worktree
+        create_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "reason-wt".to_string(),
+            Some("reason-wt".to_string()),
+            true,
+        )
+        .unwrap();
+
+        // Lock with a reason
+        let git_wt = repo.find_worktree("reason-wt").unwrap();
+        git_wt.lock(Some("important work in progress")).unwrap();
+
+        let result = remove_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "reason-wt".to_string(),
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("important work in progress"),
+            "Expected lock reason in error message, got: {}",
+            err
+        );
     }
 
     /// Test remove_worktree success path, ensuring the directory is cleaned up.
@@ -3245,7 +3545,7 @@ mod tests {
         // Should find pnpm in the subdirectory, ignoring the regular file
         assert_eq!(pms.len(), 1);
         assert_eq!(pms[0].name, "pnpm");
-        assert_eq!(pms[0].command, "cd app && pnpm install");
+        assert_eq!(pms[0].command, "cd 'app' && pnpm install");
     }
 
     /// Test list_worktrees when worktree is invalid (validate fails), ensuring

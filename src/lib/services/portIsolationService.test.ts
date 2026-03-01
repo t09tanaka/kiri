@@ -3,6 +3,7 @@ import {
   portIsolationService,
   targetFilePatternToRegex,
   matchesTargetFilePattern,
+  DEFAULT_TARGET_FILES,
 } from './portIsolationService';
 import type { DetectedPorts, PortSource } from './portIsolationService';
 import type { PortConfig } from './persistenceService';
@@ -1005,6 +1006,218 @@ describe('portIsolationService', () => {
         assignments,
       });
       expect(result).toEqual(mockResult);
+    });
+  });
+
+  describe('mergeDefaultTargetFiles', () => {
+    it('should add new defaults to saved config missing them', () => {
+      const config = makeDefaultConfig({
+        targetFiles: ['**/.env*', '**/docker-compose.yml'],
+      });
+      const result = portIsolationService.mergeDefaultTargetFiles(config);
+      // Should have added missing defaults
+      expect(result.targetFiles).toContain('**/package.json');
+      expect(result.targetFiles).toContain('**/compose.yml');
+      expect(result.targetFiles).toContain('**/compose.yaml');
+      // Should preserve existing
+      expect(result.targetFiles).toContain('**/.env*');
+      expect(result.targetFiles).toContain('**/docker-compose.yml');
+    });
+
+    it('should preserve user custom patterns', () => {
+      const config = makeDefaultConfig({
+        targetFiles: ['**/.env*', '**/custom.conf'],
+      });
+      const result = portIsolationService.mergeDefaultTargetFiles(config);
+      expect(result.targetFiles).toContain('**/custom.conf');
+    });
+
+    it('should not re-add explicitly disabled patterns', () => {
+      const config = makeDefaultConfig({
+        targetFiles: ['**/.env*'],
+        disabledTargetFiles: ['**/package.json'],
+      });
+      const result = portIsolationService.mergeDefaultTargetFiles(config);
+      expect(result.targetFiles).not.toContain('**/package.json');
+      // Other missing defaults should still be added
+      expect(result.targetFiles).toContain('**/docker-compose.yml');
+    });
+
+    it('should return same object when all defaults already present', () => {
+      const config = makeDefaultConfig({
+        targetFiles: [...DEFAULT_TARGET_FILES],
+      });
+      const result = portIsolationService.mergeDefaultTargetFiles(config);
+      expect(result).toBe(config); // Same reference
+    });
+
+    it('should handle undefined targetFiles as empty', () => {
+      const config = makeDefaultConfig({
+        targetFiles: undefined as unknown as string[],
+      });
+      const result = portIsolationService.mergeDefaultTargetFiles(config);
+      expect(result.targetFiles).toEqual(DEFAULT_TARGET_FILES);
+    });
+
+    it('should handle undefined disabledTargetFiles', () => {
+      const config = makeDefaultConfig({
+        targetFiles: ['**/.env*'],
+        disabledTargetFiles: undefined,
+      });
+      const result = portIsolationService.mergeDefaultTargetFiles(config);
+      // Should add all missing defaults
+      expect(result.targetFiles!.length).toBeGreaterThan(1);
+      expect(result.targetFiles).toContain('**/package.json');
+    });
+  });
+
+  describe('getUniqueEnvPorts - same variable name different port values', () => {
+    it('should keep both entries when same variable has different port values', () => {
+      const detected: DetectedPorts = {
+        ...makeEmptyDetected(),
+        env_ports: [
+          makePortSource({
+            variable_name: 'DATABASE_URL',
+            port_value: 5432,
+            file_path: '.env',
+          }),
+          makePortSource({
+            variable_name: 'DATABASE_URL',
+            port_value: 5434,
+            file_path: '.env.test',
+          }),
+        ],
+      };
+      const result = portIsolationService.getUniqueEnvPorts(detected);
+      expect(result).toHaveLength(2);
+      expect(result[0].port_value).toBe(5432);
+      expect(result[1].port_value).toBe(5434);
+    });
+
+    it('should still deduplicate same (variable_name, port_value) across files', () => {
+      const detected: DetectedPorts = {
+        ...makeEmptyDetected(),
+        env_ports: [
+          makePortSource({
+            variable_name: 'PORT',
+            port_value: 3000,
+            file_path: '.env',
+          }),
+          makePortSource({
+            variable_name: 'PORT',
+            port_value: 3000,
+            file_path: '.env.local',
+          }),
+        ],
+      };
+      const result = portIsolationService.getUniqueEnvPorts(detected);
+      expect(result).toHaveLength(1);
+      expect(result[0].port_value).toBe(3000);
+    });
+
+    it('should handle mix of same and different port values', () => {
+      const detected: DetectedPorts = {
+        ...makeEmptyDetected(),
+        env_ports: [
+          makePortSource({ variable_name: 'PORT', port_value: 3000, file_path: '.env' }),
+          makePortSource({ variable_name: 'PORT', port_value: 3000, file_path: '.env.local' }),
+          makePortSource({
+            variable_name: 'DATABASE_URL',
+            port_value: 5432,
+            file_path: '.env',
+          }),
+          makePortSource({
+            variable_name: 'DATABASE_URL',
+            port_value: 5434,
+            file_path: '.env.test',
+          }),
+        ],
+      };
+      const result = portIsolationService.getUniqueEnvPorts(detected);
+      expect(result).toHaveLength(3); // PORT:3000, DATABASE_URL:5432, DATABASE_URL:5434
+    });
+  });
+
+  describe('pruneOrphanedAssignments', () => {
+    it('should remove assignments for worktrees that no longer exist', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+          'feature-b': {
+            worktreeName: 'feature-b',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3200 }],
+          },
+          'feature-c': {
+            worktreeName: 'feature-c',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3300 }],
+          },
+        },
+      });
+
+      const result = portIsolationService.pruneOrphanedAssignments(config, ['feature-b']);
+
+      expect(Object.keys(result.worktreeAssignments)).toEqual(['feature-b']);
+      expect(result.worktreeAssignments['feature-b'].assignments[0].assignedValue).toBe(3200);
+    });
+
+    it('should preserve all entries when all worktrees exist', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+          'feature-b': {
+            worktreeName: 'feature-b',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3200 }],
+          },
+        },
+      });
+
+      const result = portIsolationService.pruneOrphanedAssignments(config, [
+        'feature-a',
+        'feature-b',
+      ]);
+
+      expect(result).toBe(config); // Same object reference
+    });
+
+    it('should return same object when worktreeAssignments is empty', () => {
+      const config = makeDefaultConfig({ worktreeAssignments: {} });
+
+      const result = portIsolationService.pruneOrphanedAssignments(config, ['feature-a']);
+
+      expect(result).toBe(config);
+    });
+
+    it('should return same object when worktreeAssignments is undefined', () => {
+      const config = makeDefaultConfig();
+      // Force undefined to test guard clause
+      (config as Record<string, unknown>).worktreeAssignments = undefined;
+
+      const result = portIsolationService.pruneOrphanedAssignments(config as PortConfig, [
+        'feature-a',
+      ]);
+
+      expect(result).toBe(config);
+    });
+
+    it('should remove all entries when no worktrees exist', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+        },
+      });
+
+      const result = portIsolationService.pruneOrphanedAssignments(config, []);
+
+      expect(Object.keys(result.worktreeAssignments)).toEqual([]);
     });
   });
 });
