@@ -47,6 +47,11 @@
 
   async function handleRemoteToggle() {
     if (isTogglingRemote) return;
+    // Check cloudflared availability before attempting to turn on
+    if (!$isRemoteActive && !cloudflaredAvailable) {
+      remoteError = 'cloudflared is not installed. Run: brew install cloudflared';
+      return;
+    }
     // Open QR modal immediately for instant feedback (before any async work)
     if (!$isRemoteActive) {
       remoteAccessViewStore.openQrModal();
@@ -245,7 +250,7 @@
           class="remote-lightswitch"
           class:active={$isRemoteActive}
           onclick={handleRemoteToggle}
-          disabled={isTogglingRemote || (!cloudflaredAvailable && !$isRemoteActive)}
+          disabled={isTogglingRemote}
           aria-label={$isRemoteActive ? 'Stop remote access' : 'Start remote access'}
         >
           <span class="lightswitch-track">
