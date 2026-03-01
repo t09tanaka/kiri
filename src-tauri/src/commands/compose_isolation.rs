@@ -662,4 +662,396 @@ volumes:
         assert_eq!(vol_warnings.len(), 1);
         assert_eq!(vol_warnings[0].value, "my-project-data");
     }
+
+    #[test]
+    fn test_apply_compose_name_isolation_multiple_files() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("docker-compose.yml"),
+            "name: my-project\nservices:\n  web:\n    image: nginx\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("docker-compose.dev.yml"),
+            "name: my-project-dev\nservices:\n  web:\n    image: nginx\n",
+        )
+        .unwrap();
+
+        let replacements = vec![
+            ComposeNameReplacement {
+                file_path: "docker-compose.yml".to_string(),
+                original_name: "my-project".to_string(),
+                new_name: "my-project-feature".to_string(),
+            },
+            ComposeNameReplacement {
+                file_path: "docker-compose.dev.yml".to_string(),
+                original_name: "my-project-dev".to_string(),
+                new_name: "my-project-dev-feature".to_string(),
+            },
+        ];
+
+        let result =
+            apply_compose_name_isolation(&dir.path().to_string_lossy(), &replacements);
+
+        assert_eq!(result.transformed_files.len(), 2);
+        assert!(result.skipped_files.is_empty());
+        assert!(result.errors.is_empty());
+
+        let content1 = fs::read_to_string(dir.path().join("docker-compose.yml")).unwrap();
+        assert!(content1.contains("name: my-project-feature\n"));
+
+        let content2 = fs::read_to_string(dir.path().join("docker-compose.dev.yml")).unwrap();
+        assert!(content2.contains("name: my-project-dev-feature\n"));
+    }
+
+    #[test]
+    fn test_apply_compose_name_isolation_read_error() {
+        let dir = tempdir().unwrap();
+        // Create a directory with the same name as the expected file path
+        // so that read_to_string fails (cannot read a directory as a file)
+        fs::create_dir(dir.path().join("docker-compose.yml")).unwrap();
+
+        let replacements = vec![ComposeNameReplacement {
+            file_path: "docker-compose.yml".to_string(),
+            original_name: "my-project".to_string(),
+            new_name: "my-project-feature".to_string(),
+        }];
+
+        let result =
+            apply_compose_name_isolation(&dir.path().to_string_lossy(), &replacements);
+
+        assert!(result.transformed_files.is_empty());
+        assert!(result.skipped_files.is_empty());
+        assert_eq!(result.errors.len(), 1);
+        assert!(result.errors[0].contains("Failed to read"));
+    }
+
+    #[test]
+    fn test_transform_compose_name_preserves_other_lines() {
+        let content = "\
+name: my-project
+services:
+  web:
+    image: nginx
+    ports:
+      - \"8080:80\"
+    environment:
+      - FOO=bar
+volumes:
+  data:
+";
+        let result = transform_compose_name(content, "my-project", "new-name");
+
+        // Verify the name line changed
+        assert!(result.contains("name: new-name\n"));
+        // Verify all other lines remain unchanged
+        assert!(result.contains("services:\n"));
+        assert!(result.contains("  web:\n"));
+        assert!(result.contains("    image: nginx\n"));
+        assert!(result.contains("    ports:\n"));
+        assert!(result.contains("      - \"8080:80\"\n"));
+        assert!(result.contains("    environment:\n"));
+        assert!(result.contains("      - FOO=bar\n"));
+        assert!(result.contains("volumes:\n"));
+        assert!(result.contains("  data:\n"));
+    }
+
+    #[test]
+    fn test_transform_compose_name_multiple_name_directives() {
+        // Only the first root-level name: should be transformed
+        let content = "\
+name: my-project
+services:
+  web:
+    image: nginx
+name: second-name
+";
+        let result = transform_compose_name(content, "my-project", "new-name");
+
+        // First name: should be transformed
+        assert!(result.contains("name: new-name\n"));
+        // Second name: should NOT be transformed (original_name doesn't match "second-name")
+        assert!(result.contains("name: second-name\n"));
+    }
+
+    #[test]
+    fn test_detect_compose_name_empty_content() {
+        let info = detect_compose_name("", "docker-compose.yml");
+
+        assert_eq!(info.project_name, None);
+        assert_eq!(info.name_line_number, 0);
+        assert!(info.warnings.is_empty());
+        assert_eq!(info.file_path, "docker-compose.yml");
+    }
+
+    #[test]
+    fn test_detect_compose_name_comments_only() {
+        let content = "\
+# This is a comment
+# Another comment
+# name: not-a-real-name
+";
+        let info = detect_compose_name(content, "docker-compose.yml");
+
+        assert_eq!(info.project_name, None);
+        assert_eq!(info.name_line_number, 0);
+        assert!(info.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_detect_compose_name_with_tab_indentation() {
+        let content = "name: my-project\nservices:\n\tweb:\n\t\timage: nginx\n\t\tcontainer_name: my-web\nvolumes:\n\tdb_data:\n\t\tname: my-volume\n";
+        let info = detect_compose_name(content, "docker-compose.yml");
+
+        assert_eq!(info.project_name, Some("my-project".to_string()));
+        assert_eq!(info.name_line_number, 1);
+
+        // Should detect container_name warning
+        let container_warnings: Vec<&ComposeWarning> = info
+            .warnings
+            .iter()
+            .filter(|w| w.warning_type == "ContainerName")
+            .collect();
+        assert_eq!(container_warnings.len(), 1);
+        assert_eq!(container_warnings[0].value, "my-web");
+
+        // Tab-indented volume name detection: The current implementation uses
+        // leading character count for indent detection. Two tabs (\t\t) has
+        // leading_spaces == 2, which matches the is_indent_2 check (meant for
+        // 2-space indent). This means \t\t-indented `name:` is treated as a
+        // volume key rather than a config property, so volume name warnings
+        // are not detected for tab-indented compose files. This documents the
+        // known behavior.
+        let vol_warnings: Vec<&ComposeWarning> = info
+            .warnings
+            .iter()
+            .filter(|w| w.warning_type == "VolumeName")
+            .collect();
+        assert_eq!(vol_warnings.len(), 0);
+    }
+
+    #[test]
+    fn test_scan_compose_files_empty_dir() {
+        let dir = tempdir().unwrap();
+
+        let result = scan_compose_files(&dir.path().to_string_lossy()).unwrap();
+        assert!(result.files.is_empty());
+    }
+
+    #[test]
+    fn test_scan_compose_files_subdirectory() {
+        let dir = tempdir().unwrap();
+        let subdir = dir.path().join("subproject");
+        fs::create_dir(&subdir).unwrap();
+        fs::write(
+            subdir.join("docker-compose.yml"),
+            "name: sub-project\nservices:\n  web:\n    image: nginx\n",
+        )
+        .unwrap();
+
+        let result = scan_compose_files(&dir.path().to_string_lossy()).unwrap();
+        assert_eq!(result.files.len(), 1);
+        assert_eq!(
+            result.files[0].file_path,
+            format!("subproject{}docker-compose.yml", std::path::MAIN_SEPARATOR)
+        );
+        assert_eq!(
+            result.files[0].project_name,
+            Some("sub-project".to_string())
+        );
+    }
+
+    #[test]
+    fn test_detect_compose_name_indented_name_not_root() {
+        // `name:` under services is NOT the root name
+        let content = "services:\n  web:\n    container_name: my-web\n";
+        let info = detect_compose_name(content, "docker-compose.yml");
+        assert_eq!(info.project_name, None);
+    }
+
+    #[test]
+    fn test_detect_compose_name_empty_volume_name() {
+        // volume with name: but empty value → should NOT create warning
+        let content = "\
+services:
+  web:
+    image: nginx
+volumes:
+  data:
+    name:
+";
+        let info = detect_compose_name(content, "docker-compose.yml");
+        let vol_warnings: Vec<&ComposeWarning> = info
+            .warnings
+            .iter()
+            .filter(|w| w.warning_type == "VolumeName")
+            .collect();
+        assert!(vol_warnings.is_empty(), "Empty volume name should not generate warning");
+    }
+
+    #[test]
+    fn test_apply_compose_name_isolation_file_not_found() {
+        let dir = tempdir().unwrap();
+
+        let replacements = vec![ComposeNameReplacement {
+            file_path: "nonexistent.yml".to_string(),
+            original_name: "old".to_string(),
+            new_name: "new".to_string(),
+        }];
+
+        let result = apply_compose_name_isolation(
+            &dir.path().to_string_lossy(),
+            &replacements,
+        );
+
+        assert_eq!(result.skipped_files.len(), 1);
+        assert!(result.skipped_files[0].contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_apply_compose_name_isolation_success() {
+        let dir = tempdir().unwrap();
+        fs::write(
+            dir.path().join("docker-compose.yml"),
+            "name: my-project\nservices:\n  web:\n    image: nginx\n",
+        )
+        .unwrap();
+
+        let replacements = vec![ComposeNameReplacement {
+            file_path: "docker-compose.yml".to_string(),
+            original_name: "my-project".to_string(),
+            new_name: "my-project-wt1".to_string(),
+        }];
+
+        let result = apply_compose_name_isolation(
+            &dir.path().to_string_lossy(),
+            &replacements,
+        );
+
+        assert_eq!(result.transformed_files.len(), 1);
+        assert!(result.errors.is_empty());
+
+        let content = fs::read_to_string(dir.path().join("docker-compose.yml")).unwrap();
+        assert!(content.contains("my-project-wt1"), "Content: {}", content);
+    }
+
+    #[test]
+    fn test_apply_compose_name_isolation_write_error() {
+        // Test with a file path that would cause a write error
+        let dir = tempdir().unwrap();
+        let compose_path = dir.path().join("docker-compose.yml");
+        fs::write(&compose_path, "name: test\nservices:\n  web:\n    image: nginx\n").unwrap();
+
+        // Make file read-only to trigger write error
+        let mut perms = fs::metadata(&compose_path).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        perms.set_mode(0o444);
+        fs::set_permissions(&compose_path, perms).unwrap();
+
+        let replacements = vec![ComposeNameReplacement {
+            file_path: "docker-compose.yml".to_string(),
+            original_name: "test".to_string(),
+            new_name: "test-wt1".to_string(),
+        }];
+
+        let result = apply_compose_name_isolation(
+            &dir.path().to_string_lossy(),
+            &replacements,
+        );
+
+        assert!(!result.errors.is_empty(), "Expected write error");
+
+        // Restore permissions for cleanup
+        let mut perms = fs::metadata(&compose_path).unwrap().permissions();
+        perms.set_mode(0o644);
+        fs::set_permissions(&compose_path, perms).unwrap();
+    }
+
+    #[test]
+    fn test_transform_compose_name_single_quoted_no_closing() {
+        // Single-quoted name without closing quote (edge case)
+        let content = "name: 'myproject\nservices:\n  web:\n    image: nginx";
+        let result = transform_compose_name(content, "myproject", "myproject-wt");
+        assert!(result.contains("myproject-wt"));
+    }
+
+    #[test]
+    fn test_transform_compose_name_double_quoted_no_closing() {
+        // Double-quoted name without closing quote (edge case)
+        let content = "name: \"myproject\nservices:\n  web:\n    image: nginx";
+        let result = transform_compose_name(content, "myproject", "myproject-wt");
+        assert!(result.contains("myproject-wt"));
+    }
+
+    #[test]
+    fn test_transform_compose_name_no_match_different_name() {
+        // name: line exists but with a different value than original_name
+        let content = "name: other-project\nservices:\n  web:\n    image: nginx";
+        let result = transform_compose_name(content, "myproject", "myproject-wt");
+        // Should NOT transform since original_name doesn't match
+        assert!(result.contains("name: other-project"));
+        assert!(!result.contains("myproject-wt"));
+    }
+
+    #[test]
+    fn test_detect_compose_name_volume_name_explicit() {
+        // Test explicit volume name detection in top-level volumes
+        let content = "services:\n  db:\n    image: postgres\nvolumes:\n  postgres_data:\n    name: my-explicit-volume";
+        let info = detect_compose_name(content, "docker-compose.yml");
+        let volume_warnings: Vec<_> = info.warnings.iter()
+            .filter(|w| w.warning_type == "VolumeName")
+            .collect();
+        assert_eq!(volume_warnings.len(), 1);
+        assert!(volume_warnings[0].value.contains("my-explicit-volume"));
+    }
+
+    #[test]
+    fn test_detect_compose_name_volume_no_explicit_name() {
+        // Volumes without explicit name: should not warn about VolumeName
+        let content = "services:\n  db:\n    image: postgres\nvolumes:\n  postgres_data:\n    driver: local";
+        let info = detect_compose_name(content, "docker-compose.yml");
+        let volume_warnings: Vec<_> = info.warnings.iter()
+            .filter(|w| w.warning_type == "VolumeName")
+            .collect();
+        assert!(volume_warnings.is_empty());
+    }
+
+    #[test]
+    fn test_scan_compose_files_with_duplicates() {
+        // Test that duplicate patterns don't produce duplicate results
+        let dir = tempdir().unwrap();
+        let compose_content = "name: test\nservices:\n  web:\n    image: nginx";
+        fs::write(dir.path().join("docker-compose.yml"), compose_content).unwrap();
+
+        let result = scan_compose_files(&dir.path().to_string_lossy());
+        assert!(result.is_ok());
+        let detected = result.unwrap();
+        // Should only have 1 entry even if multiple patterns match
+        assert_eq!(detected.files.len(), 1);
+    }
+
+    #[test]
+    fn test_detect_compose_name_container_name_warning() {
+        // Test container_name warning detection
+        let content = "name: test\nservices:\n  web:\n    image: nginx\n    container_name: my-static-container";
+        let info = detect_compose_name(content, "docker-compose.yml");
+        let container_warnings: Vec<_> = info.warnings.iter()
+            .filter(|w| w.warning_type == "ContainerName")
+            .collect();
+        assert_eq!(container_warnings.len(), 1);
+        assert!(container_warnings[0].value.contains("my-static-container"));
+    }
+
+    #[test]
+    fn test_detect_compose_name_space_indented_volumes() {
+        // Test space-indented volume config (standard YAML)
+        let content = "volumes:\n  postgres_data:\n    name: explicit-vol";
+        let info = detect_compose_name(content, "docker-compose.yml");
+        let volume_warnings: Vec<_> = info.warnings.iter()
+            .filter(|w| w.warning_type == "VolumeName")
+            .collect();
+        assert_eq!(volume_warnings.len(), 1);
+        assert!(volume_warnings[0].value.contains("explicit-vol"));
+    }
+
 }

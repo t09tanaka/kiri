@@ -118,6 +118,21 @@ pub async fn health_handler() -> Json<HealthResponse> {
     })
 }
 
+/// Filter a list of recent projects, removing any whose path appears in
+/// `open_paths`.
+///
+/// This is the pure-logic core of [`load_recent_projects`], extracted so
+/// that it can be unit-tested without a Tauri runtime.
+fn filter_recent_projects(
+    all_recent: Vec<RecentProject>,
+    open_paths: &[String],
+) -> Vec<RecentProject> {
+    all_recent
+        .into_iter()
+        .filter(|p| !open_paths.contains(&p.path))
+        .collect()
+}
+
 /// Load recent projects from the kiri-settings.json store,
 /// filtering out any paths that are currently open.
 fn load_recent_projects(app: &tauri::AppHandle, open_paths: &[String]) -> Vec<RecentProject> {
@@ -133,10 +148,19 @@ fn load_recent_projects(app: &tauri::AppHandle, open_paths: &[String]) -> Vec<Re
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
 
-    all_recent
-        .into_iter()
-        .filter(|p| !open_paths.contains(&p.path))
-        .collect()
+    filter_recent_projects(all_recent, open_paths)
+}
+
+/// Extract a human-readable project name from a directory path.
+///
+/// Returns the last path component, or `"unknown"` when the path is
+/// empty or cannot be decoded (e.g. terminates with `..`).
+pub(crate) fn extract_project_name(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown")
+        .to_string()
 }
 
 /// Create a refreshed `sysinfo::System` for process lookups.
@@ -332,11 +356,7 @@ fn collect_full_status(state: &AppState) -> Option<StatusUpdate> {
     let open_projects: Vec<OpenProject> = open_paths
         .iter()
         .map(|path| {
-            let name = std::path::Path::new(path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
+            let name = extract_project_name(path);
             OpenProject {
                 path: path.clone(),
                 name,
@@ -1353,5 +1373,1301 @@ mod tests {
     fn test_resolve_remote_ui_path_none_returns_dev_fallback() {
         let path = resolve_remote_ui_path(None);
         assert_eq!(path, std::path::PathBuf::from("remote-ui"));
+    }
+
+    // ── health_handler async tests ────────────────────────────────
+
+    #[tokio::test]
+    async fn test_health_handler_returns_ok() {
+        let Json(response) = health_handler().await;
+        assert_eq!(response.status, "ok");
+        assert_eq!(response.version, env!("CARGO_PKG_VERSION"));
+    }
+
+    // ── Router integration tests (token_path_handler) ─────────────
+
+    /// Helper: build a router with the given token and no app handle.
+    fn test_router(token: &str) -> Router {
+        let token = Arc::new(RwLock::new(token.to_string()));
+        create_router(token, None)
+    }
+
+    /// Helper: send a request to the router and return (status, body bytes).
+    async fn send_request(
+        router: Router,
+        uri: &str,
+    ) -> (StatusCode, Vec<u8>) {
+        use tower::ServiceExt;
+
+        let request = axum::http::Request::builder()
+            .uri(uri)
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, body.to_vec())
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_valid_token() {
+        let router = test_router("my-secret");
+        let (status, body) = send_request(router, "/my-secret/api/health").await;
+
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+        assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_invalid_token() {
+        let router = test_router("correct-token");
+        let (status, _body) = send_request(router, "/wrong-token/api/health").await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_health_bypasses_token() {
+        let router = test_router("some-token");
+        let (status, body) = send_request(router, "/api/health").await;
+
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_strips_token_prefix() {
+        // When a valid token prefix is present, the inner router should
+        // see the path with the token stripped (e.g. /api/health).
+        let router = test_router("abc-123");
+        let (status, body) = send_request(router, "/abc-123/api/health").await;
+
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_preserves_query_string() {
+        // Query strings should be preserved after token stripping.
+        // /api/health doesn't use query params, but the URI rewriting
+        // should not drop them.
+        let router = test_router("tok-42");
+        let (status, body) =
+            send_request(router, "/tok-42/api/health?foo=bar&baz=1").await;
+
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_no_path_after_token() {
+        // Requesting just the token with no trailing path should
+        // receive some response (404 from inner router or fallback),
+        // but should NOT panic.
+        let router = test_router("abc");
+        let (status, _body) = send_request(router, "/abc").await;
+
+        // After stripping "/abc" the inner path becomes "/", which
+        // has no explicit route. Status depends on inner fallback config.
+        // The important assertion is that the server did not panic and
+        // returned a valid HTTP response.
+        assert!(
+            status == StatusCode::OK || status == StatusCode::NOT_FOUND,
+            "Expected OK or NOT_FOUND, got {}",
+            status
+        );
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_unknown_inner_route() {
+        // A valid token but unknown inner route should return 404
+        // from the inner router.
+        let router = test_router("tok");
+        let (status, _body) =
+            send_request(router, "/tok/nonexistent/route").await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_empty_token_config() {
+        // Edge case: empty string as the token. A request to "//api/health"
+        // should match the empty first segment.
+        let router = test_router("");
+        let (status, body) = send_request(router, "//api/health").await;
+
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["status"], "ok");
+    }
+
+    // ── Server lifecycle tests ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_start_server_and_health_check() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let token = Arc::new(RwLock::new("test-token".to_string()));
+
+        tokio::spawn(async move {
+            start_server(listener, shutdown_rx, token, None)
+                .await
+                .unwrap();
+        });
+
+        // Give the server a moment to start accepting connections.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("http://{}/api/health", addr))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+
+        let json: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(json["status"], "ok");
+
+        // Shutdown
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_start_server_with_token_auth() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let token = Arc::new(RwLock::new("auth-abc".to_string()));
+
+        tokio::spawn(async move {
+            start_server(listener, shutdown_rx, token, None)
+                .await
+                .unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let client = reqwest::Client::new();
+
+        // Request without token should fail (404 from fallback)
+        let resp = client
+            .get(format!("http://{}/ws", addr))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 404);
+
+        // Request with valid token prefix should reach the inner router.
+        // /ws requires a WebSocket upgrade so we expect 400 or similar
+        // (not 404), proving the token was accepted and the request
+        // reached the ws_handler.
+        let resp = client
+            .get(format!("http://{}/auth-abc/api/health", addr))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+
+        // Request with wrong token should return 404
+        let resp = client
+            .get(format!("http://{}/wrong-token/api/health", addr))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 404);
+
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_start_server_graceful_shutdown() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let token = Arc::new(RwLock::new("shutdown-test".to_string()));
+
+        let server_handle = tokio::spawn(async move {
+            start_server(listener, shutdown_rx, token, None)
+                .await
+                .unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Verify server is running
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("http://{}/api/health", addr))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+
+        // Send shutdown signal
+        shutdown_tx.send(()).unwrap();
+
+        // Wait for the server task to complete (with a timeout)
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            server_handle,
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "Server should shut down within 5 seconds"
+        );
+        assert!(
+            result.unwrap().is_ok(),
+            "Server task should complete without panic"
+        );
+    }
+
+    // ── resolve_remote_ui_path edge cases ─────────────────────────
+
+    #[test]
+    fn test_resolve_remote_ui_path_fallback_is_relative() {
+        let path = resolve_remote_ui_path(None);
+        assert!(path.is_relative());
+        assert_eq!(
+            path.file_name().and_then(|n| n.to_str()),
+            Some("remote-ui")
+        );
+    }
+
+    #[test]
+    fn test_resolve_remote_ui_path_fallback_has_single_component() {
+        let path = resolve_remote_ui_path(None);
+        assert_eq!(path.components().count(), 1);
+    }
+
+    // ── extract_project_name tests ────────────────────────────────
+
+    #[test]
+    fn test_extract_project_name_simple_path() {
+        assert_eq!(extract_project_name("/Users/user/projects/kiri"), "kiri");
+    }
+
+    #[test]
+    fn test_extract_project_name_trailing_slash() {
+        // Path::file_name returns None for paths ending in "/"
+        // because the last component is empty
+        let name = extract_project_name("/Users/user/projects/kiri/");
+        // On most platforms, trailing slash means file_name is ""
+        // which to_str returns Some(""), so it won't hit "unknown"
+        // The actual behavior depends on the platform
+        assert!(!name.is_empty() || name == "unknown");
+    }
+
+    #[test]
+    fn test_extract_project_name_single_component() {
+        assert_eq!(extract_project_name("myproject"), "myproject");
+    }
+
+    #[test]
+    fn test_extract_project_name_empty_string() {
+        assert_eq!(extract_project_name(""), "unknown");
+    }
+
+    #[test]
+    fn test_extract_project_name_root_path() {
+        // "/" has no file_name component
+        assert_eq!(extract_project_name("/"), "unknown");
+    }
+
+    #[test]
+    fn test_extract_project_name_dot_dot() {
+        // ".." has no file_name
+        assert_eq!(extract_project_name(".."), "unknown");
+    }
+
+    #[test]
+    fn test_extract_project_name_hidden_directory() {
+        assert_eq!(extract_project_name("/home/user/.config"), ".config");
+    }
+
+    #[test]
+    fn test_extract_project_name_deeply_nested() {
+        assert_eq!(
+            extract_project_name("/a/b/c/d/e/f/project"),
+            "project"
+        );
+    }
+
+    #[test]
+    fn test_extract_project_name_with_spaces() {
+        assert_eq!(
+            extract_project_name("/Users/user/My Project"),
+            "My Project"
+        );
+    }
+
+    #[test]
+    fn test_extract_project_name_unicode() {
+        assert_eq!(
+            extract_project_name("/Users/ユーザー/プロジェクト"),
+            "プロジェクト"
+        );
+    }
+
+    // ── filter_recent_projects tests ──────────────────────────────
+
+    fn make_recent(path: &str, name: &str) -> RecentProject {
+        RecentProject {
+            path: path.to_string(),
+            name: name.to_string(),
+            last_opened: 1700000000.0,
+            git_branch: None,
+        }
+    }
+
+    #[test]
+    fn test_filter_recent_projects_empty_lists() {
+        let result = filter_recent_projects(vec![], &[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_recent_projects_no_open_paths() {
+        let recent = vec![
+            make_recent("/projects/a", "a"),
+            make_recent("/projects/b", "b"),
+        ];
+        let result = filter_recent_projects(recent, &[]);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_recent_projects_removes_open_projects() {
+        let recent = vec![
+            make_recent("/projects/a", "a"),
+            make_recent("/projects/b", "b"),
+            make_recent("/projects/c", "c"),
+        ];
+        let open = vec!["/projects/b".to_string()];
+        let result = filter_recent_projects(recent, &open);
+        assert_eq!(result.len(), 2);
+        assert!(result.iter().all(|p| p.path != "/projects/b"));
+    }
+
+    #[test]
+    fn test_filter_recent_projects_all_open() {
+        let recent = vec![
+            make_recent("/projects/a", "a"),
+            make_recent("/projects/b", "b"),
+        ];
+        let open = vec![
+            "/projects/a".to_string(),
+            "/projects/b".to_string(),
+        ];
+        let result = filter_recent_projects(recent, &open);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_recent_projects_preserves_order() {
+        let recent = vec![
+            make_recent("/projects/c", "c"),
+            make_recent("/projects/a", "a"),
+            make_recent("/projects/b", "b"),
+        ];
+        let open = vec!["/projects/a".to_string()];
+        let result = filter_recent_projects(recent, &open);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].path, "/projects/c");
+        assert_eq!(result[1].path, "/projects/b");
+    }
+
+    #[test]
+    fn test_filter_recent_projects_no_match_in_open() {
+        let recent = vec![make_recent("/projects/x", "x")];
+        let open = vec!["/projects/y".to_string()];
+        let result = filter_recent_projects(recent, &open);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "/projects/x");
+    }
+
+    #[test]
+    fn test_filter_recent_projects_exact_match_required() {
+        let recent = vec![
+            make_recent("/projects/abc", "abc"),
+            make_recent("/projects/ab", "ab"),
+        ];
+        let open = vec!["/projects/ab".to_string()];
+        let result = filter_recent_projects(recent, &open);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "/projects/abc");
+    }
+
+    // ── handle_client_action tests (no app_handle) ────────────────
+
+    #[tokio::test]
+    async fn test_handle_client_action_returns_early_without_app_handle() {
+        let state = AppState {
+            auth_token: Arc::new(RwLock::new("token".to_string())),
+            app_handle: None,
+        };
+        // Should return without panicking
+        handle_client_action(
+            &state,
+            ClientAction::OpenProject {
+                path: "/some/path".to_string(),
+            },
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_handle_client_action_close_returns_early_without_app_handle() {
+        let state = AppState {
+            auth_token: Arc::new(RwLock::new("token".to_string())),
+            app_handle: None,
+        };
+        // Should return without panicking
+        handle_client_action(
+            &state,
+            ClientAction::CloseProject {
+                path: "/some/path".to_string(),
+            },
+        )
+        .await;
+    }
+
+    // ── Additional router integration tests ───────────────────────
+
+    #[tokio::test]
+    async fn test_token_path_handler_token_only_trailing_slash() {
+        let router = test_router("tok");
+        let (status, _body) = send_request(router, "/tok/").await;
+        // "/" in inner router has no route, but should not panic
+        assert!(
+            status == StatusCode::OK || status == StatusCode::NOT_FOUND,
+            "Expected OK or NOT_FOUND for token-only with trailing slash, got {}",
+            status
+        );
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_double_slash_after_token() {
+        let router = test_router("tok");
+        let (status, _body) = send_request(router, "/tok//api/health").await;
+        // Inner path becomes "//api/health" which won't match /api/health
+        // but should not panic
+        assert!(
+            status == StatusCode::OK || status == StatusCode::NOT_FOUND,
+            "Expected valid response, got {}",
+            status
+        );
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_ws_without_upgrade() {
+        // Requesting /ws without WebSocket upgrade headers should not match
+        // or should return an error, but should not panic.
+        let router = test_router("tok");
+        let (status, _body) = send_request(router, "/tok/ws").await;
+        // axum returns 400 or similar when upgrade headers are missing
+        assert_ne!(
+            status,
+            StatusCode::OK,
+            "WS endpoint without upgrade should not return 200"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_public_health_returns_version_from_cargo() {
+        let router = test_router("irrelevant");
+        let (status, body) = send_request(router, "/api/health").await;
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        // version should match Cargo.toml version
+        assert!(!json["version"].as_str().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_with_percent_encoded_path() {
+        let router = test_router("tok");
+        let (status, _body) =
+            send_request(router, "/tok/api/health%20extra").await;
+        // The path won't match /api/health, so should 404
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    // ── Server lifecycle edge cases ─────────────────────────────
+
+    #[tokio::test]
+    async fn test_start_server_shutdown_before_any_request() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let token = Arc::new(RwLock::new("tok".to_string()));
+
+        let handle = tokio::spawn(async move {
+            start_server(listener, shutdown_rx, token, None)
+                .await
+                .unwrap();
+        });
+
+        // Immediately shut down without sending any requests
+        shutdown_tx.send(()).unwrap();
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            handle,
+        )
+        .await;
+        assert!(result.is_ok(), "Server should shut down promptly");
+        assert!(result.unwrap().is_ok(), "Server task should complete cleanly");
+    }
+
+    #[tokio::test]
+    async fn test_start_server_multiple_health_checks() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let token = Arc::new(RwLock::new("multi".to_string()));
+
+        tokio::spawn(async move {
+            start_server(listener, shutdown_rx, token, None)
+                .await
+                .unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let client = reqwest::Client::new();
+        // Send multiple requests to verify server handles concurrent connections
+        for _ in 0..5 {
+            let resp = client
+                .get(format!("http://{}/api/health", addr))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), 200);
+        }
+
+        let _ = shutdown_tx.send(());
+    }
+
+    // ── StatusUpdate with multiple terminals ──────────────────────
+
+    #[test]
+    fn test_status_update_multiple_terminals() {
+        let update = StatusUpdate {
+            open_projects: vec![],
+            recent_projects: vec![],
+            terminals: vec![
+                TerminalStatus {
+                    id: 1,
+                    is_alive: true,
+                    process_name: Some("cargo".to_string()),
+                    cwd: Some("/projects/kiri".to_string()),
+                },
+                TerminalStatus {
+                    id: 2,
+                    is_alive: false,
+                    process_name: None,
+                    cwd: None,
+                },
+                TerminalStatus {
+                    id: 3,
+                    is_alive: true,
+                    process_name: Some("node".to_string()),
+                    cwd: Some("/projects/web".to_string()),
+                },
+            ],
+            timestamp: 1700000000,
+        };
+
+        let json = serde_json::to_value(&update).unwrap();
+        let terminals = json["terminals"].as_array().unwrap();
+        assert_eq!(terminals.len(), 3);
+        assert_eq!(terminals[0]["id"], 1);
+        assert_eq!(terminals[0]["isAlive"], true);
+        assert_eq!(terminals[1]["id"], 2);
+        assert_eq!(terminals[1]["isAlive"], false);
+        assert!(terminals[1]["processName"].is_null());
+        assert_eq!(terminals[2]["processName"], "node");
+    }
+
+    // ── StatusUpdate with mixed open and recent projects ─────────
+
+    #[test]
+    fn test_status_update_with_mixed_projects() {
+        let update = StatusUpdate {
+            open_projects: vec![
+                OpenProject {
+                    path: "/projects/a".to_string(),
+                    name: "a".to_string(),
+                    branch: Some("main".to_string()),
+                },
+                OpenProject {
+                    path: "/projects/b".to_string(),
+                    name: "b".to_string(),
+                    branch: None,
+                },
+            ],
+            recent_projects: vec![RecentProject {
+                path: "/projects/c".to_string(),
+                name: "c".to_string(),
+                last_opened: 1700000000.0,
+                git_branch: Some("develop".to_string()),
+            }],
+            terminals: vec![],
+            timestamp: 1700000000,
+        };
+
+        let json = serde_json::to_value(&update).unwrap();
+        assert_eq!(json["openProjects"].as_array().unwrap().len(), 2);
+        assert_eq!(json["recentProjects"].as_array().unwrap().len(), 1);
+        assert_eq!(json["recentProjects"][0]["gitBranch"], "develop");
+    }
+
+    // ── collect_full_status with None app handle ─────────────────
+
+    #[test]
+    fn test_collect_full_status_none_app_handle_returns_none() {
+        let state = AppState {
+            auth_token: Arc::new(RwLock::new("any-token".to_string())),
+            app_handle: None,
+        };
+        let result = collect_full_status(&state);
+        assert!(result.is_none());
+    }
+
+    // ── WebSocket integration tests ─────────────────────────────────
+
+    /// Helper: start a test server and return (addr, shutdown_tx, token).
+    async fn start_test_server(
+        token: &str,
+    ) -> (
+        std::net::SocketAddr,
+        oneshot::Sender<()>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let tk = Arc::new(RwLock::new(token.to_string()));
+
+        tokio::spawn(async move {
+            start_server(listener, shutdown_rx, tk, None)
+                .await
+                .unwrap();
+        });
+
+        // Give the server a moment to start
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        (addr, shutdown_tx)
+    }
+
+    #[tokio::test]
+    async fn test_ws_closes_when_no_app_handle() {
+        // When app_handle is None, collect_full_status returns None,
+        // which causes the WebSocket loop to break and close the
+        // connection after the first tick.
+        let (addr, shutdown_tx) = start_test_server("ws-tok").await;
+
+        let url = format!("ws://{}/ws-tok/ws", addr);
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("WS connect failed");
+
+        use futures_util::StreamExt;
+        let (_write, mut read) = ws_stream.split();
+
+        // The server should close the connection because collect_full_status
+        // returns None (no app_handle). We should receive a close or the
+        // stream should end.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            read.next(),
+        )
+        .await;
+
+        // The server closes the connection because collect_full_status
+        // returns None. This may manifest as: stream end (None), a close
+        // frame, or a connection-reset error (server drops socket without
+        // performing the close handshake).
+        match result {
+            Ok(None) => {}
+            Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_)))) => {}
+            Ok(Some(Err(_))) => {} // connection reset / protocol error is acceptable
+            Ok(Some(Ok(msg))) => {
+                panic!("Unexpected WS message: {:?}", msg);
+            }
+            Err(_) => panic!("Timed out waiting for WS close"),
+        }
+
+        let _ = shutdown_tx.send(());
+    }
+
+    /// Helper: assert a WS read result represents a closed connection.
+    ///
+    /// Accepts: stream end (None), close frame, or connection-reset
+    /// error (the server may drop the socket without a close handshake
+    /// when `collect_full_status` returns `None`).
+    fn assert_ws_closed(
+        result: Result<
+            Option<
+                Result<
+                    tokio_tungstenite::tungstenite::Message,
+                    tokio_tungstenite::tungstenite::Error,
+                >,
+            >,
+            tokio::time::error::Elapsed,
+        >,
+    ) {
+        match result {
+            Ok(None) => {}
+            Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_)))) => {}
+            Ok(Some(Err(_))) => {} // connection reset is acceptable
+            Ok(Some(Ok(msg))) => {
+                panic!("Expected WS close, got message: {:?}", msg);
+            }
+            Err(_) => panic!("Timed out waiting for WS close"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ws_handles_invalid_json_message() {
+        // Sending invalid JSON should be ignored (logged as warning),
+        // and the connection should stay open briefly before the next
+        // tick closes it (because no app_handle).
+        let (addr, shutdown_tx) = start_test_server("ws-inv").await;
+
+        let url = format!("ws://{}/ws-inv/ws", addr);
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("WS connect failed");
+
+        use futures_util::{SinkExt, StreamExt};
+        let (mut write, mut read) = ws_stream.split();
+
+        // Send invalid JSON - this should not crash the server
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                "not valid json".into(),
+            ))
+            .await
+            .unwrap();
+
+        // The connection should eventually close (no app_handle)
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            read.next(),
+        )
+        .await;
+
+        assert_ws_closed(result);
+
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_ws_handles_client_action_without_app_handle() {
+        // Sending a valid ClientAction JSON when app_handle is None
+        // should not crash; handle_client_action returns early.
+        let (addr, shutdown_tx) = start_test_server("ws-act").await;
+
+        let url = format!("ws://{}/ws-act/ws", addr);
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("WS connect failed");
+
+        use futures_util::{SinkExt, StreamExt};
+        let (mut write, mut read) = ws_stream.split();
+
+        // Send a valid openProject action
+        let action_json = r#"{"action":"openProject","path":"/tmp/test"}"#;
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                action_json.into(),
+            ))
+            .await
+            .unwrap();
+
+        // Send a valid closeProject action
+        let close_json = r#"{"action":"closeProject","path":"/tmp/test"}"#;
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Text(
+                close_json.into(),
+            ))
+            .await
+            .unwrap();
+
+        // Connection should eventually close (no app_handle)
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            read.next(),
+        )
+        .await;
+
+        assert_ws_closed(result);
+
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_ws_handles_close_frame() {
+        // Sending a close frame should cause the server to close
+        // the connection gracefully.
+        let (addr, shutdown_tx) = start_test_server("ws-cls").await;
+
+        let url = format!("ws://{}/ws-cls/ws", addr);
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("WS connect failed");
+
+        use futures_util::{SinkExt, StreamExt};
+        let (mut write, mut read) = ws_stream.split();
+
+        // Send close frame
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Close(None))
+            .await
+            .unwrap();
+
+        // Server should acknowledge close
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            read.next(),
+        )
+        .await;
+
+        // Stream should end or return close
+        match result {
+            Ok(None) => {}
+            Ok(Some(Ok(tokio_tungstenite::tungstenite::Message::Close(_)))) => {}
+            Ok(Some(other)) => {
+                // Some implementations may return other frames before close
+                let _ = other;
+            }
+            Err(_) => panic!("Timed out waiting for WS close acknowledgement"),
+        }
+
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_ws_handles_ping_frame() {
+        // Sending a ping should elicit a pong (covered by the Ping branch).
+        let (addr, shutdown_tx) = start_test_server("ws-png").await;
+
+        let url = format!("ws://{}/ws-png/ws", addr);
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("WS connect failed");
+
+        use futures_util::{SinkExt, StreamExt};
+        let (mut write, mut read) = ws_stream.split();
+
+        // Send ping with payload
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Ping(
+                b"hello".to_vec().into(),
+            ))
+            .await
+            .unwrap();
+
+        // We should get a pong back or the connection closes (no app_handle).
+        // The ping/pong may be handled by tungstenite automatically at the
+        // protocol level, so we just verify no crash occurs.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            read.next(),
+        )
+        .await;
+
+        // We should get some response (pong, close, or stream end)
+        assert!(result.is_ok(), "Timed out waiting for response to ping");
+
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_ws_handles_binary_frame() {
+        // Sending a binary frame should be handled by the wildcard `_ => {}`
+        // branch without crashing.
+        let (addr, shutdown_tx) = start_test_server("ws-bin").await;
+
+        let url = format!("ws://{}/ws-bin/ws", addr);
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("WS connect failed");
+
+        use futures_util::{SinkExt, StreamExt};
+        let (mut write, mut read) = ws_stream.split();
+
+        // Send binary frame
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Binary(
+                b"binary data".to_vec().into(),
+            ))
+            .await
+            .unwrap();
+
+        // Connection should eventually close (no app_handle)
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            read.next(),
+        )
+        .await;
+
+        // Should close without panic
+        assert!(result.is_ok(), "Timed out - server may have hung on binary frame");
+
+        let _ = shutdown_tx.send(());
+    }
+
+    // ── filter_recent_projects additional edge cases ─────────────────
+
+    #[test]
+    fn test_filter_recent_projects_duplicate_entries() {
+        // Duplicate paths in recent list: both should be filtered
+        let recent = vec![
+            make_recent("/projects/a", "a"),
+            make_recent("/projects/a", "a-dup"),
+        ];
+        let open = vec!["/projects/a".to_string()];
+        let result = filter_recent_projects(recent, &open);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_recent_projects_preserves_git_branch() {
+        let mut recent_with_branch = make_recent("/projects/keep", "keep");
+        recent_with_branch.git_branch = Some("feature/xyz".to_string());
+        let recent = vec![
+            recent_with_branch,
+            make_recent("/projects/remove", "remove"),
+        ];
+        let open = vec!["/projects/remove".to_string()];
+        let result = filter_recent_projects(recent, &open);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "/projects/keep");
+        assert_eq!(result[0].git_branch, Some("feature/xyz".to_string()));
+    }
+
+    #[test]
+    fn test_filter_recent_projects_multiple_open_paths() {
+        let recent = vec![
+            make_recent("/a", "a"),
+            make_recent("/b", "b"),
+            make_recent("/c", "c"),
+            make_recent("/d", "d"),
+        ];
+        let open = vec![
+            "/a".to_string(),
+            "/c".to_string(),
+            "/d".to_string(),
+        ];
+        let result = filter_recent_projects(recent, &open);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "/b");
+    }
+
+    #[test]
+    fn test_filter_recent_projects_case_sensitive() {
+        let recent = vec![
+            make_recent("/Projects/A", "A"),
+            make_recent("/projects/a", "a"),
+        ];
+        let open = vec!["/projects/a".to_string()];
+        let result = filter_recent_projects(recent, &open);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].path, "/Projects/A");
+    }
+
+    #[test]
+    fn test_filter_recent_projects_single_recent_not_open() {
+        let recent = vec![make_recent("/only", "only")];
+        let open = vec!["/other".to_string()];
+        let result = filter_recent_projects(recent, &open);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_filter_recent_projects_single_recent_is_open() {
+        let recent = vec![make_recent("/only", "only")];
+        let open = vec!["/only".to_string()];
+        let result = filter_recent_projects(recent, &open);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_recent_projects_empty_path_string() {
+        let recent = vec![make_recent("", "empty")];
+        let open = vec!["".to_string()];
+        let result = filter_recent_projects(recent, &open);
+        assert!(result.is_empty());
+    }
+
+    // ── extract_project_name additional edge cases ───────────────────
+
+    #[test]
+    fn test_extract_project_name_dot() {
+        // "." represents current directory
+        let name = extract_project_name(".");
+        // Path::file_name for "." returns None
+        assert_eq!(name, "unknown");
+    }
+
+    #[test]
+    fn test_extract_project_name_with_extension() {
+        assert_eq!(extract_project_name("/home/user/project.git"), "project.git");
+    }
+
+    #[test]
+    fn test_extract_project_name_hyphenated() {
+        assert_eq!(
+            extract_project_name("/Users/user/my-cool-project"),
+            "my-cool-project"
+        );
+    }
+
+    #[test]
+    fn test_extract_project_name_windows_style_path() {
+        // On Unix, backslashes are valid filename characters
+        let name = extract_project_name("C:\\Users\\test\\project");
+        // The whole string is treated as a single filename on Unix
+        assert!(!name.is_empty());
+    }
+
+    // ── RecentProject round-trip serialization ──────────────────────
+
+    #[test]
+    fn test_recent_project_serde_round_trip() {
+        let project = RecentProject {
+            path: "/test/path".to_string(),
+            name: "path".to_string(),
+            last_opened: 1700000000.5,
+            git_branch: Some("feature/test".to_string()),
+        };
+        let json_str = serde_json::to_string(&project).unwrap();
+        let deserialized: RecentProject = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(deserialized.path, project.path);
+        assert_eq!(deserialized.name, project.name);
+        assert_eq!(deserialized.last_opened, project.last_opened);
+        assert_eq!(deserialized.git_branch, project.git_branch);
+    }
+
+    #[test]
+    fn test_recent_project_serde_round_trip_no_branch() {
+        let project = RecentProject {
+            path: "/test".to_string(),
+            name: "test".to_string(),
+            last_opened: 0.0,
+            git_branch: None,
+        };
+        let json_str = serde_json::to_string(&project).unwrap();
+        let deserialized: RecentProject = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(deserialized.git_branch, None);
+    }
+
+    // ── StatusUpdate with all field types populated ──────────────────
+
+    #[test]
+    fn test_status_update_full_round_trip_json() {
+        let update = StatusUpdate {
+            open_projects: vec![
+                OpenProject {
+                    path: "/a".to_string(),
+                    name: "a".to_string(),
+                    branch: Some("main".to_string()),
+                },
+            ],
+            recent_projects: vec![
+                RecentProject {
+                    path: "/b".to_string(),
+                    name: "b".to_string(),
+                    last_opened: 1700000000.0,
+                    git_branch: Some("develop".to_string()),
+                },
+            ],
+            terminals: vec![
+                TerminalStatus {
+                    id: 1,
+                    is_alive: true,
+                    process_name: Some("vim".to_string()),
+                    cwd: Some("/home".to_string()),
+                },
+            ],
+            timestamp: 9999999999,
+        };
+        let json_str = serde_json::to_string(&update).unwrap();
+        // Verify JSON can be parsed back as a Value
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed["timestamp"], 9999999999u64);
+        assert_eq!(parsed["openProjects"][0]["branch"], "main");
+        assert_eq!(parsed["recentProjects"][0]["gitBranch"], "develop");
+        assert_eq!(parsed["terminals"][0]["cwd"], "/home");
+    }
+
+    // ── token_path_handler with HTTP methods other than GET ──────────
+
+    /// Helper: send a request with a specific HTTP method.
+    async fn send_request_with_method(
+        router: Router,
+        method: axum::http::Method,
+        uri: &str,
+    ) -> (StatusCode, Vec<u8>) {
+        use tower::ServiceExt;
+
+        let request = axum::http::Request::builder()
+            .method(method)
+            .uri(uri)
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = router.oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, body.to_vec())
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_post_method() {
+        let router = test_router("tok");
+        let (status, _body) = send_request_with_method(
+            router,
+            axum::http::Method::POST,
+            "/tok/api/health",
+        )
+        .await;
+        // GET-only route, POST should return 405 Method Not Allowed
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_put_method() {
+        let router = test_router("tok");
+        let (status, _body) = send_request_with_method(
+            router,
+            axum::http::Method::PUT,
+            "/tok/api/health",
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn test_token_path_handler_head_health() {
+        let router = test_router("tok");
+        let (status, _body) = send_request_with_method(
+            router,
+            axum::http::Method::HEAD,
+            "/tok/api/health",
+        )
+        .await;
+        // axum automatically handles HEAD for GET routes
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_public_health_post_method_not_allowed() {
+        let router = test_router("tok");
+        let (status, _body) = send_request_with_method(
+            router,
+            axum::http::Method::POST,
+            "/api/health",
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    // ── Multiple concurrent WebSocket connections ───────────────────
+
+    #[tokio::test]
+    async fn test_ws_multiple_connections_close_gracefully() {
+        let (addr, shutdown_tx) = start_test_server("ws-multi").await;
+
+        let url = format!("ws://{}/ws-multi/ws", addr);
+
+        // Open two connections simultaneously
+        let (ws1, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("WS connect 1 failed");
+        let (ws2, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("WS connect 2 failed");
+
+        use futures_util::StreamExt;
+
+        let (_, mut read1) = ws1.split();
+        let (_, mut read2) = ws2.split();
+
+        // Both should close because no app_handle
+        let r1 = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            read1.next(),
+        )
+        .await;
+        let r2 = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            read2.next(),
+        )
+        .await;
+
+        assert!(r1.is_ok(), "WS1 timed out");
+        assert!(r2.is_ok(), "WS2 timed out");
+
+        let _ = shutdown_tx.send(());
+    }
+
+    // ── WebSocket with wrong token ──────────────────────────────────
+
+    #[tokio::test]
+    async fn test_ws_wrong_token_returns_404() {
+        let (addr, shutdown_tx) = start_test_server("correct-token").await;
+
+        // Try to connect with wrong token - should get HTTP 404 before upgrade
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("http://{}/wrong-token/ws", addr))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 404);
+
+        let _ = shutdown_tx.send(());
+    }
+
+    #[tokio::test]
+    async fn test_ws_no_token_returns_404() {
+        let (addr, shutdown_tx) = start_test_server("tok").await;
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .get(format!("http://{}/ws", addr))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 404);
+
+        let _ = shutdown_tx.send(());
     }
 }

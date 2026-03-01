@@ -1217,4 +1217,278 @@ mod tests {
         // Original "test content" was replaced, so we should have deletions too
         assert!(deletions > 0);
     }
+
+    // =========================================================================
+    // Tests for uncovered lines
+    // =========================================================================
+
+    /// Test A: get_git_diff for a staged-only file (no working directory changes).
+    /// This covers lines 218-228 where diff_index_to_workdir returns 0 deltas
+    /// and the code falls back to diff_tree_to_index (staged changes).
+    #[test]
+    fn test_get_git_diff_staged_only_no_workdir_changes() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        // Create and commit a file
+        let sig = test_signature();
+        fs::write(dir.path().join("file.txt"), "original line 1\noriginal line 2\noriginal line 3").unwrap();
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[]).unwrap();
+
+        // Modify the file and stage the change
+        fs::write(dir.path().join("file.txt"), "modified line 1\noriginal line 2\noriginal line 3").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+
+        // At this point the working directory matches the index, so
+        // diff_index_to_workdir has 0 deltas. The code should fall back to
+        // diff_tree_to_index which shows the staged diff.
+        let result = get_git_diff(
+            dir.path().to_string_lossy().to_string(),
+            "file.txt".to_string(),
+        );
+        assert!(result.is_ok());
+
+        let diff = result.unwrap();
+        // The diff should show the staged change (tree -> index)
+        assert!(!diff.is_empty(), "Expected non-empty diff for staged-only changes");
+        assert!(
+            diff.contains("modified line 1") || diff.contains("original line 1"),
+            "Diff should reference the changed line content"
+        );
+    }
+
+    /// Test B: calculate_diff_stats with both staged AND unstaged changes.
+    /// This covers the diff_tree_to_index path (lines 102-111) where
+    /// staged changes are also counted in addition to workdir changes.
+    #[test]
+    fn test_calculate_diff_stats_staged_and_unstaged() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        // Create and commit two files
+        let sig = test_signature();
+        fs::write(dir.path().join("a.txt"), "line a1\nline a2").unwrap();
+        fs::write(dir.path().join("b.txt"), "line b1\nline b2").unwrap();
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("a.txt")).unwrap();
+        index.add_path(Path::new("b.txt")).unwrap();
+        index.write().unwrap();
+
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[]).unwrap();
+
+        // Stage a change to a.txt (this creates an index change = diff_tree_to_index)
+        fs::write(dir.path().join("a.txt"), "modified a1\nline a2\nnew a3").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("a.txt")).unwrap();
+        index.write().unwrap();
+
+        // Make a working directory change to b.txt (unstaged = diff_index_to_workdir)
+        fs::write(dir.path().join("b.txt"), "modified b1\nline b2\nnew b3").unwrap();
+
+        let (additions, deletions) = calculate_diff_stats(&repo, &dir.path().to_string_lossy());
+
+        // Both staged (a.txt) and unstaged (b.txt) changes should be counted
+        // a.txt staged: 1 deletion (line a1) + 2 insertions (modified a1, new a3)
+        // b.txt unstaged: 1 deletion (line b1) + 2 insertions (modified b1, new b3)
+        assert!(additions >= 2, "Expected at least 2 additions, got {}", additions);
+        assert!(deletions >= 1, "Expected at least 1 deletion, got {}", deletions);
+    }
+
+    /// Test C: get_git_diff producing context lines (space prefix).
+    /// This covers line 236: `' ' => "  "` in the diff print callback.
+    /// Context lines appear when there are unchanged lines surrounding a change.
+    #[test]
+    fn test_get_git_diff_context_lines() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        // Create a file with many lines so that context lines appear in the diff
+        let sig = test_signature();
+        let original = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10";
+        fs::write(dir.path().join("ctx.txt"), original).unwrap();
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("ctx.txt")).unwrap();
+        index.write().unwrap();
+
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[]).unwrap();
+
+        // Modify only the middle line so that surrounding lines become context
+        let modified = "line 1\nline 2\nline 3\nline 4\nCHANGED\nline 6\nline 7\nline 8\nline 9\nline 10";
+        fs::write(dir.path().join("ctx.txt"), modified).unwrap();
+
+        let result = get_git_diff(
+            dir.path().to_string_lossy().to_string(),
+            "ctx.txt".to_string(),
+        );
+        assert!(result.is_ok());
+
+        let diff = result.unwrap();
+        assert!(!diff.is_empty(), "Expected non-empty diff");
+
+        // The diff should contain context lines (prefixed with "  " - two spaces)
+        // These are lines surrounding the change that are unchanged.
+        assert!(
+            diff.contains("  line"),
+            "Expected context lines prefixed with double-space in diff output. Got:\n{}",
+            diff
+        );
+        // Should also contain the actual change
+        assert!(diff.contains("+ CHANGED"), "Expected addition line for CHANGED");
+        assert!(diff.contains("- line 5"), "Expected deletion line for line 5");
+    }
+
+    /// Test D: get_all_git_diffs with binary image files.
+    /// This covers lines 284-290 where is_image_file returns true and
+    /// the code retrieves base64-encoded content instead of text diff.
+    #[test]
+    fn test_get_all_git_diffs_binary_image_untracked() {
+        let dir = tempdir().unwrap();
+        Repository::init(dir.path()).unwrap();
+
+        // Create an untracked PNG file (binary image)
+        // Use a minimal valid PNG header so the file is clearly binary
+        let png_header: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, // PNG signature
+            0x00, 0x00, 0x00, 0x0D, // IHDR length
+            0x49, 0x48, 0x44, 0x52, // IHDR
+        ];
+        fs::write(dir.path().join("image.png"), &png_header).unwrap();
+
+        let result = get_all_git_diffs(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let diffs = result.unwrap();
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].path, "image.png");
+        assert!(diffs[0].is_binary, "Expected is_binary to be true for .png file");
+        assert!(diffs[0].diff.is_empty(), "Expected empty diff string for binary file");
+        assert!(
+            diffs[0].current_content_base64.is_some(),
+            "Expected base64-encoded current content for binary file"
+        );
+        // Untracked file should have no original content
+        assert!(
+            diffs[0].original_content_base64.is_none(),
+            "Expected no original content for untracked binary file"
+        );
+        assert_eq!(diffs[0].status, GitFileStatus::Untracked);
+    }
+
+    /// Test D (continued): get_all_git_diffs with a committed binary image that is modified.
+    /// This covers the branch at line 285-286 where file_status != Untracked,
+    /// so get_original_file_base64 is also called.
+    #[test]
+    fn test_get_all_git_diffs_binary_image_modified() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+
+        let sig = test_signature();
+
+        // Create and commit a PNG file
+        let original_png: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x01,
+        ];
+        fs::write(dir.path().join("icon.png"), &original_png).unwrap();
+
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("icon.png")).unwrap();
+        index.write().unwrap();
+
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add icon", &tree, &[]).unwrap();
+
+        // Modify the PNG file (change some bytes)
+        let modified_png: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA,
+        ];
+        fs::write(dir.path().join("icon.png"), &modified_png).unwrap();
+
+        let result = get_all_git_diffs(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let diffs = result.unwrap();
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].path, "icon.png");
+        assert!(diffs[0].is_binary, "Expected is_binary to be true for .png file");
+        assert!(diffs[0].diff.is_empty(), "Expected empty diff for binary file");
+        assert!(
+            diffs[0].current_content_base64.is_some(),
+            "Expected base64 current content for modified binary file"
+        );
+        assert!(
+            diffs[0].original_content_base64.is_some(),
+            "Expected base64 original content for committed binary file"
+        );
+        assert_eq!(diffs[0].status, GitFileStatus::Modified);
+    }
+
+    #[test]
+    fn test_get_all_git_diffs_with_untracked_image() {
+        let dir = tempdir().unwrap();
+        Repository::init(dir.path()).unwrap();
+
+        // Create an untracked PNG file
+        let png_bytes: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47];
+        fs::write(dir.path().join("new.png"), &png_bytes).unwrap();
+
+        let result = get_all_git_diffs(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+
+        let diffs = result.unwrap();
+        assert_eq!(diffs.len(), 1);
+        assert_eq!(diffs[0].path, "new.png");
+        assert!(diffs[0].is_binary);
+        assert!(diffs[0].current_content_base64.is_some());
+        // Untracked file should have no original content
+        assert!(diffs[0].original_content_base64.is_none());
+    }
+
+    #[test]
+    fn test_get_git_diff_staged_only_fallback_path() {
+        let dir = tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = test_signature();
+
+        // Commit a file
+        fs::write(dir.path().join("test.txt"), "v1").unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.add_path(Path::new("test.txt")).unwrap();
+        idx.write().unwrap();
+        let tid = idx.write_tree().unwrap();
+        let tree = repo.find_tree(tid).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+
+        // Modify and stage but don't modify working dir further
+        fs::write(dir.path().join("test.txt"), "v2").unwrap();
+        let mut idx = repo.index().unwrap();
+        idx.add_path(Path::new("test.txt")).unwrap();
+        idx.write().unwrap();
+
+        // get_git_diff should find the staged change via fallback
+        let result = get_git_diff(
+            dir.path().to_string_lossy().to_string(),
+            "test.txt".to_string(),
+        );
+        assert!(result.is_ok());
+        let diff = result.unwrap();
+        assert!(!diff.is_empty());
+    }
 }

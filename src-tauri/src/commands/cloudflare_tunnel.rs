@@ -94,13 +94,20 @@ pub fn parse_quick_tunnel_url(line: &str) -> Option<String> {
 pub(crate) fn parse_tunnel_url_from_stderr(
     child: &mut std::process::Child,
 ) -> Result<String, String> {
+    parse_tunnel_url_from_stderr_with_timeout(child, std::time::Duration::from_secs(30))
+}
+
+/// Internal implementation with configurable timeout for testing.
+pub(crate) fn parse_tunnel_url_from_stderr_with_timeout(
+    child: &mut std::process::Child,
+    timeout: std::time::Duration,
+) -> Result<String, String> {
     use std::io::{BufRead, BufReader, Read};
 
     let stderr = child.stderr.take().ok_or("Failed to capture stderr")?;
     let mut reader = BufReader::new(stderr);
 
     let start = std::time::Instant::now();
-    let timeout = std::time::Duration::from_secs(30);
     let mut line_buf = String::new();
 
     loop {
@@ -410,5 +417,420 @@ mod tests {
 
         // Clean up
         let _ = child.wait();
+    }
+
+    // --- Additional TunnelState tests ---
+
+    #[test]
+    fn test_tunnel_state_mutate_fields() {
+        let mut state = TunnelState::new();
+
+        // Simulate starting a tunnel
+        state.is_running = true;
+        state.url = Some("https://test.trycloudflare.com".to_string());
+        assert!(state.is_running);
+        assert_eq!(
+            state.url,
+            Some("https://test.trycloudflare.com".to_string())
+        );
+
+        // Simulate stopping a tunnel
+        state.is_running = false;
+        state.url = None;
+        state.child = None;
+        assert!(!state.is_running);
+        assert!(state.url.is_none());
+        assert!(state.child.is_none());
+    }
+
+    #[test]
+    fn test_tunnel_state_type_is_arc_mutex() {
+        // Verify TunnelStateType can be created and locked
+        let state: TunnelStateType = Arc::new(Mutex::new(TunnelState::new()));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let guard = state.lock().await;
+            assert!(!guard.is_running);
+            assert!(guard.url.is_none());
+        });
+    }
+
+    #[test]
+    fn test_tunnel_state_type_concurrent_access() {
+        let state: TunnelStateType = Arc::new(Mutex::new(TunnelState::new()));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            // First lock: set running
+            {
+                let mut guard = state.lock().await;
+                guard.is_running = true;
+                guard.url = Some("https://abc.trycloudflare.com".to_string());
+            }
+            // Second lock: verify state persists
+            {
+                let guard = state.lock().await;
+                assert!(guard.is_running);
+                assert_eq!(
+                    guard.url,
+                    Some("https://abc.trycloudflare.com".to_string())
+                );
+            }
+            // Third lock: reset
+            {
+                let mut guard = state.lock().await;
+                guard.is_running = false;
+                guard.url = None;
+                guard.child = None;
+            }
+            // Verify reset
+            {
+                let guard = state.lock().await;
+                assert!(!guard.is_running);
+                assert!(guard.url.is_none());
+            }
+        });
+    }
+
+    // --- Additional parse_quick_tunnel_url edge case tests ---
+
+    #[test]
+    fn test_parse_quick_tunnel_url_with_path_suffix() {
+        // URL followed by a path - regex should match just the domain
+        let line = "https://test-tunnel.trycloudflare.com/some/path";
+        let result = parse_quick_tunnel_url(line);
+        assert_eq!(
+            result,
+            Some("https://test-tunnel.trycloudflare.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_quick_tunnel_url_with_query_params() {
+        let line = "https://test-tunnel.trycloudflare.com?foo=bar";
+        let result = parse_quick_tunnel_url(line);
+        assert_eq!(
+            result,
+            Some("https://test-tunnel.trycloudflare.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_quick_tunnel_url_multiple_urls_returns_first() {
+        let line = "https://first-url.trycloudflare.com and https://second-url.trycloudflare.com";
+        let result = parse_quick_tunnel_url(line);
+        // re.find returns the first match
+        assert_eq!(
+            result,
+            Some("https://first-url.trycloudflare.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_quick_tunnel_url_http_not_https() {
+        // Should NOT match http:// (only https)
+        let line = "http://test-tunnel.trycloudflare.com";
+        assert_eq!(parse_quick_tunnel_url(line), None);
+    }
+
+    #[test]
+    fn test_parse_quick_tunnel_url_partial_domain() {
+        // Should NOT match a different domain that contains trycloudflare
+        let line = "https://nottrycloudflare.com";
+        assert_eq!(parse_quick_tunnel_url(line), None);
+    }
+
+    #[test]
+    fn test_parse_quick_tunnel_url_numeric_subdomain() {
+        let line = "https://12345.trycloudflare.com";
+        assert_eq!(
+            parse_quick_tunnel_url(line),
+            Some("https://12345.trycloudflare.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_quick_tunnel_url_single_char_subdomain() {
+        let line = "https://a.trycloudflare.com";
+        assert_eq!(
+            parse_quick_tunnel_url(line),
+            Some("https://a.trycloudflare.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_quick_tunnel_url_whitespace_only() {
+        assert_eq!(parse_quick_tunnel_url("   "), None);
+    }
+
+    #[test]
+    fn test_parse_quick_tunnel_url_newline_in_line() {
+        let line = "https://test.trycloudflare.com\n";
+        assert_eq!(
+            parse_quick_tunnel_url(line),
+            Some("https://test.trycloudflare.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_quick_tunnel_url_realistic_cloudflared_output() {
+        // Real-world-like cloudflared output
+        let line = "2024-01-15T10:30:00Z INF +--------------------------------------------------------------------------------------------+";
+        assert_eq!(parse_quick_tunnel_url(line), None);
+
+        let line =
+            "2024-01-15T10:30:00Z INF |  https://autumn-meadow-abc123.trycloudflare.com  |";
+        assert_eq!(
+            parse_quick_tunnel_url(line),
+            Some("https://autumn-meadow-abc123.trycloudflare.com".to_string())
+        );
+    }
+
+    // --- Additional parse_tunnel_url_from_stderr tests ---
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_url_on_first_line() {
+        let mut child = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "echo 'https://immediate.trycloudflare.com' >&2",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        let result = parse_tunnel_url_from_stderr(&mut child);
+        assert_eq!(
+            result,
+            Ok("https://immediate.trycloudflare.com".to_string())
+        );
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_with_realistic_output() {
+        // Simulate realistic cloudflared output with log lines before the URL
+        let script = r#"
+echo '2024-01-15T10:30:00Z INF Starting tunnel' >&2
+echo '2024-01-15T10:30:01Z INF Registered tunnel connection' >&2
+echo '2024-01-15T10:30:02Z INF +----------------------------+' >&2
+echo '2024-01-15T10:30:02Z INF |  https://demo-tunnel.trycloudflare.com  |' >&2
+echo '2024-01-15T10:30:02Z INF +----------------------------+' >&2
+echo '2024-01-15T10:30:03Z INF Connection established' >&2
+"#;
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", script])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        let result = parse_tunnel_url_from_stderr(&mut child);
+        assert_eq!(
+            result,
+            Ok("https://demo-tunnel.trycloudflare.com".to_string())
+        );
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_returns_first_url_only() {
+        // If multiple URLs appear, only the first should be returned
+        let script = r#"
+echo 'https://first-tunnel.trycloudflare.com' >&2
+echo 'https://second-tunnel.trycloudflare.com' >&2
+"#;
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", script])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        let result = parse_tunnel_url_from_stderr(&mut child);
+        assert_eq!(
+            result,
+            Ok("https://first-tunnel.trycloudflare.com".to_string())
+        );
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_long_running_process() {
+        // Simulate a process that outputs the URL then keeps running
+        // The background drain thread should handle the remaining output
+        let script = r#"
+echo 'Starting...' >&2
+echo 'https://long-running.trycloudflare.com' >&2
+sleep 0.1
+echo 'Still running...' >&2
+"#;
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", script])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        let result = parse_tunnel_url_from_stderr(&mut child);
+        assert_eq!(
+            result,
+            Ok("https://long-running.trycloudflare.com".to_string())
+        );
+        // Wait for child to finish to clean up
+        let _ = child.wait();
+    }
+
+    // --- cloudflared_path tests ---
+
+    #[test]
+    fn test_cloudflared_path_returns_pathbuf() {
+        let path = cloudflared_path();
+        // In test (debug) mode, should return simple "cloudflared"
+        assert!(!path.as_os_str().is_empty());
+        assert_eq!(path.file_name().unwrap(), "cloudflared");
+    }
+
+    #[test]
+    fn test_cloudflared_path_is_consistent() {
+        // Calling cloudflared_path() multiple times should return the same result
+        let path1 = cloudflared_path();
+        let path2 = cloudflared_path();
+        assert_eq!(path1, path2);
+    }
+
+    // --- parse_tunnel_url_from_stderr_with_timeout tests ---
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_timeout() {
+        // Spawn a process that continuously writes non-matching lines to stderr
+        // but never writes a matching URL. With a very short timeout, this should
+        // trigger the timeout path.
+        let script = r#"
+while true; do
+    echo "non-matching log line" >&2
+    # Small sleep to avoid overwhelming the pipe buffer
+done
+"#;
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", script])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        // Use a very short timeout (100ms) so the test completes quickly
+        let result = parse_tunnel_url_from_stderr_with_timeout(
+            &mut child,
+            std::time::Duration::from_millis(100),
+        );
+        assert_eq!(
+            result,
+            Err("Timeout waiting for tunnel URL".to_string())
+        );
+
+        // Clean up the child process
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_with_timeout_finds_url() {
+        // Verify the _with_timeout variant works the same as the original
+        // when a URL is present
+        let mut child = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "echo 'https://timeout-test.trycloudflare.com' >&2",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        let result = parse_tunnel_url_from_stderr_with_timeout(
+            &mut child,
+            std::time::Duration::from_secs(5),
+        );
+        assert_eq!(
+            result,
+            Ok("https://timeout-test.trycloudflare.com".to_string())
+        );
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_with_timeout_eof_before_timeout() {
+        // Process exits (EOF) before the timeout - should return the EOF error,
+        // not the timeout error
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "echo 'no url here' >&2"])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        let result = parse_tunnel_url_from_stderr_with_timeout(
+            &mut child,
+            std::time::Duration::from_secs(5),
+        );
+        assert_eq!(
+            result,
+            Err("Could not find tunnel URL in cloudflared output".to_string())
+        );
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn test_parse_tunnel_url_from_stderr_delegates_to_with_timeout() {
+        // Verify the public function delegates correctly by checking
+        // it produces the same result as the _with_timeout variant
+        let mut child1 = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "echo 'https://delegate-test.trycloudflare.com' >&2",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        let mut child2 = std::process::Command::new("sh")
+            .args([
+                "-c",
+                "echo 'https://delegate-test.trycloudflare.com' >&2",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("failed to spawn test process");
+
+        let result1 = parse_tunnel_url_from_stderr(&mut child1);
+        let result2 = parse_tunnel_url_from_stderr_with_timeout(
+            &mut child2,
+            std::time::Duration::from_secs(30),
+        );
+        assert_eq!(result1, result2);
+
+        let _ = child1.wait();
+        let _ = child2.wait();
+    }
+
+    // --- is_cloudflared_available edge case tests ---
+
+    #[test]
+    fn test_is_cloudflared_available_returns_bool() {
+        // In debug mode, is_cloudflared_available tries to run `cloudflared --version`.
+        // Whether cloudflared is installed or not, the function should return a bool
+        // without panicking.
+        let result = is_cloudflared_available();
+        // Type assertion: result is bool
+        let _: bool = result;
     }
 }

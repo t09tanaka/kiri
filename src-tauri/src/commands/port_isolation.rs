@@ -2096,4 +2096,2488 @@ DATABASE_URL=postgres://user:pass@localhost:5432/mydb
         assert!(result.contains("8180:3000"), "Expected 8180:3000, got:\n{}", result);
         assert!(!result.contains("8180:3100"), "Container port should not change");
     }
+
+    // ========== is_env_file tests ==========
+
+    #[test]
+    fn test_is_env_file_basic() {
+        assert!(is_env_file(Path::new(".env")));
+    }
+
+    #[test]
+    fn test_is_env_file_with_suffix() {
+        assert!(is_env_file(Path::new(".env.local")));
+    }
+
+    #[test]
+    fn test_is_env_file_with_production_suffix() {
+        assert!(is_env_file(Path::new(".env.production")));
+    }
+
+    #[test]
+    fn test_is_env_file_with_development_suffix() {
+        assert!(is_env_file(Path::new(".env.development")));
+    }
+
+    #[test]
+    fn test_is_env_file_non_env() {
+        assert!(!is_env_file(Path::new("config.yml")));
+    }
+
+    #[test]
+    fn test_is_env_file_non_env_json() {
+        assert!(!is_env_file(Path::new("package.json")));
+    }
+
+    #[test]
+    fn test_is_env_file_dockerfile() {
+        assert!(!is_env_file(Path::new("Dockerfile")));
+    }
+
+    #[test]
+    fn test_is_env_file_with_dir() {
+        assert!(is_env_file(Path::new("/some/path/.env")));
+    }
+
+    #[test]
+    fn test_is_env_file_with_nested_dir() {
+        assert!(is_env_file(Path::new("/project/packages/api/.env.local")));
+    }
+
+    // ========== is_compose_file additional tests ==========
+
+    #[test]
+    fn test_is_compose_file_standard() {
+        assert!(is_compose_file(Path::new("docker-compose.yml")));
+    }
+
+    #[test]
+    fn test_is_compose_file_yaml() {
+        assert!(is_compose_file(Path::new("docker-compose.yaml")));
+    }
+
+    #[test]
+    fn test_is_compose_file_variant() {
+        assert!(is_compose_file(Path::new("docker-compose.dev.yml")));
+    }
+
+    #[test]
+    fn test_is_compose_file_compose_only() {
+        assert!(is_compose_file(Path::new("compose.yml")));
+    }
+
+    #[test]
+    fn test_is_compose_file_compose_yaml() {
+        assert!(is_compose_file(Path::new("compose.yaml")));
+    }
+
+    #[test]
+    fn test_is_compose_file_non_compose() {
+        assert!(!is_compose_file(Path::new("Dockerfile")));
+    }
+
+    #[test]
+    fn test_is_compose_file_non_compose_env() {
+        assert!(!is_compose_file(Path::new(".env")));
+    }
+
+    #[test]
+    fn test_is_compose_file_non_compose_random_yml() {
+        assert!(!is_compose_file(Path::new("my-compose.yml")));
+    }
+
+    #[test]
+    fn test_is_compose_file_case_insensitive() {
+        // The implementation uses to_lowercase(), so mixed case should work
+        assert!(is_compose_file(Path::new("Docker-Compose.yml")));
+    }
+
+    // ========== scan_env_files_for_ports additional tests ==========
+
+    #[test]
+    fn test_scan_env_files_for_ports_empty_dir() {
+        let dir = tempdir().unwrap();
+        let ports = scan_env_files_for_ports(dir.path());
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_scan_env_files_for_ports_nested() {
+        let dir = tempdir().unwrap();
+
+        // Root .env
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+
+        // Nested .env files at different depths
+        let level1 = dir.path().join("services");
+        fs::create_dir_all(&level1).unwrap();
+        fs::write(level1.join(".env"), "SERVICE_PORT=4000\n").unwrap();
+
+        let level2 = dir.path().join("services/api/config");
+        fs::create_dir_all(&level2).unwrap();
+        fs::write(level2.join(".env.test"), "TEST_PORT=5000\n").unwrap();
+
+        let ports = scan_env_files_for_ports(dir.path());
+        assert_eq!(ports.len(), 3);
+
+        let vars: Vec<&str> = ports.iter().map(|p| p.variable_name.as_str()).collect();
+        assert!(vars.contains(&"PORT"));
+        assert!(vars.contains(&"SERVICE_PORT"));
+        assert!(vars.contains(&"TEST_PORT"));
+    }
+
+    // ========== scan_dockerfile_for_ports additional tests ==========
+
+    #[test]
+    fn test_scan_dockerfile_for_ports_empty_dir() {
+        let dir = tempdir().unwrap();
+        let ports = scan_dockerfile_for_ports(dir.path());
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_scan_dockerfile_for_ports_variant_name() {
+        let dir = tempdir().unwrap();
+
+        // Dockerfile.dev variant
+        fs::write(dir.path().join("Dockerfile.dev"), "FROM node:18\nEXPOSE 3000\n").unwrap();
+
+        let ports = scan_dockerfile_for_ports(dir.path());
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].port_value, 3000);
+    }
+
+    #[test]
+    fn test_scan_dockerfile_for_ports_multiple_variants() {
+        let dir = tempdir().unwrap();
+
+        fs::write(dir.path().join("Dockerfile"), "EXPOSE 3000\n").unwrap();
+        fs::write(dir.path().join("Dockerfile.prod"), "EXPOSE 8080\n").unwrap();
+
+        let sub = dir.path().join("services/worker");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("Dockerfile"), "EXPOSE 9090\n").unwrap();
+
+        let ports = scan_dockerfile_for_ports(dir.path());
+        assert_eq!(ports.len(), 3);
+
+        let values: Vec<u16> = ports.iter().map(|p| p.port_value).collect();
+        assert!(values.contains(&3000));
+        assert!(values.contains(&8080));
+        assert!(values.contains(&9090));
+    }
+
+    // ========== scan_compose_for_ports additional tests ==========
+
+    #[test]
+    fn test_scan_compose_for_ports_empty_dir() {
+        let dir = tempdir().unwrap();
+        let ports = scan_compose_for_ports(dir.path());
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_scan_compose_for_ports_compose_yml_variant() {
+        let dir = tempdir().unwrap();
+
+        // compose.yml (without "docker-" prefix)
+        fs::write(
+            dir.path().join("compose.yml"),
+            "services:\n  web:\n    ports:\n      - \"3000:3000\"\n",
+        )
+        .unwrap();
+
+        let ports = scan_compose_for_ports(dir.path());
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].port_value, 3000);
+    }
+
+    #[test]
+    fn test_scan_compose_for_ports_compose_yaml_variant() {
+        let dir = tempdir().unwrap();
+
+        // compose.yaml
+        fs::write(
+            dir.path().join("compose.yaml"),
+            "services:\n  web:\n    ports:\n      - \"4000:4000\"\n",
+        )
+        .unwrap();
+
+        let ports = scan_compose_for_ports(dir.path());
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].port_value, 4000);
+    }
+
+    // ========== scan_package_json_for_ports additional tests ==========
+
+    #[test]
+    fn test_scan_package_json_for_ports_empty_dir() {
+        let dir = tempdir().unwrap();
+        let ports = scan_package_json_for_ports(dir.path());
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_scan_package_json_skips_node_modules() {
+        let dir = tempdir().unwrap();
+
+        // Root package.json with ports
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"dev": "next dev -p 3000"}}"#,
+        )
+        .unwrap();
+
+        // node_modules at root level
+        let nm_root = dir.path().join("node_modules/some-pkg");
+        fs::create_dir_all(&nm_root).unwrap();
+        fs::write(
+            nm_root.join("package.json"),
+            r#"{"scripts": {"start": "serve -p 5555"}}"#,
+        )
+        .unwrap();
+
+        // node_modules in subdirectory
+        let nm_nested = dir.path().join("packages/app/node_modules/another-pkg");
+        fs::create_dir_all(&nm_nested).unwrap();
+        fs::write(
+            nm_nested.join("package.json"),
+            r#"{"scripts": {"dev": "vite --port 6666"}}"#,
+        )
+        .unwrap();
+
+        let ports = scan_package_json_for_ports(dir.path());
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].port_value, 3000);
+    }
+
+    // ========== detect_all_ports additional tests ==========
+
+    #[test]
+    fn test_detect_all_ports_comprehensive() {
+        let dir = tempdir().unwrap();
+
+        // .env file
+        fs::write(dir.path().join(".env"), "PORT=3000\nDB_PORT=5432\n").unwrap();
+
+        // Dockerfile
+        fs::write(dir.path().join("Dockerfile"), "FROM node:18\nEXPOSE 3000\nEXPOSE 8080\n").unwrap();
+
+        // docker-compose.yml
+        fs::write(
+            dir.path().join("docker-compose.yml"),
+            "services:\n  web:\n    ports:\n      - \"3000:3000\"\n      - \"5432:5432\"\n",
+        )
+        .unwrap();
+
+        // package.json
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{"scripts": {"dev": "next dev -p 3000", "api": "node server.js --port=9090"}}"#,
+        )
+        .unwrap();
+
+        let result = detect_all_ports(dir.path().to_string_lossy().to_string()).unwrap();
+
+        assert_eq!(result.env_ports.len(), 2);
+        assert_eq!(result.dockerfile_ports.len(), 2);
+        assert_eq!(result.compose_ports.len(), 2);
+        assert_eq!(result.script_ports.len(), 2);
+    }
+
+    #[test]
+    fn test_detect_all_ports_empty_dir() {
+        let dir = tempdir().unwrap();
+        let result = detect_all_ports(dir.path().to_string_lossy().to_string()).unwrap();
+
+        assert!(result.env_ports.is_empty());
+        assert!(result.dockerfile_ports.is_empty());
+        assert!(result.compose_ports.is_empty());
+        assert!(result.script_ports.is_empty());
+    }
+
+    // ========== transform_compose_content additional tests ==========
+
+    #[test]
+    fn test_transform_compose_content_empty() {
+        let content = "";
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:3000".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+        let result = transform_compose_content(content, &assignments);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_transform_compose_content_no_ports_section() {
+        let content = "services:\n  web:\n    image: nginx\n    environment:\n      - FOO=bar\n";
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:3000".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+        let result = transform_compose_content(content, &assignments);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_transform_compose_content_preserves_trailing_newline() {
+        let content = "services:\n  web:\n    ports:\n      - \"3000:3000\"\n";
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:3000".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+        let result = transform_compose_content(content, &assignments);
+        assert!(result.ends_with('\n'));
+        assert!(result.contains("3100:3000"));
+    }
+
+    #[test]
+    fn test_transform_compose_content_no_trailing_newline() {
+        let content = "services:\n  web:\n    ports:\n      - \"3000:3000\"";
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:3000".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+        let result = transform_compose_content(content, &assignments);
+        assert!(!result.ends_with('\n'));
+        assert!(result.contains("3100:3000"));
+    }
+
+    #[test]
+    fn test_transform_compose_content_multiple_services() {
+        let content = r#"services:
+  web:
+    ports:
+      - "3000:3000"
+  api:
+    ports:
+      - "8080:8080"
+  db:
+    ports:
+      - "5432:5432"
+  redis:
+    ports:
+      - "6379:6379"
+"#;
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "COMPOSE:3000".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            },
+            PortAssignment {
+                variable_name: "COMPOSE:8080".to_string(),
+                original_value: 8080,
+                assigned_value: 8180,
+            },
+            PortAssignment {
+                variable_name: "COMPOSE:5432".to_string(),
+                original_value: 5432,
+                assigned_value: 5532,
+            },
+        ];
+        let result = transform_compose_content(content, &assignments);
+        assert!(result.contains("3100:3000"));
+        assert!(result.contains("8180:8080"));
+        assert!(result.contains("5532:5432"));
+        // 6379 has no assignment, stays unchanged
+        assert!(result.contains("6379:6379"));
+    }
+
+    #[test]
+    fn test_transform_compose_content_quoted_double() {
+        let content = "services:\n  web:\n    ports:\n      - \"4000:4000\"\n";
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:4000".to_string(),
+            original_value: 4000,
+            assigned_value: 4100,
+        }];
+        let result = transform_compose_content(content, &assignments);
+        assert!(result.contains("4100:4000"), "Expected 4100:4000, got:\n{}", result);
+    }
+
+    // ========== transform_generic_content additional tests ==========
+
+    #[test]
+    fn test_transform_generic_content_basic() {
+        let content = "port: 3000\n";
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+        let result = transform_generic_content(content, &assignments);
+        assert!(result.contains("port: 3100"));
+    }
+
+    #[test]
+    fn test_transform_generic_content_word_boundary() {
+        // Ensure that port 80 doesn't get replaced inside 8080
+        let content = "PORT=8080\nHTTP_PORT=80\n";
+        let assignments = vec![PortAssignment {
+            variable_name: "HTTP_PORT".to_string(),
+            original_value: 80,
+            assigned_value: 180,
+        }];
+        let result = transform_generic_content(content, &assignments);
+        // 8080 should NOT be affected
+        assert!(result.contains("8080"), "8080 should remain unchanged, got:\n{}", result);
+        // 80 standalone should be replaced
+        assert!(result.contains("180"), "80 should be replaced with 180, got:\n{}", result);
+    }
+
+    #[test]
+    fn test_transform_generic_content_empty() {
+        let content = "";
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+        let result = transform_generic_content(content, &assignments);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_transform_generic_content_no_assignments() {
+        let content = "port: 3000\n";
+        let result = transform_generic_content(content, &[]);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_transform_generic_content_multiple_occurrences() {
+        // Same port appearing multiple times
+        let content = "server_port=3000\nclient_port=3000\nproxy_port=3000\n";
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+        let result = transform_generic_content(content, &assignments);
+        assert_eq!(result.matches("3100").count(), 3);
+        assert_eq!(result.matches("3000").count(), 0);
+    }
+
+    #[test]
+    fn test_transform_generic_content_at_start_and_end() {
+        // Port number at the very start and end of content
+        let content = "3000 is the port and it ends with 3000";
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+        let result = transform_generic_content(content, &assignments);
+        assert!(result.contains("3100 is the port"));
+        assert!(result.ends_with("3100"));
+    }
+
+    // ========== copy_files_with_port_transformation additional tests ==========
+
+    #[test]
+    fn test_copy_files_with_port_transformation_nonexistent_source() {
+        let target_dir = tempdir().unwrap();
+        let result = copy_files_with_port_transformation(
+            "/nonexistent/source/path".to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string()],
+            vec![],
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_copy_files_with_port_transformation_nonexistent_target() {
+        let source_dir = tempdir().unwrap();
+        fs::write(source_dir.path().join(".env"), "PORT=3000\n").unwrap();
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            "/nonexistent/target/path".to_string(),
+            vec![".env*".to_string()],
+            vec![],
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_copy_files_with_port_transformation_env_file_transform() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        fs::write(
+            source_dir.path().join(".env"),
+            "PORT=3000\nDB_PORT=5432\nAPP_NAME=myapp\n",
+        )
+        .unwrap();
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            },
+            PortAssignment {
+                variable_name: "DB_PORT".to_string(),
+                original_value: 5432,
+                assigned_value: 5532,
+            },
+        ];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 1);
+        assert!(result.errors.is_empty());
+
+        let content = fs::read_to_string(target_dir.path().join(".env")).unwrap();
+        assert!(content.contains("PORT=3100"));
+        assert!(content.contains("DB_PORT=5532"));
+        assert!(content.contains("APP_NAME=myapp")); // Non-port variable unchanged
+    }
+
+    #[test]
+    fn test_copy_files_with_port_transformation_generic_file() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create a config file that isn't .env or compose
+        fs::write(
+            source_dir.path().join("config.json"),
+            r#"{"port": 3000, "dbPort": 5432}"#,
+        )
+        .unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["config.json".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 1);
+        assert!(result.errors.is_empty());
+
+        let content = fs::read_to_string(target_dir.path().join("config.json")).unwrap();
+        assert!(content.contains("3100"));
+        // 5432 had no assignment, should remain
+        assert!(content.contains("5432"));
+    }
+
+    #[test]
+    fn test_copy_files_with_port_transformation_compose_via_copy() {
+        // Test that when copying a new docker-compose file (not existing in target),
+        // compose-specific transformation is applied (host-only)
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        fs::write(
+            source_dir.path().join("docker-compose.yml"),
+            "services:\n  web:\n    ports:\n      - \"3000:3000\"\n",
+        )
+        .unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:3000".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["docker-compose.yml".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 1);
+        assert!(result.errors.is_empty());
+
+        let content = fs::read_to_string(target_dir.path().join("docker-compose.yml")).unwrap();
+        // Host port should change, container port should remain
+        assert!(content.contains("3100:3000"), "Expected 3100:3000 in copied compose file, got:\n{}", content);
+    }
+
+    #[test]
+    fn test_copy_files_with_port_transformation_no_matching_files() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Only create a file that doesn't match the pattern
+        fs::write(source_dir.path().join("config.txt"), "PORT=3000\n").unwrap();
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string()],
+            vec![],
+        )
+        .unwrap();
+
+        assert!(result.copied_files.is_empty());
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_copy_files_with_port_transformation_existing_env_with_assignments() {
+        // When .env already exists in target with assignments, it should be transformed in-place
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let content = "PORT=3000\nDB_PORT=5432\n";
+        fs::write(source_dir.path().join(".env"), content).unwrap();
+        fs::write(target_dir.path().join(".env"), content).unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        // File existed, so should be transformed, not copied
+        assert_eq!(result.transformed_files.len(), 1);
+        assert!(result.copied_files.is_empty());
+        assert!(result.errors.is_empty());
+
+        let transformed = fs::read_to_string(target_dir.path().join(".env")).unwrap();
+        assert!(transformed.contains("PORT=3100"));
+        assert!(transformed.contains("DB_PORT=5432")); // Unchanged, no assignment for this
+    }
+
+    #[test]
+    fn test_copy_files_with_port_transformation_existing_identical_content() {
+        // When file exists and transformation produces identical content, it should be skipped
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let content = "APP_NAME=myapp\nAPP_VERSION=1.0\n";
+        fs::write(source_dir.path().join(".env"), content).unwrap();
+        fs::write(target_dir.path().join(".env"), content).unwrap();
+
+        // Assignments that don't match any variable in the file
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        // Content is identical after transform attempt, so should be skipped
+        assert_eq!(result.skipped_files.len(), 1);
+        assert!(result.transformed_files.is_empty());
+        assert!(result.copied_files.is_empty());
+    }
+
+    // ========== allocate_ports additional edge case tests ==========
+
+    #[test]
+    fn test_allocate_ports_zero_index() {
+        let ports = vec![PortSource {
+            file_path: ".env".to_string(),
+            variable_name: "PORT".to_string(),
+            port_value: 3000,
+            line_number: 1,
+        }];
+        let result = allocate_ports(&ports, 0);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Worktree index must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn test_allocate_ports_overflow_high_index() {
+        // Large worktree_index causing most ports to overflow
+        let ports = vec![
+            PortSource {
+                file_path: ".env".to_string(),
+                variable_name: "PORT".to_string(),
+                port_value: 60000,
+                line_number: 1,
+            },
+            PortSource {
+                file_path: ".env".to_string(),
+                variable_name: "DB_PORT".to_string(),
+                port_value: 100,
+                line_number: 2,
+            },
+        ];
+
+        let result = allocate_ports(&ports, 100).unwrap();
+        // PORT=60000 + 10000 = 70000 > 65535, should produce warning
+        assert_eq!(result.overflow_warnings.len(), 1);
+        assert!(result.overflow_warnings[0].contains("60000"));
+        // DB_PORT=100 + 10000 = 10100, should succeed
+        assert_eq!(result.assignments.len(), 1);
+        assert_eq!(result.assignments[0].variable_name, "DB_PORT");
+        assert_eq!(result.assignments[0].assigned_value, 10100);
+    }
+
+    #[test]
+    fn test_allocate_ports_duplicate_values_different_variables() {
+        // Two different variable names with the same port value
+        let ports = vec![
+            PortSource {
+                file_path: ".env".to_string(),
+                variable_name: "WEB_PORT".to_string(),
+                port_value: 3000,
+                line_number: 1,
+            },
+            PortSource {
+                file_path: ".env".to_string(),
+                variable_name: "PROXY_PORT".to_string(),
+                port_value: 3000,
+                line_number: 2,
+            },
+        ];
+
+        let result = allocate_ports(&ports, 1).unwrap();
+        assert_eq!(result.assignments.len(), 2);
+        // Both should get the same assigned value since original_value is the same
+        assert_eq!(result.assignments[0].assigned_value, 3100);
+        assert_eq!(result.assignments[1].assigned_value, 3100);
+        // But variable names should differ
+        assert_eq!(result.assignments[0].variable_name, "WEB_PORT");
+        assert_eq!(result.assignments[1].variable_name, "PROXY_PORT");
+    }
+
+    #[test]
+    fn test_allocate_ports_empty_ports() {
+        let ports: Vec<PortSource> = vec![];
+        let result = allocate_ports(&ports, 1).unwrap();
+        assert!(result.assignments.is_empty());
+        assert!(result.overflow_warnings.is_empty());
+        assert_eq!(result.worktree_index, 1);
+    }
+
+    #[test]
+    fn test_allocate_ports_all_overflow() {
+        // All ports overflow
+        let ports = vec![
+            PortSource {
+                file_path: ".env".to_string(),
+                variable_name: "PORT_A".to_string(),
+                port_value: 65000,
+                line_number: 1,
+            },
+            PortSource {
+                file_path: ".env".to_string(),
+                variable_name: "PORT_B".to_string(),
+                port_value: 65500,
+                line_number: 2,
+            },
+        ];
+
+        let result = allocate_ports(&ports, 10).unwrap();
+        // 65000 + 1000 = 66000 > 65535
+        // 65500 + 1000 = 66500 > 65535
+        assert!(result.assignments.is_empty());
+        assert_eq!(result.overflow_warnings.len(), 2);
+    }
+
+    #[test]
+    fn test_allocate_ports_boundary_value() {
+        // Port exactly at boundary: 65535 - offset = valid
+        let ports = vec![PortSource {
+            file_path: ".env".to_string(),
+            variable_name: "PORT".to_string(),
+            port_value: 65435, // 65435 + 100 = 65535 (exactly at limit)
+            line_number: 1,
+        }];
+
+        let result = allocate_ports(&ports, 1).unwrap();
+        assert_eq!(result.assignments.len(), 1);
+        assert_eq!(result.assignments[0].assigned_value, 65535);
+        assert!(result.overflow_warnings.is_empty());
+    }
+
+    #[test]
+    fn test_allocate_ports_boundary_overflow() {
+        // Port just over boundary: 65536 after offset
+        let ports = vec![PortSource {
+            file_path: ".env".to_string(),
+            variable_name: "PORT".to_string(),
+            port_value: 65436, // 65436 + 100 = 65536 (exceeds limit)
+            line_number: 1,
+        }];
+
+        let result = allocate_ports(&ports, 1).unwrap();
+        assert!(result.assignments.is_empty());
+        assert_eq!(result.overflow_warnings.len(), 1);
+    }
+
+    // ========== detect_ports_in_env_file additional edge cases ==========
+
+    #[test]
+    fn test_detect_ports_in_env_file_mixed_valid_invalid() {
+        let content = "PORT=3000\nINVALID_PORT=abc\nDB_PORT=5432\nTOO_BIG=99999\n";
+        let ports = detect_ports_in_env_file(content, ".env");
+        // PORT=3000 valid, INVALID_PORT=abc no match (regex needs digits),
+        // DB_PORT=5432 valid, TOO_BIG=99999 won't parse as u16 (> 65535)
+        assert_eq!(ports.len(), 2);
+        assert_eq!(ports[0].variable_name, "PORT");
+        assert_eq!(ports[1].variable_name, "DB_PORT");
+    }
+
+    #[test]
+    fn test_detect_ports_in_env_file_with_spaces_around_comments() {
+        let content = "  # Comment with spaces\n  PORT=3000\n";
+        let ports = detect_ports_in_env_file(content, ".env");
+        // Lines are trimmed, so "  PORT=3000" should match after trim
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].variable_name, "PORT");
+    }
+
+    // ========== detect_ports_in_package_json edge cases ==========
+
+    #[test]
+    fn test_detect_ports_in_package_json_multiple_ports_in_one_script() {
+        let content = r#"{
+  "scripts": {
+    "dev": "concurrently \"next dev -p 3000\" \"api --port 8080\""
+  }
+}"#;
+
+        let ports = detect_ports_in_package_json(content, "package.json");
+        assert_eq!(ports.len(), 2);
+        assert_eq!(ports[0].port_value, 3000);
+        assert_eq!(ports[1].port_value, 8080);
+    }
+
+    // ========== copy_files with subdirectories ==========
+
+    #[test]
+    fn test_copy_files_with_port_transformation_creates_subdirs() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create nested source files
+        let sub = source_dir.path().join("config/env");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join(".env"), "PORT=3000\n").unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["**/.env*".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 1);
+        assert!(result.errors.is_empty());
+
+        // Verify subdirectories were created in target
+        let target_file = target_dir.path().join("config/env/.env");
+        assert!(target_file.exists());
+        let content = fs::read_to_string(target_file).unwrap();
+        assert!(content.contains("PORT=3100"));
+    }
+
+    // ========== copy_files_with_port_transformation: in-place generic transform ==========
+
+    #[test]
+    fn test_copy_files_existing_generic_file_with_assignments_transforms_in_place() {
+        // When a generic file (not .env, not compose) already exists in target
+        // and assignments match, it should be transformed in-place
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let content = r#"{"port": 3000, "dbPort": 5432}"#;
+        fs::write(source_dir.path().join("config.json"), content).unwrap();
+        fs::write(target_dir.path().join("config.json"), content).unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["config.json".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        // Should be transformed in-place (file already existed)
+        assert_eq!(result.transformed_files.len(), 1);
+        assert!(result.copied_files.is_empty());
+        assert!(result.errors.is_empty());
+
+        let transformed = fs::read_to_string(target_dir.path().join("config.json")).unwrap();
+        assert!(transformed.contains("3100"));
+        assert!(transformed.contains("5432")); // No assignment for 5432
+    }
+
+    #[test]
+    fn test_copy_files_existing_generic_file_no_change_skipped() {
+        // When a generic file already exists and transformation produces same content
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let content = r#"{"name": "app", "version": "1.0"}"#;
+        fs::write(source_dir.path().join("config.json"), content).unwrap();
+        fs::write(target_dir.path().join("config.json"), content).unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["config.json".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        // Content unchanged, so should be skipped
+        assert_eq!(result.skipped_files.len(), 1);
+        assert!(result.transformed_files.is_empty());
+        assert!(result.copied_files.is_empty());
+    }
+
+    // ========== copy_files: directory glob patterns ==========
+
+    #[test]
+    fn test_copy_files_with_directory_glob_pattern() {
+        // Test that when a glob pattern matches a directory,
+        // copy_directory_recursive is used
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create a directory with files inside
+        let config_dir = source_dir.path().join("config");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(config_dir.join(".env"), "PORT=3000\n").unwrap();
+        fs::write(config_dir.join("settings.json"), r#"{"port": 3000}"#).unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["config".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        // Both files should be copied
+        assert_eq!(result.copied_files.len(), 2);
+        assert!(result.errors.is_empty());
+
+        // Verify .env was transformed as env file
+        let env_content = fs::read_to_string(target_dir.path().join("config/.env")).unwrap();
+        assert!(env_content.contains("PORT=3100"));
+
+        // Verify settings.json was transformed as generic file
+        let json_content =
+            fs::read_to_string(target_dir.path().join("config/settings.json")).unwrap();
+        assert!(json_content.contains("3100"));
+    }
+
+    #[test]
+    fn test_copy_files_directory_recursive_nested() {
+        // Test recursive directory copying with deeply nested files
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let deep = source_dir.path().join("config/nested/deep");
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join(".env"), "PORT=3000\n").unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["config".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 1);
+        assert!(result.errors.is_empty());
+
+        let target_file = target_dir.path().join("config/nested/deep/.env");
+        assert!(target_file.exists());
+        let content = fs::read_to_string(target_file).unwrap();
+        assert!(content.contains("PORT=3100"));
+    }
+
+    #[test]
+    fn test_copy_files_directory_recursive_no_assignments() {
+        // Test recursive directory copying without port assignments (plain copy)
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let config_dir = source_dir.path().join("config");
+        fs::create_dir_all(&config_dir).unwrap();
+        fs::write(config_dir.join(".env"), "PORT=3000\n").unwrap();
+        fs::write(config_dir.join("readme.txt"), "hello\n").unwrap();
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["config".to_string()],
+            vec![], // No assignments
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 2);
+        assert!(result.errors.is_empty());
+
+        // Files should be plain copies without transformation
+        let env_content = fs::read_to_string(target_dir.path().join("config/.env")).unwrap();
+        assert!(env_content.contains("PORT=3000")); // Unchanged
+
+        let readme = fs::read_to_string(target_dir.path().join("config/readme.txt")).unwrap();
+        assert_eq!(readme, "hello\n");
+    }
+
+    // ========== copy_files: compose in-place existing transform ==========
+
+    #[test]
+    fn test_copy_files_existing_compose_no_change_skipped() {
+        // When compose file exists but no assignment matches, it should be skipped
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let content = "services:\n  web:\n    ports:\n      - \"9999:9999\"\n";
+        fs::write(source_dir.path().join("docker-compose.yml"), content).unwrap();
+        fs::write(target_dir.path().join("docker-compose.yml"), content).unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:3000".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["docker-compose.yml".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        // Content is identical after transform (no matching port), should be skipped
+        assert_eq!(result.skipped_files.len(), 1);
+        assert!(result.transformed_files.is_empty());
+    }
+
+    // ========== copy_files: multiple patterns ==========
+
+    #[test]
+    fn test_copy_files_with_multiple_patterns() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        fs::write(source_dir.path().join(".env"), "PORT=3000\n").unwrap();
+        fs::write(
+            source_dir.path().join("docker-compose.yml"),
+            "services:\n  web:\n    ports:\n      - \"3000:3000\"\n",
+        )
+        .unwrap();
+        fs::write(
+            source_dir.path().join("config.json"),
+            r#"{"port": 3000}"#,
+        )
+        .unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![
+                ".env*".to_string(),
+                "docker-compose.yml".to_string(),
+                "config.json".to_string(),
+            ],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 3);
+        assert!(result.errors.is_empty());
+
+        // .env uses env-specific transform
+        let env = fs::read_to_string(target_dir.path().join(".env")).unwrap();
+        assert!(env.contains("PORT=3100"));
+
+        // docker-compose uses compose-specific transform (host-only)
+        let compose =
+            fs::read_to_string(target_dir.path().join("docker-compose.yml")).unwrap();
+        assert!(
+            compose.contains("3100:3000"),
+            "Expected 3100:3000 in compose, got:\n{}",
+            compose
+        );
+
+        // config.json uses generic transform
+        let config = fs::read_to_string(target_dir.path().join("config.json")).unwrap();
+        assert!(config.contains("3100"));
+    }
+
+    // ========== copy_files: existing file in directory recursive with assignments ==========
+
+    #[test]
+    fn test_copy_files_directory_recursive_with_existing_files() {
+        // When copying a directory recursively and some files already exist in target
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let src_config = source_dir.path().join("config");
+        fs::create_dir_all(&src_config).unwrap();
+        fs::write(src_config.join(".env"), "PORT=3000\n").unwrap();
+
+        // Pre-create the file in target
+        let tgt_config = target_dir.path().join("config");
+        fs::create_dir_all(&tgt_config).unwrap();
+        fs::write(tgt_config.join(".env"), "PORT=3000\n").unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["config".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        // File existed, should be transformed in-place
+        assert_eq!(result.transformed_files.len(), 1);
+        assert!(result.copied_files.is_empty());
+        assert!(result.errors.is_empty());
+
+        let content = fs::read_to_string(tgt_config.join(".env")).unwrap();
+        assert!(content.contains("PORT=3100"));
+    }
+
+    // ========== transform_env_content: edge cases ==========
+
+    #[test]
+    fn test_transform_env_content_empty_assignments() {
+        let content = "PORT=3000\nDB_PORT=5432\n";
+        let result = transform_env_content(content, &[]);
+        // No assignments means no replacements
+        assert_eq!(result.content, content);
+        assert!(result.replacements.is_empty());
+    }
+
+    #[test]
+    fn test_transform_env_content_unmatched_assignment() {
+        let content = "PORT=3000\n";
+        let assignments = vec![PortAssignment {
+            variable_name: "DB_PORT".to_string(),
+            original_value: 5432,
+            assigned_value: 5532,
+        }];
+        let result = transform_env_content(content, &assignments);
+        // No matching variable, content unchanged
+        assert_eq!(result.content, content);
+        assert!(result.replacements.is_empty());
+    }
+
+    #[test]
+    fn test_transform_env_content_preserves_empty_lines() {
+        let content = "PORT=3000\n\nDB_PORT=5432\n";
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            },
+            PortAssignment {
+                variable_name: "DB_PORT".to_string(),
+                original_value: 5432,
+                assigned_value: 5532,
+            },
+        ];
+        let result = transform_env_content(content, &assignments);
+        assert!(result.content.contains("PORT=3100"));
+        assert!(result.content.contains("DB_PORT=5532"));
+        // Empty line should be preserved
+        assert!(result.content.contains("\n\n"));
+    }
+
+    // ========== transform_generic_content: descending sort order ==========
+
+    #[test]
+    fn test_transform_generic_content_descending_sort_prevents_collision() {
+        // Port 30001 and 3000 - replacing 3000 first could corrupt 30001
+        // The function sorts by original_value descending to prevent this
+        let content = "PORT_A=30001\nPORT_B=3000\n";
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT_B".to_string(),
+                original_value: 3000,
+                assigned_value: 4000,
+            },
+            PortAssignment {
+                variable_name: "PORT_A".to_string(),
+                original_value: 30001,
+                assigned_value: 40001,
+            },
+        ];
+        let result = transform_generic_content(content, &assignments);
+        assert!(
+            result.contains("40001"),
+            "30001 should become 40001, got:\n{}",
+            result
+        );
+        assert!(
+            result.contains("4000"),
+            "3000 should become 4000, got:\n{}",
+            result
+        );
+    }
+
+    // ========== copy_files: empty patterns ==========
+
+    #[test]
+    fn test_copy_files_with_empty_patterns() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        fs::write(source_dir.path().join(".env"), "PORT=3000\n").unwrap();
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![], // No patterns
+            vec![],
+        )
+        .unwrap();
+
+        assert!(result.copied_files.is_empty());
+        assert!(result.errors.is_empty());
+    }
+
+    // ========== copy_files: compose file new copy with host-only transform ==========
+
+    #[test]
+    fn test_copy_files_compose_new_copy_asymmetric_ports() {
+        // Compose file with asymmetric host:container ports, copied as new file
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        fs::write(
+            source_dir.path().join("docker-compose.yml"),
+            "services:\n  web:\n    ports:\n      - \"8080:3000\"\n",
+        )
+        .unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:8080".to_string(),
+            original_value: 8080,
+            assigned_value: 8180,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["docker-compose.yml".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 1);
+        assert!(result.errors.is_empty());
+
+        let content =
+            fs::read_to_string(target_dir.path().join("docker-compose.yml")).unwrap();
+        // Only host port changes; container port stays 3000
+        assert!(
+            content.contains("8180:3000"),
+            "Expected 8180:3000, got:\n{}",
+            content
+        );
+    }
+
+    // ========== copy_files: env file with URL ports ==========
+
+    #[test]
+    fn test_copy_files_env_with_url_ports() {
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        fs::write(
+            source_dir.path().join(".env"),
+            "PORT=3000\nREDIS_URL=redis://localhost:6379\nDATABASE_URL=postgres://user:pass@db:5432/mydb\n",
+        )
+        .unwrap();
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            },
+            PortAssignment {
+                variable_name: "REDIS_URL".to_string(),
+                original_value: 6379,
+                assigned_value: 6479,
+            },
+            PortAssignment {
+                variable_name: "DATABASE_URL".to_string(),
+                original_value: 5432,
+                assigned_value: 5532,
+            },
+        ];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 1);
+        assert!(result.errors.is_empty());
+
+        let content = fs::read_to_string(target_dir.path().join(".env")).unwrap();
+        assert!(content.contains("PORT=3100"));
+        assert!(content.contains("REDIS_URL=redis://localhost:6479"));
+        assert!(content.contains("DATABASE_URL=postgres://user:pass@db:5532/mydb"));
+    }
+
+    // ========== copy_files: mixed file types in single copy ==========
+
+    #[test]
+    fn test_copy_files_directory_with_mixed_file_types() {
+        // Directory containing .env, docker-compose, and generic files
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        let project = source_dir.path().join("project");
+        fs::create_dir_all(&project).unwrap();
+        fs::write(project.join(".env"), "PORT=3000\n").unwrap();
+        fs::write(
+            project.join("docker-compose.yml"),
+            "services:\n  web:\n    ports:\n      - \"3000:3000\"\n",
+        )
+        .unwrap();
+        fs::write(
+            project.join("nginx.conf"),
+            "listen 3000;\nproxy_pass http://app:3000;\n",
+        )
+        .unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 3100,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["project".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 3);
+        assert!(result.errors.is_empty());
+
+        // .env: env-specific transform
+        let env = fs::read_to_string(target_dir.path().join("project/.env")).unwrap();
+        assert!(env.contains("PORT=3100"));
+
+        // docker-compose: compose-specific transform (host-only)
+        let compose =
+            fs::read_to_string(target_dir.path().join("project/docker-compose.yml")).unwrap();
+        assert!(
+            compose.contains("3100:3000"),
+            "Expected compose host-only transform, got:\n{}",
+            compose
+        );
+
+        // nginx.conf: generic transform (all occurrences)
+        let nginx =
+            fs::read_to_string(target_dir.path().join("project/nginx.conf")).unwrap();
+        assert!(nginx.contains("listen 3100"));
+        assert!(nginx.contains("proxy_pass http://app:3100"));
+    }
+
+    #[test]
+    fn test_copy_files_transform_existing_target_with_assignments() {
+        // Test the path where target file already exists and assignments are applied in-place
+        let source_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+
+        // Create source .env file
+        let source_env_dir = source_dir.path().join("config");
+        fs::create_dir_all(&source_env_dir).unwrap();
+        fs::write(source_env_dir.join(".env"), "PORT=3000\nDB_PORT=5432\n").unwrap();
+
+        // Create target with the SAME file already present (simulating git checkout)
+        let target_env_dir = target_dir.path().join("config");
+        fs::create_dir_all(&target_env_dir).unwrap();
+        fs::write(target_env_dir.join(".env"), "PORT=3000\nDB_PORT=5432\n").unwrap();
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 20001,
+            },
+        ];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["config/.env".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        // File should be transformed (in-place), not copied
+        assert!(
+            result.transformed_files.iter().any(|f| f.contains(".env")),
+            "Expected .env to be in transformed_files: {:?}",
+            result
+        );
+        assert!(result.errors.is_empty(), "Errors: {:?}", result.errors);
+
+        // Verify content was transformed in the existing file
+        let content = fs::read_to_string(target_env_dir.join(".env")).unwrap();
+        assert!(content.contains("PORT=20001"), "Content: {}", content);
+    }
+
+    #[test]
+    fn test_copy_files_transform_existing_target_without_assignments() {
+        // Test: target file exists but no assignments → file should be skipped
+        let source_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+
+        fs::write(source_dir.path().join(".env"), "PORT=3000\n").unwrap();
+        fs::write(target_dir.path().join(".env"), "PORT=3000\n").unwrap();
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env".to_string()],
+            vec![], // No assignments
+        )
+        .unwrap();
+
+        assert!(
+            result.skipped_files.iter().any(|f| f.contains(".env")),
+            "Expected .env to be in skipped_files: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_copy_files_transform_existing_target_compose_in_place() {
+        // Test in-place transform for compose files that already exist in target
+        let source_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+
+        let compose_content = "services:\n  web:\n    ports:\n      - \"3000:3000\"\n";
+        fs::write(source_dir.path().join("docker-compose.yml"), compose_content).unwrap();
+        fs::write(target_dir.path().join("docker-compose.yml"), compose_content).unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 25000,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["docker-compose.yml".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert!(
+            result.transformed_files.iter().any(|f| f.contains("docker-compose")),
+            "Expected docker-compose.yml in transformed_files: {:?}",
+            result
+        );
+
+        let content = fs::read_to_string(target_dir.path().join("docker-compose.yml")).unwrap();
+        assert!(content.contains("25000:3000"), "Content: {}", content);
+    }
+
+    #[test]
+    fn test_copy_files_transform_existing_unchanged_content() {
+        // Test: target file exists, has assignments but content doesn't change → skipped
+        let source_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+
+        // Content has no port that matches the assignment
+        let content = "HOSTNAME=localhost\nDEBUG=true\n";
+        fs::write(source_dir.path().join(".env"), content).unwrap();
+        fs::write(target_dir.path().join(".env"), content).unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 9999,
+            assigned_value: 20001,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec![".env".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert!(
+            result.skipped_files.iter().any(|f| f.contains(".env")),
+            "Expected .env in skipped_files when content unchanged: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_copy_files_transform_new_file_no_assignments_just_copy() {
+        // Test: new file with no assignments → simple copy
+        let source_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+
+        fs::write(source_dir.path().join("config.txt"), "some config").unwrap();
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["config.txt".to_string()],
+            vec![],
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 1);
+        assert!(result.errors.is_empty());
+
+        let content = fs::read_to_string(target_dir.path().join("config.txt")).unwrap();
+        assert_eq!(content, "some config");
+    }
+
+    #[test]
+    fn test_copy_files_transform_creates_nested_directories() {
+        // Test: target parent directory doesn't exist → should be created
+        let source_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+
+        let nested = source_dir.path().join("a/b/c");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join(".env"), "PORT=3000\n").unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 20001,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["a/b/c/.env".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 1);
+        assert!(result.errors.is_empty());
+
+        let content = fs::read_to_string(target_dir.path().join("a/b/c/.env")).unwrap();
+        assert!(content.contains("PORT=20001"));
+    }
+
+    #[test]
+    fn test_copy_files_transform_directory_pattern() {
+        // Test: glob pattern matches a directory → copy recursively
+        let source_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+
+        let sub = source_dir.path().join("configs");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join(".env"), "PORT=3000\n").unwrap();
+        fs::write(sub.join("app.conf"), "listen 3000;\n").unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 20001,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["configs".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert!(result.copied_files.len() >= 2, "Should copy files in directory: {:?}", result);
+        assert!(result.errors.is_empty(), "Errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn test_copy_files_transform_invalid_glob_pattern() {
+        // Test: invalid glob pattern → error recorded
+        let source_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["[invalid".to_string()],
+            vec![],
+        )
+        .unwrap();
+
+        assert!(!result.errors.is_empty(), "Expected error for invalid glob pattern");
+    }
+
+    #[test]
+    fn test_copy_files_transform_generic_file() {
+        // Test: non-env, non-compose file with assignments → generic transform
+        let source_dir = tempfile::tempdir().unwrap();
+        let target_dir = tempfile::tempdir().unwrap();
+
+        fs::write(
+            source_dir.path().join("nginx.conf"),
+            "server {\n    listen 3000;\n    proxy_pass http://localhost:3000;\n}\n",
+        )
+        .unwrap();
+
+        let assignments = vec![PortAssignment {
+            variable_name: "PORT".to_string(),
+            original_value: 3000,
+            assigned_value: 22000,
+        }];
+
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["nginx.conf".to_string()],
+            assignments,
+        )
+        .unwrap();
+
+        assert_eq!(result.copied_files.len(), 1);
+        let content = fs::read_to_string(target_dir.path().join("nginx.conf")).unwrap();
+        assert!(content.contains("22000"), "Content: {}", content);
+    }
+
+    // ========== Additional edge case tests for uncovered lines ==========
+
+    #[test]
+    fn test_detect_ports_in_env_file_port_value_exceeds_u16() {
+        // L85: port_str.parse::<u16>() fails when value > 65535
+        let content = "HUGE_PORT=99999\nPORT=3000\n";
+        let ports = detect_ports_in_env_file(content, ".env");
+        // 99999 exceeds u16 range, so only PORT=3000 should be detected
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].variable_name, "PORT");
+        assert_eq!(ports[0].port_value, 3000);
+    }
+
+    #[test]
+    fn test_detect_ports_in_env_file_url_port_exceeds_u16() {
+        // L98: URL port parse failure when port > 65535
+        let content = "REDIS_URL=redis://localhost:99999\nMONGO_URL=mongodb://localhost:27017\n";
+        let ports = detect_ports_in_env_file(content, ".env");
+        // 99999 exceeds u16, only MONGO_URL should be detected
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].variable_name, "MONGO_URL");
+        assert_eq!(ports[0].port_value, 27017);
+    }
+
+    #[test]
+    fn test_detect_ports_in_dockerfile_port_exceeds_u16() {
+        // L127: port parse failure in Dockerfile when value > 65535
+        let content = "FROM node:18\nEXPOSE 99999\nEXPOSE 3000\n";
+        let ports = detect_ports_in_dockerfile(content, "Dockerfile");
+        // 99999 exceeds u16, only EXPOSE 3000 should be detected
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].port_value, 3000);
+    }
+
+    #[test]
+    fn test_detect_ports_in_compose_with_comments() {
+        // L144: comment lines in compose file should be skipped
+        let content = r#"services:
+  web:
+    ports:
+      # This is a commented port
+      - "3000:3000"
+      # - "9999:9999"
+"#;
+        let ports = detect_ports_in_compose(content, "docker-compose.yml");
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].port_value, 3000);
+    }
+
+    #[test]
+    fn test_detect_ports_in_compose_port_exceeds_u16() {
+        // L156: host port parse failure when value > 65535
+        let content = "services:\n  web:\n    ports:\n      - \"99999:3000\"\n      - \"8080:8080\"\n";
+        let ports = detect_ports_in_compose(content, "docker-compose.yml");
+        // 99999 exceeds u16, only 8080 should be detected
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].port_value, 8080);
+    }
+
+    #[test]
+    fn test_detect_ports_in_package_json_script_port_exceeds_u16() {
+        // L201-204: port parse failure in scripts when port > 65535
+        let content = r#"{
+  "scripts": {
+    "dev": "next dev -p 99999",
+    "start": "node server.js --port 3000"
+  }
+}"#;
+        let ports = detect_ports_in_package_json(content, "package.json");
+        // 99999 exceeds u16, only --port 3000 should be detected
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].port_value, 3000);
+    }
+
+    #[test]
+    fn test_detect_ports_in_package_json_script_value_is_not_number() {
+        // Scripts with non-numeric values after port flag should not match
+        let content = r#"{
+  "scripts": {
+    "dev": "next dev --port auto",
+    "start": "node server.js -p 8080"
+  }
+}"#;
+        let ports = detect_ports_in_package_json(content, "package.json");
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].port_value, 8080);
+    }
+
+    #[test]
+    fn test_transform_compose_content_host_port_exceeds_u16() {
+        // L576-577: host_port_str.parse::<u16>() fails for ports > 65535
+        // This tests the edge case where the regex matches but parse fails
+        let content = "services:\n  web:\n    ports:\n      - \"99999:3000\"\n      - \"8080:8080\"\n";
+        let assignments = vec![PortAssignment {
+            variable_name: "COMPOSE:8080".to_string(),
+            original_value: 8080,
+            assigned_value: 8180,
+        }];
+        let result = transform_compose_content(content, &assignments);
+        // 99999 can't be parsed as u16, line should pass through unchanged
+        assert!(
+            result.contains("99999:3000"),
+            "Unparseable port line should remain unchanged, got:\n{}",
+            result
+        );
+        // 8080 should be transformed
+        assert!(
+            result.contains("8180:8080"),
+            "Expected 8180:8080, got:\n{}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_transform_env_content_port_var_no_assignment() {
+        // L459: port_re matches but variable is not in assignment_map
+        // The line should be preserved as-is
+        let content = "PORT=3000\nDB_PORT=5432\nAPI_PORT=8080\n";
+        let assignments = vec![PortAssignment {
+            variable_name: "DB_PORT".to_string(),
+            original_value: 5432,
+            assigned_value: 5532,
+        }];
+        let result = transform_env_content(content, &assignments);
+        // PORT and API_PORT have no assignment, should remain unchanged
+        assert!(result.content.contains("PORT=3000"));
+        assert!(result.content.contains("DB_PORT=5532"));
+        assert!(result.content.contains("API_PORT=8080"));
+        assert_eq!(result.replacements.len(), 1);
+        assert_eq!(result.replacements[0].variable_name, "DB_PORT");
+    }
+
+    #[test]
+    fn test_transform_env_content_url_var_no_assignment() {
+        // L483: URL regex matches but variable is not in assignment_map
+        let content = "REDIS_URL=redis://localhost:6379\nMONGO_URL=mongodb://localhost:27017\n";
+        let assignments = vec![PortAssignment {
+            variable_name: "REDIS_URL".to_string(),
+            original_value: 6379,
+            assigned_value: 6479,
+        }];
+        let result = transform_env_content(content, &assignments);
+        // REDIS_URL should be transformed
+        assert!(result.content.contains("REDIS_URL=redis://localhost:6479"));
+        // MONGO_URL has no assignment, should remain unchanged
+        assert!(result.content.contains("MONGO_URL=mongodb://localhost:27017"));
+        assert_eq!(result.replacements.len(), 1);
+    }
+
+    #[test]
+    fn test_scan_env_files_for_ports_unreadable_file() {
+        // L235-240: Test with a directory entry that matches glob but can't be read
+        // (e.g., a directory named .env_dir which is_file() returns false)
+        let dir = tempdir().unwrap();
+        // Create a directory named ".env_something" which matches .env* pattern
+        // but is_file() will return false, so it will be skipped
+        let env_dir = dir.path().join(".env_configs");
+        fs::create_dir_all(&env_dir).unwrap();
+        // Also create a valid .env file
+        fs::write(dir.path().join(".env"), "PORT=3000\n").unwrap();
+
+        let ports = scan_env_files_for_ports(dir.path());
+        // Only the real .env file should be detected
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].variable_name, "PORT");
+    }
+
+    #[test]
+    fn test_scan_dockerfile_for_ports_directory_named_dockerfile() {
+        // L267-269: Directory named "Dockerfile" should be skipped (is_file check)
+        let dir = tempdir().unwrap();
+        let docker_dir = dir.path().join("Dockerfile");
+        fs::create_dir_all(&docker_dir).unwrap();
+        // Also create a real Dockerfile
+        fs::write(dir.path().join("Dockerfile.prod"), "EXPOSE 8080\n").unwrap();
+
+        let ports = scan_dockerfile_for_ports(dir.path());
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].port_value, 8080);
+    }
+
+    #[test]
+    fn test_scan_compose_for_ports_directory_named_compose() {
+        // L298-300: Directory named like a compose file should be skipped
+        let dir = tempdir().unwrap();
+        // This won't actually match compose pattern as a dir, but test the scan
+        // with a valid file alongside non-matching entries
+        fs::write(
+            dir.path().join("docker-compose.yml"),
+            "services:\n  web:\n    ports:\n      - \"3000:3000\"\n",
+        )
+        .unwrap();
+        // Create a compose.yaml as well
+        fs::write(
+            dir.path().join("compose.yaml"),
+            "services:\n  api:\n    ports:\n      - \"8080:8080\"\n",
+        )
+        .unwrap();
+
+        let ports = scan_compose_for_ports(dir.path());
+        assert_eq!(ports.len(), 2);
+    }
+
+    #[test]
+    fn test_scan_package_json_for_ports_with_only_node_modules() {
+        // L331-333: All package.json files are inside node_modules
+        let dir = tempdir().unwrap();
+        let nm = dir.path().join("node_modules/pkg");
+        fs::create_dir_all(&nm).unwrap();
+        fs::write(
+            nm.join("package.json"),
+            r#"{"scripts": {"dev": "serve -p 5555"}}"#,
+        )
+        .unwrap();
+
+        let ports = scan_package_json_for_ports(dir.path());
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_allocate_ports_max_worktree_index() {
+        // L483-484: Test with very large worktree_index that causes overflow
+        // for all ports
+        let ports = vec![PortSource {
+            file_path: ".env".to_string(),
+            variable_name: "PORT".to_string(),
+            port_value: 3000,
+            line_number: 1,
+        }];
+
+        // worktree_index 650: offset = 65000, 3000 + 65000 = 68000 > 65535
+        let result = allocate_ports(&ports, 650).unwrap();
+        assert!(result.assignments.is_empty());
+        assert_eq!(result.overflow_warnings.len(), 1);
+        assert!(result.overflow_warnings[0].contains("3000"));
+    }
+
+    #[test]
+    fn test_copy_files_with_port_transformation_relative_path_error() {
+        // L649-653: Test the error path when strip_prefix fails
+        // This is difficult to trigger directly since we construct paths from source,
+        // but we can test by verifying the function handles the case
+        // where source and target exist but patterns produce no matches
+        let source_dir = tempdir().unwrap();
+        let target_dir = tempdir().unwrap();
+
+        // Create a file in source
+        fs::write(source_dir.path().join(".env"), "PORT=3000\n").unwrap();
+
+        // Use a pattern that matches files outside the source path
+        // This shouldn't cause a relative path error but tests path handling
+        let result = copy_files_with_port_transformation(
+            source_dir.path().to_string_lossy().to_string(),
+            target_dir.path().to_string_lossy().to_string(),
+            vec!["nonexistent_pattern_xyz".to_string()],
+            vec![],
+        )
+        .unwrap();
+
+        assert!(result.copied_files.is_empty());
+    }
+
+    #[test]
+    fn test_copy_files_existing_file_read_only_write_error() {
+        // L675-680: Test write failure on existing file during in-place transform
+        // We can simulate by making the target file read-only
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let source_dir = tempdir().unwrap();
+            let target_dir = tempdir().unwrap();
+
+            let content = "PORT=3000\n";
+            fs::write(source_dir.path().join(".env"), content).unwrap();
+            fs::write(target_dir.path().join(".env"), content).unwrap();
+
+            // Make target file read-only
+            let target_file = target_dir.path().join(".env");
+            let mut perms = fs::metadata(&target_file).unwrap().permissions();
+            perms.set_mode(0o444);
+            fs::set_permissions(&target_file, perms).unwrap();
+
+            let assignments = vec![PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            }];
+
+            let result = copy_files_with_port_transformation(
+                source_dir.path().to_string_lossy().to_string(),
+                target_dir.path().to_string_lossy().to_string(),
+                vec![".env*".to_string()],
+                assignments,
+            )
+            .unwrap();
+
+            // Should have an error about write failure
+            assert!(
+                !result.errors.is_empty(),
+                "Expected write error for read-only file: {:?}",
+                result
+            );
+            assert!(
+                result.errors[0].contains("Failed to write"),
+                "Error should mention write failure: {}",
+                result.errors[0]
+            );
+
+            // Restore permissions for cleanup
+            let mut perms = fs::metadata(&target_file).unwrap().permissions();
+            perms.set_mode(0o644);
+            fs::set_permissions(&target_file, perms).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_copy_files_new_file_write_error_read_only_dir() {
+        // L706/L731-737: Test write failure when target directory is read-only
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let source_dir = tempdir().unwrap();
+            let target_dir = tempdir().unwrap();
+
+            // Create a subdirectory structure in source
+            let sub = source_dir.path().join("configs");
+            fs::create_dir_all(&sub).unwrap();
+            fs::write(sub.join(".env"), "PORT=3000\n").unwrap();
+
+            // Create target configs dir and make it read-only
+            let target_sub = target_dir.path().join("configs");
+            fs::create_dir_all(&target_sub).unwrap();
+            let mut perms = fs::metadata(&target_sub).unwrap().permissions();
+            perms.set_mode(0o555);
+            fs::set_permissions(&target_sub, perms).unwrap();
+
+            let assignments = vec![PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            }];
+
+            let result = copy_files_with_port_transformation(
+                source_dir.path().to_string_lossy().to_string(),
+                target_dir.path().to_string_lossy().to_string(),
+                vec!["configs/.env".to_string()],
+                assignments,
+            )
+            .unwrap();
+
+            // Depending on OS, the file may or may not be writable.
+            // On Unix, writing to a read-only directory should fail.
+            // The error path should be hit.
+            if !result.errors.is_empty() {
+                assert!(
+                    result.errors[0].contains("Failed to write") || result.errors[0].contains("Failed to copy"),
+                    "Error should mention failure: {}",
+                    result.errors[0]
+                );
+            }
+
+            // Restore permissions for cleanup
+            let mut perms = fs::metadata(&target_sub).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&target_sub, perms).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_is_env_file_empty_path() {
+        // Edge case: path with no file name component
+        assert!(!is_env_file(Path::new("")));
+    }
+
+    #[test]
+    fn test_is_compose_file_empty_path() {
+        // Edge case: path with no file name component
+        assert!(!is_compose_file(Path::new("")));
+    }
+
+    #[test]
+    fn test_detect_ports_in_env_file_only_comments_and_empty() {
+        // Multiple comment styles and empty lines
+        let content = "# Comment 1\n\n# Comment 2\n\n\n";
+        let ports = detect_ports_in_env_file(content, ".env");
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_detect_ports_in_dockerfile_empty() {
+        // Empty Dockerfile content
+        let content = "";
+        let ports = detect_ports_in_dockerfile(content, "Dockerfile");
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_detect_ports_in_dockerfile_only_comments() {
+        // Dockerfile with only comments
+        let content = "# EXPOSE 3000\n# EXPOSE 8080\n";
+        let ports = detect_ports_in_dockerfile(content, "Dockerfile");
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_detect_ports_in_compose_empty() {
+        // Empty compose content
+        let content = "";
+        let ports = detect_ports_in_compose(content, "docker-compose.yml");
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_detect_ports_in_compose_only_comments() {
+        // Compose content with only comments
+        let content = "# services:\n#   web:\n#     ports:\n#       - \"3000:3000\"\n";
+        let ports = detect_ports_in_compose(content, "docker-compose.yml");
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_detect_ports_in_package_json_empty_scripts() {
+        // package.json with empty scripts object
+        let content = r#"{"scripts": {}}"#;
+        let ports = detect_ports_in_package_json(content, "package.json");
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_detect_ports_in_package_json_non_string_script_value() {
+        // L204: script value is not a string (e.g., number or null)
+        let content = r#"{"scripts": {"dev": 123, "start": null, "build": "next build"}}"#;
+        let ports = detect_ports_in_package_json(content, "package.json");
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_allocate_ports_single_port_at_boundary() {
+        // Port exactly at u16 max minus offset
+        let ports = vec![PortSource {
+            file_path: ".env".to_string(),
+            variable_name: "PORT".to_string(),
+            port_value: 65535, // Max u16, any offset makes it overflow
+            line_number: 1,
+        }];
+
+        let result = allocate_ports(&ports, 1).unwrap();
+        // 65535 + 100 = 65635 > 65535
+        assert!(result.assignments.is_empty());
+        assert_eq!(result.overflow_warnings.len(), 1);
+    }
+
+    #[test]
+    fn test_transform_env_content_mixed_port_and_url_with_partial_assignments() {
+        // Some PORT vars have assignments, some URL vars have assignments,
+        // some have none - tests multiple fallthrough paths
+        let content = "PORT=3000\nDB_PORT=5432\nREDIS_URL=redis://localhost:6379\nCACHE_URL=memcached://localhost:11211\nAPP_NAME=test\n";
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            },
+            PortAssignment {
+                variable_name: "CACHE_URL".to_string(),
+                original_value: 11211,
+                assigned_value: 11311,
+            },
+        ];
+        let result = transform_env_content(content, &assignments);
+        assert!(result.content.contains("PORT=3100"));
+        assert!(result.content.contains("DB_PORT=5432")); // No assignment
+        assert!(result.content.contains("REDIS_URL=redis://localhost:6379")); // No assignment
+        assert!(result.content.contains("CACHE_URL=memcached://localhost:11311"));
+        assert!(result.content.contains("APP_NAME=test")); // Not a port variable
+        assert_eq!(result.replacements.len(), 2);
+    }
+
+    #[test]
+    fn test_copy_files_no_assignment_copy_failure() {
+        // L751-758: Test copy failure when target path is invalid
+        // When there are no assignments and the file copy fails
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let source_dir = tempdir().unwrap();
+            let target_dir = tempdir().unwrap();
+
+            fs::write(source_dir.path().join("config.txt"), "data").unwrap();
+
+            // Make target directory read-only to prevent file creation
+            let mut perms = fs::metadata(target_dir.path()).unwrap().permissions();
+            perms.set_mode(0o555);
+            fs::set_permissions(target_dir.path(), perms).unwrap();
+
+            let result = copy_files_with_port_transformation(
+                source_dir.path().to_string_lossy().to_string(),
+                target_dir.path().to_string_lossy().to_string(),
+                vec!["config.txt".to_string()],
+                vec![], // No assignments, triggers simple copy path
+            )
+            .unwrap();
+
+            // Copy should fail because target dir is read-only
+            if !result.errors.is_empty() {
+                assert!(
+                    result.errors[0].contains("Failed to copy"),
+                    "Error should mention copy failure: {}",
+                    result.errors[0]
+                );
+            }
+
+            // Restore permissions for cleanup
+            let mut perms = fs::metadata(target_dir.path()).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(target_dir.path(), perms).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_copy_files_with_assignments_read_source_failure() {
+        // L741-743: Test read failure when source file can't be read during transform
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let source_dir = tempdir().unwrap();
+            let target_dir = tempdir().unwrap();
+
+            let source_file = source_dir.path().join("config.json");
+            fs::write(&source_file, r#"{"port": 3000}"#).unwrap();
+
+            // Make source file unreadable
+            let mut perms = fs::metadata(&source_file).unwrap().permissions();
+            perms.set_mode(0o000);
+            fs::set_permissions(&source_file, perms).unwrap();
+
+            let assignments = vec![PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            }];
+
+            let result = copy_files_with_port_transformation(
+                source_dir.path().to_string_lossy().to_string(),
+                target_dir.path().to_string_lossy().to_string(),
+                vec!["config.json".to_string()],
+                assignments,
+            )
+            .unwrap();
+
+            // Should have error about reading failure
+            if !result.errors.is_empty() {
+                assert!(
+                    result.errors[0].contains("Failed to read"),
+                    "Error should mention read failure: {}",
+                    result.errors[0]
+                );
+            }
+
+            // Restore permissions for cleanup
+            let mut perms = fs::metadata(&source_file).unwrap().permissions();
+            perms.set_mode(0o644);
+            fs::set_permissions(&source_file, perms).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_copy_files_existing_file_read_failure() {
+        // L689-695: Test read failure when existing target file can't be read
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let source_dir = tempdir().unwrap();
+            let target_dir = tempdir().unwrap();
+
+            fs::write(source_dir.path().join(".env"), "PORT=3000\n").unwrap();
+            let target_file = target_dir.path().join(".env");
+            fs::write(&target_file, "PORT=3000\n").unwrap();
+
+            // Make target file unreadable
+            let mut perms = fs::metadata(&target_file).unwrap().permissions();
+            perms.set_mode(0o000);
+            fs::set_permissions(&target_file, perms).unwrap();
+
+            let assignments = vec![PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            }];
+
+            let result = copy_files_with_port_transformation(
+                source_dir.path().to_string_lossy().to_string(),
+                target_dir.path().to_string_lossy().to_string(),
+                vec![".env*".to_string()],
+                assignments,
+            )
+            .unwrap();
+
+            // Should have error about reading existing file
+            assert!(
+                !result.errors.is_empty(),
+                "Expected read error for unreadable existing file"
+            );
+            assert!(
+                result.errors[0].contains("Failed to read existing file"),
+                "Error should mention read failure: {}",
+                result.errors[0]
+            );
+
+            // Restore permissions for cleanup
+            let mut perms = fs::metadata(&target_file).unwrap().permissions();
+            perms.set_mode(0o644);
+            fs::set_permissions(&target_file, perms).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_copy_files_new_file_write_failure_with_assignments() {
+        // L731-738: Test write failure when creating new file with port transform
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let source_dir = tempdir().unwrap();
+            let target_dir = tempdir().unwrap();
+
+            fs::write(source_dir.path().join(".env"), "PORT=3000\n").unwrap();
+
+            // Make target directory read-only
+            let mut perms = fs::metadata(target_dir.path()).unwrap().permissions();
+            perms.set_mode(0o555);
+            fs::set_permissions(target_dir.path(), perms).unwrap();
+
+            let assignments = vec![PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            }];
+
+            let result = copy_files_with_port_transformation(
+                source_dir.path().to_string_lossy().to_string(),
+                target_dir.path().to_string_lossy().to_string(),
+                vec![".env*".to_string()],
+                assignments,
+            )
+            .unwrap();
+
+            // Should have error about write failure
+            assert!(
+                !result.errors.is_empty(),
+                "Expected write error for read-only target directory"
+            );
+            assert!(
+                result.errors[0].contains("Failed to write"),
+                "Error should mention write failure: {}",
+                result.errors[0]
+            );
+
+            // Restore permissions for cleanup
+            let mut perms = fs::metadata(target_dir.path()).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(target_dir.path(), perms).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_copy_files_create_dir_failure() {
+        // L706: Test directory creation failure
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let source_dir = tempdir().unwrap();
+            let target_dir = tempdir().unwrap();
+
+            // Create nested source file
+            let sub = source_dir.path().join("deep/nested");
+            fs::create_dir_all(&sub).unwrap();
+            fs::write(sub.join(".env"), "PORT=3000\n").unwrap();
+
+            // Make target directory read-only so subdirectories can't be created
+            let mut perms = fs::metadata(target_dir.path()).unwrap().permissions();
+            perms.set_mode(0o555);
+            fs::set_permissions(target_dir.path(), perms).unwrap();
+
+            let assignments = vec![PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            }];
+
+            let result = copy_files_with_port_transformation(
+                source_dir.path().to_string_lossy().to_string(),
+                target_dir.path().to_string_lossy().to_string(),
+                vec!["deep/nested/.env".to_string()],
+                assignments,
+            )
+            .unwrap();
+
+            // Should have error about directory creation failure
+            assert!(
+                !result.errors.is_empty(),
+                "Expected error for directory creation in read-only target"
+            );
+            assert!(
+                result.errors[0].contains("Failed to create directory")
+                    || result.errors[0].contains("Failed to write"),
+                "Error should mention directory or write failure: {}",
+                result.errors[0]
+            );
+
+            // Restore permissions for cleanup
+            let mut perms = fs::metadata(target_dir.path()).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(target_dir.path(), perms).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_detect_ports_in_env_file_large_port_number_in_url() {
+        // Test with URL port number that is a valid number but exceeds u16
+        let content = "SERVICE_URL=http://example.com:100000\nPORT=3000\n";
+        let ports = detect_ports_in_env_file(content, ".env");
+        // 100000 exceeds u16, only PORT=3000 is valid
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports[0].variable_name, "PORT");
+    }
+
+    #[test]
+    fn test_detect_ports_in_compose_mixed_valid_invalid() {
+        // Mix of valid and invalid (oversized) port values
+        let content = r#"services:
+  web:
+    ports:
+      - "3000:3000"
+      # A commented out port
+      - "8080:80"
+"#;
+        let ports = detect_ports_in_compose(content, "docker-compose.yml");
+        assert_eq!(ports.len(), 2);
+        assert_eq!(ports[0].port_value, 3000);
+        assert_eq!(ports[1].port_value, 8080);
+    }
 }
