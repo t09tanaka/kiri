@@ -805,4 +805,87 @@ describe('portIsolationService', () => {
       expect(result).toHaveLength(3); // PORT:3000, DATABASE_URL:5432, DATABASE_URL:5434
     });
   });
+
+  describe('pruneOrphanedAssignments', () => {
+    it('should remove assignments for worktrees that no longer exist', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+          'feature-b': {
+            worktreeName: 'feature-b',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3200 }],
+          },
+          'feature-c': {
+            worktreeName: 'feature-c',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3300 }],
+          },
+        },
+      });
+
+      const result = portIsolationService.pruneOrphanedAssignments(config, ['feature-b']);
+
+      expect(Object.keys(result.worktreeAssignments)).toEqual(['feature-b']);
+      expect(result.worktreeAssignments['feature-b'].assignments[0].assignedValue).toBe(3200);
+    });
+
+    it('should preserve all entries when all worktrees exist', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+          'feature-b': {
+            worktreeName: 'feature-b',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3200 }],
+          },
+        },
+      });
+
+      const result = portIsolationService.pruneOrphanedAssignments(config, [
+        'feature-a',
+        'feature-b',
+      ]);
+
+      expect(result).toBe(config); // Same object reference
+    });
+
+    it('should return same object when worktreeAssignments is empty', () => {
+      const config = makeDefaultConfig({ worktreeAssignments: {} });
+
+      const result = portIsolationService.pruneOrphanedAssignments(config, ['feature-a']);
+
+      expect(result).toBe(config);
+    });
+
+    it('should return same object when worktreeAssignments is undefined', () => {
+      const config = makeDefaultConfig();
+      // Force undefined to test guard clause
+      (config as Record<string, unknown>).worktreeAssignments = undefined;
+
+      const result = portIsolationService.pruneOrphanedAssignments(config as PortConfig, [
+        'feature-a',
+      ]);
+
+      expect(result).toBe(config);
+    });
+
+    it('should remove all entries when no worktrees exist', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+        },
+      });
+
+      const result = portIsolationService.pruneOrphanedAssignments(config, []);
+
+      expect(Object.keys(result.worktreeAssignments)).toEqual([]);
+    });
+  });
 });

@@ -259,6 +259,38 @@ export const portIsolationService = {
   },
 
   /**
+   * Remove worktreeAssignments entries for worktrees that no longer exist.
+   * Called during loadPortConfig to clean up after app quit / crash.
+   * Returns the same config object if no changes are needed.
+   */
+  pruneOrphanedAssignments: (
+    config: PersistencePortConfig,
+    existingWorktreeNames: string[]
+  ): PersistencePortConfig => {
+    if (!config.worktreeAssignments) {
+      return config;
+    }
+
+    const existingSet = new Set(existingWorktreeNames);
+    const assignmentKeys = Object.keys(config.worktreeAssignments);
+    const orphanedKeys = assignmentKeys.filter((key) => !existingSet.has(key));
+
+    if (orphanedKeys.length === 0) {
+      return config;
+    }
+
+    const pruned = { ...config.worktreeAssignments };
+    for (const key of orphanedKeys) {
+      delete pruned[key];
+    }
+
+    return {
+      ...config,
+      worktreeAssignments: pruned,
+    };
+  },
+
+  /**
    * Get all worktree indices currently in use by existing worktrees.
    * The index is derived from: (assignedValue - originalValue) / 100
    */

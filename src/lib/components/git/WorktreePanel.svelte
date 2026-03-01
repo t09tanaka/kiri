@@ -294,11 +294,27 @@
     try {
       const settings = await loadProjectSettings(projectPath);
       if (settings.portConfig) {
+        let config = settings.portConfig;
+        let changed = false;
+
         // Merge any new DEFAULT_TARGET_FILES entries into saved config
-        const merged = portIsolationService.mergeDefaultTargetFiles(settings.portConfig);
-        portConfig = merged;
-        // Persist the merged config if it changed
-        if (merged !== settings.portConfig) {
+        const merged = portIsolationService.mergeDefaultTargetFiles(config);
+        if (merged !== config) {
+          config = merged;
+          changed = true;
+        }
+
+        // Prune orphaned worktree assignments (e.g. from app quit / crash)
+        const existingWorktrees = await worktreeService.list(projectPath);
+        const existingNames = existingWorktrees.filter((w) => !w.is_main).map((w) => w.name);
+        const pruned = portIsolationService.pruneOrphanedAssignments(config, existingNames);
+        if (pruned !== config) {
+          config = pruned;
+          changed = true;
+        }
+
+        portConfig = config;
+        if (changed) {
           await savePortConfig();
         }
       } else {
