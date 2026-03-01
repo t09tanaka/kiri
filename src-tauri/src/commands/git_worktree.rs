@@ -248,7 +248,7 @@ pub fn create_worktree(
     // git2's worktree API requires a reference
     let reference = repo
         .find_branch(&branch_name, git2::BranchType::Local)
-        .expect("Branch should exist after creation");
+        .map_err(|e| format!("Failed to find branch '{}' after creation: {}", branch_name, e))?;
 
     let ref_name = reference
         .get()
@@ -719,7 +719,7 @@ pub fn detect_package_managers(project_path: String) -> Result<Vec<PackageManage
                 continue;
             }
 
-            let prefix = format!("cd {} && ", dir_name);
+            let prefix = format!("cd '{}' && ", dir_name.replace('\'', "'\\''"));
             let subdir_results = detect_package_managers_in_dir(&entry_path, &prefix);
             results.extend(subdir_results);
         }
@@ -1748,7 +1748,7 @@ mod tests {
         let pms = result.unwrap();
         assert_eq!(pms.len(), 1);
         assert_eq!(pms[0].name, "cargo");
-        assert_eq!(pms[0].command, "cd src-tauri && cargo build");
+        assert_eq!(pms[0].command, "cd 'src-tauri' && cargo build");
     }
 
     #[test]
@@ -1776,7 +1776,7 @@ mod tests {
         // Subdirectory cargo
         let cargo = pms.iter().find(|p| p.name == "cargo");
         assert!(cargo.is_some());
-        assert_eq!(cargo.unwrap().command, "cd src-tauri && cargo build");
+        assert_eq!(cargo.unwrap().command, "cd 'src-tauri' && cargo build");
     }
 
     #[test]
@@ -1818,7 +1818,7 @@ mod tests {
         let pms = result.unwrap();
         assert_eq!(pms.len(), 1);
         assert_eq!(pms[0].name, "pip");
-        assert_eq!(pms[0].command, "cd backend && pip install -r requirements.txt");
+        assert_eq!(pms[0].command, "cd 'backend' && pip install -r requirements.txt");
     }
 
     #[test]
@@ -1840,7 +1840,7 @@ mod tests {
         // Should return both: root npm + subdirectory yarn
         let root_npm = pms.iter().find(|p| p.command == "npm install");
         assert!(root_npm.is_some());
-        let subdir_yarn = pms.iter().find(|p| p.command == "cd frontend && yarn install");
+        let subdir_yarn = pms.iter().find(|p| p.command == "cd 'frontend' && yarn install");
         assert!(subdir_yarn.is_some());
     }
 
@@ -1887,5 +1887,81 @@ mod tests {
 
         // Non-.env files should NOT be copied
         assert!(!target_dir.path().join("packages/api/config.json").exists());
+    }
+
+    #[test]
+    fn test_create_worktree_find_branch_returns_error_not_panic() {
+        // Verify that create_worktree returns an error instead of panicking
+        // when find_branch fails after branch creation.
+        // This test verifies the .map_err() fix (previously used .expect()).
+        let dir = tempdir().unwrap();
+        create_repo_with_commit(dir.path());
+
+        // A normal worktree creation should succeed without panicking
+        let result = create_worktree(
+            dir.path().to_string_lossy().to_string(),
+            "test-no-panic".to_string(),
+            Some("test-no-panic".to_string()),
+            true,
+        );
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_detect_package_managers_quotes_dir_with_spaces() {
+        // Verify that directory names with spaces are properly quoted in commands
+        let dir = tempdir().unwrap();
+
+        // Create a subdirectory with spaces
+        let sub = dir.path().join("my project");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("package.json"), "{}").unwrap();
+        fs::write(sub.join("package-lock.json"), "{}").unwrap();
+
+        let results = detect_package_managers(dir.path().to_string_lossy().to_string()).unwrap();
+
+        // Find the result for the subdirectory
+        let sub_result = results.iter().find(|r| r.command.contains("my project"));
+        assert!(
+            sub_result.is_some(),
+            "Should find package manager for dir with spaces"
+        );
+
+        let cmd = &sub_result.unwrap().command;
+        // Verify the directory name is quoted with single quotes
+        assert!(
+            cmd.contains("cd 'my project'"),
+            "Expected quoted dir name in command, got: {}",
+            cmd
+        );
+    }
+
+    #[test]
+    fn test_detect_package_managers_quotes_dir_with_single_quote() {
+        // Verify that directory names containing single quotes are properly escaped
+        let dir = tempdir().unwrap();
+
+        // Create a subdirectory with a single quote in the name
+        let sub = dir.path().join("it's-a-project");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join("package.json"), "{}").unwrap();
+        fs::write(sub.join("package-lock.json"), "{}").unwrap();
+
+        let results = detect_package_managers(dir.path().to_string_lossy().to_string()).unwrap();
+
+        // Find the result for the subdirectory
+        let sub_result = results.iter().find(|r| r.command.contains("it"));
+        assert!(
+            sub_result.is_some(),
+            "Should find package manager for dir with single quote"
+        );
+
+        let cmd = &sub_result.unwrap().command;
+        // Verify the single quote is properly escaped
+        assert!(
+            cmd.contains("cd 'it'\\''s-a-project'"),
+            "Expected escaped single quote in command, got: {}",
+            cmd
+        );
     }
 }
