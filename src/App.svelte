@@ -32,7 +32,10 @@
   import { PeekEditor } from '@/lib/components/peek';
   import { gitStore } from '@/lib/stores/gitStore';
   import { projectStore, isProjectOpen } from '@/lib/stores/projectStore';
-  import { settingsStore } from '@/lib/stores/settingsStore';
+  import { settingsStore, startupCommand } from '@/lib/stores/settingsStore';
+  import { isRemoteActive } from '@/lib/stores/remoteAccessStore';
+  import { toggleRemoteAccess } from '@/lib/utils/remoteAccessToggle';
+  import type { StartupCommand } from '@/lib/services/persistenceService';
   import { performanceService } from '@/lib/services/performanceService';
   import { setupLongTaskObserver } from '@/lib/utils/performanceMarker';
   import {
@@ -51,6 +54,16 @@
   let showShortcuts = $state(false);
   let windowLabel = $state('');
   let isAppQuitting = $state(false);
+
+  // Sync tools state to macOS menu bar
+  $effect(() => {
+    const remoteOn = $isRemoteActive;
+    const cmd = $startupCommand;
+    emit('update-tools-menu', {
+      remoteAccessOn: remoteOn,
+      startupCommand: cmd,
+    });
+  });
 
   async function handleOpenDirectory() {
     const selected = await open({
@@ -474,6 +487,41 @@
       await projectStore.clearRecentProjects();
     });
 
+    // Listen for menu-toggle-remote event from Tools menu
+    const unlistenMenuToggleRemote = await listen('menu-toggle-remote', async () => {
+      // Open QR modal immediately for instant feedback (before any async work)
+      if (!get(isRemoteActive)) {
+        remoteAccessViewStore.openQrModal();
+      }
+      const result = await toggleRemoteAccess({
+        onToggling: () => {},
+        onError: (msg) => {
+          if (msg) {
+            toastStore.error(msg);
+            remoteAccessViewStore.closeQrModal();
+          }
+        },
+      });
+      // Close QR modal if toggle failed
+      if (!result && !get(isRemoteActive)) {
+        remoteAccessViewStore.closeQrModal();
+      }
+    });
+
+    // Listen for menu-set-startup-command event from Tools menu
+    const unlistenMenuStartupCmd = await listen<string>(
+      'menu-set-startup-command',
+      async (event) => {
+        const cmd = event.payload as StartupCommand;
+        settingsStore.setStartupCommand(cmd);
+      }
+    );
+
+    // Listen for menu-show-qr-code event from Tools menu
+    const unlistenMenuShowQr = await listen('menu-show-qr-code', () => {
+      remoteAccessViewStore.openQrModal();
+    });
+
     performanceService.markStartupPhase('app-mount-complete');
 
     return () => {
@@ -487,6 +535,9 @@
       unlistenMenuNewWindow?.();
       unlistenOpenRecent();
       unlistenClearRecent();
+      unlistenMenuToggleRemote();
+      unlistenMenuStartupCmd();
+      unlistenMenuShowQr();
       cleanupLongTaskObserver();
     };
   });
