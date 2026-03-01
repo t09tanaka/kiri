@@ -294,7 +294,13 @@
     try {
       const settings = await loadProjectSettings(projectPath);
       if (settings.portConfig) {
-        portConfig = settings.portConfig;
+        // Merge any new DEFAULT_TARGET_FILES entries into saved config
+        const merged = portIsolationService.mergeDefaultTargetFiles(settings.portConfig);
+        portConfig = merged;
+        // Persist the merged config if it changed
+        if (merged !== settings.portConfig) {
+          await savePortConfig();
+        }
       } else {
         portConfig = portIsolationService.createDefaultConfig();
       }
@@ -329,7 +335,7 @@
         // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally using Map
         const newSelected = new Map<string, boolean>();
         for (const port of uniquePorts) {
-          newSelected.set(port.variable_name, true);
+          newSelected.set(`${port.variable_name}:${port.port_value}`, true);
         }
         selectedPorts = newSelected;
         // Allocate ports
@@ -375,15 +381,17 @@
   function allocatePortsForWorktree(): void {
     if (!detectedPorts || !portConfig) return;
 
-    const selectedVars = new Set(
+    const selectedKeys = new Set(
       Array.from(selectedPorts.entries())
         .filter(([, selected]) => selected)
-        .map(([name]) => name)
+        .map(([key]) => key)
     );
 
     const uniquePorts = portIsolationService.getAllUniquePorts(detectedPorts);
     const portsToAllocate = uniquePorts.filter(
-      (p) => selectedVars.has(p.variable_name) && isPortTransformable(p.variable_name)
+      (p) =>
+        selectedKeys.has(`${p.variable_name}:${p.port_value}`) &&
+        isPortTransformable(p.variable_name)
     );
 
     if (portsToAllocate.length === 0) {
@@ -399,19 +407,21 @@
     }
   }
 
-  function togglePortSelection(variableName: string) {
-    const current = selectedPorts.get(variableName) ?? true;
+  function togglePortSelection(portKey: string) {
+    const current = selectedPorts.get(portKey) ?? true;
     // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally using Map
-    selectedPorts = new Map(selectedPorts).set(variableName, !current);
+    selectedPorts = new Map(selectedPorts).set(portKey, !current);
     allocatePortsForWorktree();
   }
 
-  function getAssignedPortValue(variableName: string): number | null {
-    const assignment = portAssignments.find((a) => a.variable_name === variableName);
+  function getAssignedPortValue(variableName: string, portValue: number): number | null {
+    const assignment = portAssignments.find(
+      (a) => a.variable_name === variableName && a.original_value === portValue
+    );
     return assignment?.assigned_value ?? null;
   }
 
-  function getPortSourceFiles(variableName: string): string[] {
+  function getPortSourceFiles(variableName: string, portValue?: number): string[] {
     if (!detectedPorts) return [];
     const allPorts = [
       ...detectedPorts.env_ports,
@@ -420,7 +430,11 @@
     ];
     const prefix = projectPath.endsWith('/') ? projectPath : `${projectPath}/`;
     return allPorts
-      .filter((p) => p.variable_name === variableName)
+      .filter(
+        (p) =>
+          p.variable_name === variableName &&
+          (portValue === undefined || p.port_value === portValue)
+      )
       .map((p) => {
         const rel = p.file_path.startsWith(prefix) ? p.file_path.slice(prefix.length) : p.file_path;
         return `${rel}:${p.line_number}`;
@@ -435,9 +449,12 @@
 
   // Count of selected AND transformable ports
   function getSelectedPortCount(): number {
-    return Array.from(selectedPorts.entries()).filter(
-      ([name, selected]) => selected && isPortTransformable(name)
-    ).length;
+    return Array.from(selectedPorts.entries()).filter(([key, selected]) => {
+      // Extract variable_name from composite key "variable_name:port_value"
+      const lastColon = key.lastIndexOf(':');
+      const variableName = lastColon >= 0 ? key.substring(0, lastColon) : key;
+      return selected && isPortTransformable(variableName);
+    }).length;
   }
 
   // Counts for execution summary
@@ -1969,11 +1986,12 @@
                     </tr>
                   </thead>
                   <tbody>
-                    {#each getUniquePorts() as port (port.variable_name)}
-                      {@const isSelected = selectedPorts.get(port.variable_name) ?? true}
+                    {#each getUniquePorts() as port (`${port.variable_name}:${port.port_value}`)}
+                      {@const portKey = `${port.variable_name}:${port.port_value}`}
+                      {@const isSelected = selectedPorts.get(portKey) ?? true}
                       {@const transformable = isPortTransformable(port.variable_name)}
-                      {@const assigned = getAssignedPortValue(port.variable_name)}
-                      {@const sources = getPortSourceFiles(port.variable_name)}
+                      {@const assigned = getAssignedPortValue(port.variable_name, port.port_value)}
+                      {@const sources = getPortSourceFiles(port.variable_name, port.port_value)}
                       <tr
                         class="port-table-row"
                         class:disabled={!isSelected && transformable}
@@ -1985,7 +2003,7 @@
                             class="port-checkbox"
                             checked={isSelected && transformable}
                             disabled={!transformable}
-                            onchange={() => togglePortSelection(port.variable_name)}
+                            onchange={() => togglePortSelection(portKey)}
                           />
                         </td>
                         <td class="port-col-var">

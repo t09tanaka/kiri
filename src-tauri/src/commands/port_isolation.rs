@@ -416,11 +416,14 @@ pub fn transform_env_content(
     let mut result = String::new();
     let mut replacements = Vec::new();
 
-    // Build a map of variable_name -> assignment
-    let assignment_map: HashMap<&str, &PortAssignment> = assignments
-        .iter()
-        .map(|a| (a.variable_name.as_str(), a))
-        .collect();
+    // Build a map of variable_name -> assignments (multiple assignments possible for same var)
+    let mut assignment_map: HashMap<&str, Vec<&PortAssignment>> = HashMap::new();
+    for a in assignments {
+        assignment_map
+            .entry(a.variable_name.as_str())
+            .or_default()
+            .push(a);
+    }
 
     let port_re = Regex::new(ENV_PORT_PATTERN).unwrap();
     // For URL replacement, capture the part before the port and the port itself
@@ -441,20 +444,32 @@ pub fn transform_env_content(
         // Check for PORT variables (e.g., PORT=3000)
         if let Some(caps) = port_re.captures(trimmed) {
             if let Some(var_name) = caps.get(1) {
-                if let Some(assignment) = assignment_map.get(var_name.as_str()) {
-                    // Replace the port value
-                    let new_line = port_re.replace(line, |caps: &regex::Captures| {
-                        format!("{}={}", &caps[1], assignment.assigned_value)
-                    });
-                    result.push_str(&new_line);
-                    result.push('\n');
-                    replacements.push(PortReplacement {
-                        variable_name: var_name.as_str().to_string(),
-                        original_value: assignment.original_value,
-                        new_value: assignment.assigned_value,
-                        line_number: (line_num + 1) as u32,
-                    });
-                    continue;
+                if let Some(assignments_for_var) = assignment_map.get(var_name.as_str()) {
+                    // Parse the port value from the line to match against original_value
+                    if let Some(port_str) = caps.get(2) {
+                        if let Ok(port_val) = port_str.as_str().parse::<u16>() {
+                            if let Some(assignment) =
+                                assignments_for_var.iter().find(|a| a.original_value == port_val)
+                            {
+                                // Replace the port value
+                                let assigned = assignment.assigned_value;
+                                let orig = assignment.original_value;
+                                let new_line =
+                                    port_re.replace(line, |caps: &regex::Captures| {
+                                        format!("{}={}", &caps[1], assigned)
+                                    });
+                                result.push_str(&new_line);
+                                result.push('\n');
+                                replacements.push(PortReplacement {
+                                    variable_name: var_name.as_str().to_string(),
+                                    original_value: orig,
+                                    new_value: assigned,
+                                    line_number: (line_num + 1) as u32,
+                                });
+                                continue;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -465,20 +480,33 @@ pub fn transform_env_content(
                 let prefix_str = prefix.as_str();
                 if let Some(eq_pos) = prefix_str.find('=') {
                     let var_name = &prefix_str[..eq_pos];
-                    if let Some(assignment) = assignment_map.get(var_name) {
-                        // Replace the port in the URL
-                        let new_line = url_re.replace(line, |caps: &regex::Captures| {
-                            format!("{}:{}", &caps[1], assignment.assigned_value)
-                        });
-                        result.push_str(&new_line);
-                        result.push('\n');
-                        replacements.push(PortReplacement {
-                            variable_name: var_name.to_string(),
-                            original_value: assignment.original_value,
-                            new_value: assignment.assigned_value,
-                            line_number: (line_num + 1) as u32,
-                        });
-                        continue;
+                    if let Some(assignments_for_var) = assignment_map.get(var_name) {
+                        // Parse the port value from the URL to match against original_value
+                        if let Some(port_str) = caps.get(2) {
+                            if let Ok(port_val) = port_str.as_str().parse::<u16>() {
+                                if let Some(assignment) = assignments_for_var
+                                    .iter()
+                                    .find(|a| a.original_value == port_val)
+                                {
+                                    // Replace the port in the URL
+                                    let assigned = assignment.assigned_value;
+                                    let orig = assignment.original_value;
+                                    let new_line =
+                                        url_re.replace(line, |caps: &regex::Captures| {
+                                            format!("{}:{}", &caps[1], assigned)
+                                        });
+                                    result.push_str(&new_line);
+                                    result.push('\n');
+                                    replacements.push(PortReplacement {
+                                        variable_name: var_name.to_string(),
+                                        original_value: orig,
+                                        new_value: assigned,
+                                        line_number: (line_num + 1) as u32,
+                                    });
+                                    continue;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2095,5 +2123,76 @@ DATABASE_URL=postgres://user:pass@localhost:5432/mydb
         // Only host port changes; container port stays as 3000
         assert!(result.contains("8180:3000"), "Expected 8180:3000, got:\n{}", result);
         assert!(!result.contains("8180:3100"), "Container port should not change");
+    }
+
+    #[test]
+    fn test_transform_env_content_same_var_different_ports() {
+        // Simulates .env with DATABASE_URL pointing to port 5432
+        let content_env = "DATABASE_URL=postgresql://localhost:5432/mydb\n";
+        // Simulates .env.test with DATABASE_URL pointing to port 5434
+        let content_test = "DATABASE_URL=postgresql://localhost:5434/testdb\n";
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "DATABASE_URL".to_string(),
+                original_value: 5432,
+                assigned_value: 5532,
+            },
+            PortAssignment {
+                variable_name: "DATABASE_URL".to_string(),
+                original_value: 5434,
+                assigned_value: 5534,
+            },
+        ];
+
+        let result_env = transform_env_content(content_env, &assignments);
+        assert!(result_env.content.contains(":5532/mydb"), "Expected port 5532 in .env, got: {}", result_env.content);
+        assert!(!result_env.content.contains(":5432"), "Port 5432 should be replaced");
+
+        let result_test = transform_env_content(content_test, &assignments);
+        assert!(result_test.content.contains(":5534/testdb"), "Expected port 5534 in .env.test, got: {}", result_test.content);
+        assert!(!result_test.content.contains(":5434"), "Port 5434 should be replaced");
+    }
+
+    #[test]
+    fn test_transform_env_content_same_var_same_port() {
+        // Same variable name AND same port value - should work as before
+        let content = "PORT=3000\n";
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "PORT".to_string(),
+                original_value: 3000,
+                assigned_value: 3100,
+            },
+        ];
+
+        let result = transform_env_content(content, &assignments);
+        assert!(result.content.contains("PORT=3100"));
+    }
+
+    #[test]
+    fn test_transform_env_content_port_var_same_name_different_values() {
+        // PORT variable (not URL) with same name, different values
+        let content1 = "DB_PORT=5432\n";
+        let content2 = "DB_PORT=5434\n";
+
+        let assignments = vec![
+            PortAssignment {
+                variable_name: "DB_PORT".to_string(),
+                original_value: 5432,
+                assigned_value: 5532,
+            },
+            PortAssignment {
+                variable_name: "DB_PORT".to_string(),
+                original_value: 5434,
+                assigned_value: 5534,
+            },
+        ];
+
+        let result1 = transform_env_content(content1, &assignments);
+        assert!(result1.content.contains("DB_PORT=5532"), "Got: {}", result1.content);
+
+        let result2 = transform_env_content(content2, &assignments);
+        assert!(result2.content.contains("DB_PORT=5534"), "Got: {}", result2.content);
     }
 }
