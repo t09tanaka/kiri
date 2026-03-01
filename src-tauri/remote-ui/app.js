@@ -147,6 +147,7 @@ function buildProjectCard(p, terminals) {
     '<span class="project-name">' +
     escapeHtml(p.name) +
     '</span>' +
+    (p.isWorktree ? '<span class="wt-badge">WT</span>' : '') +
     (p.branch ? '<span class="branch-badge">' + escapeHtml(p.branch) + '</span>' : '') +
     '<button class="btn-close" onclick="closeProject(\'' +
     escapeAttr(p.path) +
@@ -305,7 +306,12 @@ function openProject(path) {
     });
     if (project) {
       var openList = lastStatus.openProjects || [];
-      openList.push({ path: project.path, name: project.name, branch: project.gitBranch || null });
+      openList.push({
+        path: project.path,
+        name: project.name,
+        branch: project.gitBranch || null,
+        isWorktree: false,
+      });
       lastStatus.openProjects = openList;
       lastStatus.recentProjects = newRecent;
       renderDashboard(lastStatus);

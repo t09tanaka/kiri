@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -12,6 +12,8 @@ pub struct WindowRegistry {
     path_to_label: HashMap<String, String>,
     /// Maps window labels to project paths
     label_to_path: HashMap<String, String>,
+    /// Paths that are worktrees
+    worktree_paths: HashSet<String>,
 }
 
 impl WindowRegistry {
@@ -20,15 +22,23 @@ impl WindowRegistry {
     }
 
     /// Register a window with a project path
-    pub fn register(&mut self, label: &str, path: &str) {
-        self.path_to_label.insert(path.to_string(), label.to_string());
-        self.label_to_path.insert(label.to_string(), path.to_string());
+    pub fn register(&mut self, label: &str, path: &str, is_worktree: bool) {
+        self.path_to_label
+            .insert(path.to_string(), label.to_string());
+        self.label_to_path
+            .insert(label.to_string(), path.to_string());
+        if is_worktree {
+            self.worktree_paths.insert(path.to_string());
+        } else {
+            self.worktree_paths.remove(path);
+        }
     }
 
     /// Unregister a window by its label
     pub fn unregister_by_label(&mut self, label: &str) {
         if let Some(path) = self.label_to_path.remove(label) {
             self.path_to_label.remove(&path);
+            self.worktree_paths.remove(&path);
         }
     }
 
@@ -40,6 +50,11 @@ impl WindowRegistry {
     /// Get all registered project paths
     pub fn get_all_paths(&self) -> Vec<String> {
         self.path_to_label.keys().cloned().collect()
+    }
+
+    /// Check if a registered path is a worktree
+    pub fn is_worktree_path(&self, path: &str) -> bool {
+        self.worktree_paths.contains(path)
     }
 }
 
@@ -111,10 +126,10 @@ pub fn create_window_impl(
 
     builder.build().map_err(|e| e.to_string())?;
 
-    // Register the window with its project path
+    // Register the window with its project path (worktree status unknown at this point)
     if let (Some(path), Some(registry)) = (project_path, registry) {
         if let Ok(mut reg) = registry.lock() {
-            reg.register(&label, &path);
+            reg.register(&label, &path, false);
         }
     }
 
@@ -172,9 +187,10 @@ pub fn register_window(
     registry: tauri::State<WindowRegistryState>,
     label: String,
     project_path: String,
+    is_worktree: Option<bool>,
 ) -> Result<(), String> {
     if let Ok(mut reg) = registry.lock() {
-        reg.register(&label, &project_path);
+        reg.register(&label, &project_path, is_worktree.unwrap_or(false));
     }
     Ok(())
 }
@@ -268,9 +284,9 @@ mod tests {
     #[test]
     fn test_registry_get_all_paths_returns_registered_paths() {
         let mut registry = WindowRegistry::new();
-        registry.register("window-1", "/path/a");
-        registry.register("window-2", "/path/b");
-        registry.register("window-3", "/path/c");
+        registry.register("window-1", "/path/a", false);
+        registry.register("window-2", "/path/b", false);
+        registry.register("window-3", "/path/c", false);
 
         let mut paths = registry.get_all_paths();
         paths.sort();
@@ -280,11 +296,47 @@ mod tests {
     #[test]
     fn test_registry_get_all_paths_excludes_unregistered() {
         let mut registry = WindowRegistry::new();
-        registry.register("window-1", "/path/a");
-        registry.register("window-2", "/path/b");
+        registry.register("window-1", "/path/a", false);
+        registry.register("window-2", "/path/b", false);
         registry.unregister_by_label("window-1");
 
         let paths = registry.get_all_paths();
         assert_eq!(paths, vec!["/path/b"]);
+    }
+
+    #[test]
+    fn test_registry_worktree_tracking() {
+        let mut registry = WindowRegistry::new();
+        registry.register("window-1", "/path/a", false);
+        registry.register("window-2", "/path/b", true);
+
+        assert!(!registry.is_worktree_path("/path/a"));
+        assert!(registry.is_worktree_path("/path/b"));
+    }
+
+    #[test]
+    fn test_registry_worktree_cleared_on_unregister() {
+        let mut registry = WindowRegistry::new();
+        registry.register("window-1", "/path/wt", true);
+        assert!(registry.is_worktree_path("/path/wt"));
+
+        registry.unregister_by_label("window-1");
+        assert!(!registry.is_worktree_path("/path/wt"));
+    }
+
+    #[test]
+    fn test_registry_worktree_updated_on_re_register() {
+        let mut registry = WindowRegistry::new();
+        // First register without worktree
+        registry.register("window-1", "/path/a", false);
+        assert!(!registry.is_worktree_path("/path/a"));
+
+        // Re-register as worktree
+        registry.register("window-1", "/path/a", true);
+        assert!(registry.is_worktree_path("/path/a"));
+
+        // Re-register as non-worktree
+        registry.register("window-1", "/path/a", false);
+        assert!(!registry.is_worktree_path("/path/a"));
     }
 }

@@ -552,6 +552,20 @@ body {
   letter-spacing: 0.02em;
 }
 
+.wt-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.35);
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
 .card-path {
   font-family: 'IBM Plex Mono', monospace;
   font-size: 11px;

@@ -311,7 +311,11 @@
 
       // Register this window with the project path (for focus_or_create_window)
       try {
-        await windowService.registerWindow(windowLabel, decodedPath);
+        await windowService.registerWindow(
+          windowLabel,
+          decodedPath,
+          worktreeContext?.is_worktree ?? false
+        );
       } catch (e) {
         console.error('Failed to register window:', e);
       }
