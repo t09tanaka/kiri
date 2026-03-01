@@ -41,27 +41,41 @@ export async function toggleRemoteAccess(
     } else {
       opts.onError('');
 
-      // Start server unconditionally (works on LAN without cloudflared)
+      // cloudflared is REQUIRED for Remote Access.
+      // Do NOT add a LAN-only fallback — simplicity over flexibility.
+      const cloudflaredAvailable = await remoteAccessService.isCloudflaredAvailable();
+      if (!cloudflaredAvailable) {
+        opts.onError('cloudflared is not installed. Run: brew install cloudflared');
+        return null;
+      }
+
+      // Start server
       const authToken = await remoteAccessService.startServer(settings.port);
       remoteAccessStore.setServerRunning(true);
       remoteAccessStore.setPort(settings.port);
       remoteAccessStore.setAuthToken(authToken);
       settings.enabled = true;
 
-      // Conditionally start tunnel if cloudflared is available
+      // Start tunnel (required — if tunnel fails, the entire Remote Access startup fails)
       let tunnelUrl: string | null = null;
-      const cloudflaredAvailable = await remoteAccessService.isCloudflaredAvailable();
-      if (cloudflaredAvailable) {
+      try {
+        const token = settings.tunnelToken?.trim() || null;
+        tunnelUrl = await remoteAccessService.startTunnel(token, settings.port);
+        remoteAccessStore.setTunnelRunning(true, tunnelUrl ?? undefined);
+      } catch {
+        // Tunnel failed - stop server and clean up
         try {
-          const token = settings.tunnelToken?.trim() || null;
-          tunnelUrl = await remoteAccessService.startTunnel(token, settings.port);
-          remoteAccessStore.setTunnelRunning(true, tunnelUrl ?? undefined);
+          await remoteAccessService.stopServer();
         } catch {
-          // Tunnel failed - server stays running
-          remoteAccessStore.setTunnelRunning(false);
+          // Ignore cleanup errors
         }
-      } else {
+        remoteAccessStore.setServerRunning(false);
         remoteAccessStore.setTunnelRunning(false);
+        remoteAccessStore.setAuthToken(null);
+        settings.enabled = false;
+        await saveRemoteAccessSettings(settings);
+        opts.onError('Failed to start Cloudflare Tunnel');
+        return null;
       }
 
       await saveRemoteAccessSettings(settings);

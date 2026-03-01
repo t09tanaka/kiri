@@ -211,7 +211,7 @@
               class="remote-lightswitch"
               class:active={$isRemoteActive}
               onclick={handleToggle}
-              disabled={isTogglingRemote}
+              disabled={isTogglingRemote || (!cloudflaredAvailable && !$isRemoteActive)}
               aria-label={$isRemoteActive ? 'Stop remote access' : 'Start remote access'}
             >
               <span class="lightswitch-track">
@@ -299,7 +299,7 @@
         <!-- Section: Configuration -->
         <div class="section">
           <h3 class="section-title">Configuration</h3>
-          <p class="description">Access kiri from outside your network via Cloudflare Tunnel.</p>
+          <p class="description">Remote Access requires cloudflared to create a secure tunnel.</p>
 
           {#if !cloudflaredAvailable}
             <div class="warning-banner">

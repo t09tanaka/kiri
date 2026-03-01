@@ -66,26 +66,32 @@ describe('toggleRemoteAccess', () => {
       expect(opts.toggleCalls).toEqual([true, false]);
     });
 
-    it('should return null tunnelUrl when tunnel fails', async () => {
+    it('should fail entirely when tunnel fails (no LAN fallback)', async () => {
       mockService.startTunnel.mockRejectedValue(new Error('tunnel error'));
+      mockService.stopServer.mockResolvedValue(undefined);
 
       const opts = createOpts();
       const result = await toggleRemoteAccess(opts);
 
-      expect(result).toEqual({ tunnelUrl: null });
-      expect(get(isRemoteActive)).toBe(true); // server still running
+      expect(result).toBeNull();
+      expect(get(isRemoteActive)).toBe(false); // server stopped on tunnel failure
+      expect(mockService.stopServer).toHaveBeenCalled(); // cleanup
+      expect(opts.errorCalls).toContain('Failed to start Cloudflare Tunnel');
     });
 
-    it('should start server but skip tunnel when cloudflared is not available', async () => {
+    it('should fail when cloudflared is not available (no LAN fallback)', async () => {
       mockService.isCloudflaredAvailable.mockResolvedValue(false);
 
       const opts = createOpts();
       const result = await toggleRemoteAccess(opts);
 
-      expect(result).toEqual({ tunnelUrl: null });
-      expect(mockService.startServer).toHaveBeenCalledWith(9876);
+      expect(result).toBeNull();
+      expect(mockService.startServer).not.toHaveBeenCalled();
       expect(mockService.startTunnel).not.toHaveBeenCalled();
-      expect(get(isRemoteActive)).toBe(true); // server running without tunnel
+      expect(get(isRemoteActive)).toBe(false);
+      expect(opts.errorCalls).toContain(
+        'cloudflared is not installed. Run: brew install cloudflared'
+      );
     });
 
     it('should pass tunnel token from settings', async () => {

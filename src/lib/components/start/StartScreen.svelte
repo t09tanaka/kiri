@@ -18,6 +18,7 @@
   let mounted = $state(false);
   let isTogglingRemote = $state(false);
   let remoteError = $state<string | null>(null);
+  let cloudflaredAvailable = $state(true);
 
   async function handleOpenDirectory() {
     const selected = await dialogService.openDirectory();
@@ -78,6 +79,11 @@
       remoteAccessStore.setServerRunning(running);
     } catch {
       // Backend not ready yet
+    }
+    try {
+      cloudflaredAvailable = await remoteAccessService.isCloudflaredAvailable();
+    } catch {
+      cloudflaredAvailable = false;
     }
   });
 </script>
@@ -239,7 +245,7 @@
           class="remote-lightswitch"
           class:active={$isRemoteActive}
           onclick={handleRemoteToggle}
-          disabled={isTogglingRemote}
+          disabled={isTogglingRemote || (!cloudflaredAvailable && !$isRemoteActive)}
           aria-label={$isRemoteActive ? 'Stop remote access' : 'Start remote access'}
         >
           <span class="lightswitch-track">
