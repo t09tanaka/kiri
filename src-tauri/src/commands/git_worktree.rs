@@ -1,6 +1,7 @@
 use git2::Repository;
 use glob::glob;
 use serde::Serialize;
+use serde_json;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -651,6 +652,66 @@ const EXCLUDED_DIRS: &[&str] = &[
     "coverage",
 ];
 
+/// Detect husky git hooks manager in a Node.js project directory.
+/// Returns the appropriate command based on the husky version:
+/// - v9+: `npx husky` (prepare script is `"husky"`)
+/// - v8 and earlier: `npx husky install` (prepare script is `"husky install"`)
+/// Falls back to version detection from devDependencies if prepare script is absent.
+fn detect_husky_command(dir: &Path, command_prefix: &str) -> Option<PackageManager> {
+    let package_json_path = dir.join("package.json");
+    let content = fs::read_to_string(&package_json_path).ok()?;
+    let pkg: serde_json::Value = serde_json::from_str(&content).ok()?;
+
+    // Check if husky is in devDependencies or dependencies
+    let has_husky = pkg
+        .get("devDependencies")
+        .and_then(|d| d.get("husky"))
+        .or_else(|| pkg.get("dependencies").and_then(|d| d.get("husky")));
+
+    let husky_version_str = has_husky?.as_str().unwrap_or("");
+
+    // Determine command from prepare script first, then fall back to version string
+    let prepare_script = pkg
+        .get("scripts")
+        .and_then(|s| s.get("prepare"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let command = if prepare_script == "husky" {
+        // v9+: prepare script is just "husky"
+        "npx husky"
+    } else if prepare_script == "husky install" || prepare_script.contains("husky install") {
+        // v8 and earlier
+        "npx husky install"
+    } else if is_husky_v9_or_later(husky_version_str) {
+        // No prepare script but version indicates v9+
+        "npx husky"
+    } else {
+        // Default to husky install for older versions
+        "npx husky install"
+    };
+
+    Some(PackageManager {
+        name: "husky".to_string(),
+        lock_file: ".husky".to_string(),
+        command: format!("{}{}", command_prefix, command),
+    })
+}
+
+/// Check if a semver version string indicates husky v9 or later.
+/// Handles formats like "^9.1.7", "~9.0.0", ">=9", "9.0.0", etc.
+fn is_husky_v9_or_later(version: &str) -> bool {
+    // Strip leading non-numeric characters (^, ~, >=, etc.)
+    let numeric_part = version.trim_start_matches(|c: char| !c.is_ascii_digit());
+    // Parse the major version
+    let major: u32 = numeric_part
+        .split('.')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    major >= 9
+}
+
 /// Detect package managers in a single directory and return results.
 /// The `command_prefix` is prepended to commands (e.g., "cd subdir && " for subdirectories).
 fn detect_package_managers_in_dir(dir: &Path, command_prefix: &str) -> Vec<PackageManager> {
@@ -683,6 +744,14 @@ fn detect_package_managers_in_dir(dir: &Path, command_prefix: &str) -> Vec<Packa
             lock_file: "".to_string(),
             command: format!("{}npm install", command_prefix),
         });
+        nodejs_found = true;
+    }
+
+    // Husky (git hooks manager) - only when Node.js project is detected
+    if nodejs_found {
+        if let Some(husky_command) = detect_husky_command(dir, command_prefix) {
+            results.push(husky_command);
+        }
     }
 
     // Python ecosystem (priority: uv > poetry > pipenv > pip)
@@ -2227,5 +2296,142 @@ mod tests {
             "Expected lock reason in error message, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_is_husky_v9_or_later() {
+        // v9+
+        assert!(is_husky_v9_or_later("^9.1.7"));
+        assert!(is_husky_v9_or_later("~9.0.0"));
+        assert!(is_husky_v9_or_later("9.0.0"));
+        assert!(is_husky_v9_or_later(">=9"));
+        assert!(is_husky_v9_or_later("^10.0.0"));
+
+        // v8 and earlier
+        assert!(!is_husky_v9_or_later("^8.0.0"));
+        assert!(!is_husky_v9_or_later("~7.0.0"));
+        assert!(!is_husky_v9_or_later("4.3.8"));
+
+        // Edge cases
+        assert!(!is_husky_v9_or_later(""));
+        assert!(!is_husky_v9_or_later("latest"));
+    }
+
+    #[test]
+    fn test_detect_husky_v9() {
+        let dir = tempdir().unwrap();
+        let pkg = serde_json::json!({
+            "name": "test-project",
+            "scripts": { "prepare": "husky" },
+            "devDependencies": { "husky": "^9.1.7" }
+        });
+        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+
+        let result = detect_husky_command(dir.path(), "");
+        assert!(result.is_some());
+        let pm = result.unwrap();
+        assert_eq!(pm.name, "husky");
+        assert_eq!(pm.command, "npx husky");
+    }
+
+    #[test]
+    fn test_detect_husky_v8() {
+        let dir = tempdir().unwrap();
+        let pkg = serde_json::json!({
+            "name": "test-project",
+            "scripts": { "prepare": "husky install" },
+            "devDependencies": { "husky": "^8.0.0" }
+        });
+        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+
+        let result = detect_husky_command(dir.path(), "");
+        assert!(result.is_some());
+        let pm = result.unwrap();
+        assert_eq!(pm.name, "husky");
+        assert_eq!(pm.command, "npx husky install");
+    }
+
+    #[test]
+    fn test_detect_husky_no_prepare_script_v9() {
+        let dir = tempdir().unwrap();
+        let pkg = serde_json::json!({
+            "name": "test-project",
+            "devDependencies": { "husky": "^9.0.0" }
+        });
+        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+
+        let result = detect_husky_command(dir.path(), "");
+        assert!(result.is_some());
+        let pm = result.unwrap();
+        assert_eq!(pm.command, "npx husky");
+    }
+
+    #[test]
+    fn test_detect_husky_no_prepare_script_v8() {
+        let dir = tempdir().unwrap();
+        let pkg = serde_json::json!({
+            "name": "test-project",
+            "devDependencies": { "husky": "^8.0.0" }
+        });
+        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+
+        let result = detect_husky_command(dir.path(), "");
+        assert!(result.is_some());
+        let pm = result.unwrap();
+        assert_eq!(pm.command, "npx husky install");
+    }
+
+    #[test]
+    fn test_detect_husky_not_present() {
+        let dir = tempdir().unwrap();
+        let pkg = serde_json::json!({
+            "name": "test-project",
+            "devDependencies": { "eslint": "^8.0.0" }
+        });
+        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+
+        let result = detect_husky_command(dir.path(), "");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_detect_husky_with_subdirectory_prefix() {
+        let dir = tempdir().unwrap();
+        let pkg = serde_json::json!({
+            "name": "test-project",
+            "scripts": { "prepare": "husky" },
+            "devDependencies": { "husky": "^9.1.7" }
+        });
+        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+
+        let result = detect_husky_command(dir.path(), "cd 'frontend' && ");
+        assert!(result.is_some());
+        let pm = result.unwrap();
+        assert_eq!(pm.command, "cd 'frontend' && npx husky");
+    }
+
+    #[test]
+    fn test_detect_package_managers_includes_husky() {
+        let dir = tempdir().unwrap();
+        let pkg = serde_json::json!({
+            "name": "test-project",
+            "scripts": { "prepare": "husky" },
+            "devDependencies": { "husky": "^9.1.7" }
+        });
+        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+        fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
+
+        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok());
+        let managers = result.unwrap();
+
+        let names: Vec<&str> = managers.iter().map(|m| m.name.as_str()).collect();
+        assert!(names.contains(&"npm"), "Should detect npm");
+        assert!(names.contains(&"husky"), "Should detect husky");
+
+        // husky should come after npm
+        let npm_idx = names.iter().position(|n| *n == "npm").unwrap();
+        let husky_idx = names.iter().position(|n| *n == "husky").unwrap();
+        assert!(husky_idx > npm_idx, "husky should be after npm");
     }
 }
