@@ -383,6 +383,9 @@ const filenameMap: Record<string, { type: string; color: string }> = {
   Dockerfile: { type: 'docker', color: '#2496ed' },
   'docker-compose.yml': { type: 'docker', color: '#2496ed' },
   'docker-compose.yaml': { type: 'docker', color: '#2496ed' },
+  'compose.yml': { type: 'docker', color: '#2496ed' },
+  'compose.yaml': { type: 'docker', color: '#2496ed' },
+  '.dockerignore': { type: 'docker', color: '#2496ed' },
 
   // Python
   'requirements.txt': { type: 'pip', color: iconColors.python },
@@ -530,6 +533,11 @@ export function getFileIconInfo(filename: string): { type: string; color: string
   // Check special filenames
   if (filenameMap[filename] || filenameMap[lowerFilename]) {
     return filenameMap[filename] || filenameMap[lowerFilename];
+  }
+
+  // Dockerfile.* variants (e.g. Dockerfile.dev, Dockerfile.prod)
+  if (filename.startsWith('Dockerfile.') || filename.startsWith('dockerfile.')) {
+    return { type: 'docker', color: '#2496ed' };
   }
 
   // Get extension

@@ -26,6 +26,20 @@ describe('getFileIconInfo', () => {
       expect(result.color).toBe('#2496ed');
     });
 
+    it('should return docker icon for Dockerfile variants', () => {
+      expect(getFileIconInfo('Dockerfile.dev').type).toBe('docker');
+      expect(getFileIconInfo('Dockerfile.prod').type).toBe('docker');
+    });
+
+    it('should return docker icon for compose files', () => {
+      expect(getFileIconInfo('compose.yml').type).toBe('docker');
+      expect(getFileIconInfo('compose.yaml').type).toBe('docker');
+    });
+
+    it('should return docker icon for .dockerignore', () => {
+      expect(getFileIconInfo('.dockerignore').type).toBe('docker');
+    });
+
     it('should handle case-insensitive filename matching via lowerFilename fallback', () => {
       // Test that PACKAGE.JSON (uppercase) matches package.json (lowercase in map)
       // This triggers the `filenameMap[lowerFilename]` branch in line 270

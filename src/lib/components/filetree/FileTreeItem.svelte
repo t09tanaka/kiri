@@ -456,6 +456,14 @@
               <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path>
               <path d="M14 2v4a2 2 0 0 0 2 2h4"></path>
               <path d="m9 15 2 2 4-4"></path>
+            {:else if fileIconInfo.type === 'docker'}
+              <path d="M21 16c0 3-2 5-5 5H8c-4 0-6-2-6-5 0-2 2-4 5-4h10c3 0 4 2 4 4Z"></path>
+              <path d="M3 14c-1-3 0-6 2-8"></path>
+              <circle cx="18" cy="16" r="1" fill="currentColor" stroke="none"></circle>
+              <rect x="6" y="6" width="3" height="3" rx="0.4"></rect>
+              <rect x="10" y="6" width="3" height="3" rx="0.4"></rect>
+              <rect x="14" y="6" width="3" height="3" rx="0.4"></rect>
+              <rect x="10" y="2" width="3" height="3" rx="0.4"></rect>
             {:else if fileIconInfo.type === 'config'}
               <path
                 d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
