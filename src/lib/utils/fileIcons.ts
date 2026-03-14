@@ -21,7 +21,7 @@ const iconColors = {
   markdown: '#5ac8fa', // Sky blue
   image: '#bf5af2', // Purple accent
   git: '#ff453a', // Bright red
-  config: '#8090a0', // Muted gray-blue
+  config: '#6b7280', // Neutral gray
   text: '#8b949e', // Text gray
   binary: '#6e7681', // Dark gray
   folder: '#64d2ff', // Cyan accent
@@ -312,8 +312,8 @@ const extensionMap: Record<string, { type: string; color: string }> = {
   hcl: { type: 'terraform', color: iconColors.terraform },
   proto: { type: 'protobuf', color: iconColors.protobuf },
   ini: { type: 'ini', color: iconColors.ini },
-  conf: { type: 'conf', color: iconColors.config },
-  cfg: { type: 'conf', color: iconColors.config },
+  conf: { type: 'config', color: iconColors.config },
+  cfg: { type: 'config', color: iconColors.config },
 
   // Data formats
   csv: { type: 'csv', color: iconColors.csv },
@@ -520,8 +520,14 @@ const filenameMap: Record<string, { type: string; color: string }> = {
 };
 
 export function getFileIconInfo(filename: string): { type: string; color: string } {
-  // Check special filenames first
   const lowerFilename = filename.toLowerCase();
+
+  // Check if filename contains "config" → settings icon
+  if (lowerFilename.includes('config')) {
+    return { type: 'config', color: iconColors.config };
+  }
+
+  // Check special filenames
   if (filenameMap[filename] || filenameMap[lowerFilename]) {
     return filenameMap[filename] || filenameMap[lowerFilename];
   }
@@ -546,6 +552,13 @@ export function getFileIconInfo(filename: string): { type: string; color: string
 
   // Default
   return { type: 'file', color: iconColors.text };
+}
+
+export function isConfigFile(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  if (lower.includes('config')) return true;
+  const ext = lower.split('.').pop();
+  return ext === 'conf' || ext === 'cfg';
 }
 
 export function getFolderColor(isOpen: boolean): string {

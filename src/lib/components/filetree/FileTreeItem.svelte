@@ -8,7 +8,7 @@
     getStatusColor,
     getDirectoryStatusColor,
   } from '@/lib/stores/gitStore';
-  import { getFileIconInfo, getFolderColor } from '@/lib/utils/fileIcons';
+  import { getFileIconInfo, getFolderColor, isConfigFile } from '@/lib/utils/fileIcons';
   import ContextMenu, { type MenuItem } from '@/lib/components/ui/ContextMenu.svelte';
   import { isDragging, dropTargetPath, draggedPaths } from '@/lib/stores/dragDropStore';
   import FileTreeItem from './FileTreeItem.svelte';
@@ -121,12 +121,18 @@
   function sortEntries(items: FileEntry[]): FileEntry[] {
     return [...items].sort((a, b) => {
       if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+      // Config files go last (within files only)
+      if (!a.is_dir && !b.is_dir) {
+        const aConfig = isConfigFile(a.name);
+        const bConfig = isConfigFile(b.name);
+        if (aConfig !== bConfig) return aConfig ? 1 : -1;
+      }
       return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
     });
   }
 
   const displayChildren = $derived.by(() => {
-    if (previewEntries.length === 0) return children;
+    if (previewEntries.length === 0) return sortEntries(children);
     const previewPaths = new Set(previewEntries.map((e) => e.path));
     const filtered = children.filter((e) => !previewPaths.has(e.path));
     return sortEntries([...filtered, ...previewEntries]);
@@ -403,8 +409,15 @@
             stroke-linecap="round"
             stroke-linejoin="round"
           >
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-            <polyline points="14 2 14 8 20 8"></polyline>
+            {#if fileIconInfo.type === 'config'}
+              <path
+                d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
+              ></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            {:else}
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+            {/if}
           </svg>
         </span>
       {/if}

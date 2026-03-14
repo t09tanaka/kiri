@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getFileIconInfo, getFolderColor } from './fileIcons';
+import { getFileIconInfo, getFolderColor, isConfigFile } from './fileIcons';
 
 describe('getFileIconInfo', () => {
   describe('special filenames', () => {
@@ -104,6 +104,43 @@ describe('getFileIconInfo', () => {
     });
   });
 
+  describe('config filename detection', () => {
+    it('should return config icon for files containing "config"', () => {
+      const result = getFileIconInfo('app.config.yaml');
+      expect(result.type).toBe('config');
+      expect(result.color).toBe('#6b7280');
+    });
+
+    it('should return config icon for vite.config.ts', () => {
+      const result = getFileIconInfo('vite.config.ts');
+      expect(result.type).toBe('config');
+      expect(result.color).toBe('#6b7280');
+    });
+
+    it('should return config icon for tsconfig.json', () => {
+      const result = getFileIconInfo('tsconfig.json');
+      expect(result.type).toBe('config');
+      expect(result.color).toBe('#6b7280');
+    });
+
+    it('should return config icon case-insensitively', () => {
+      const result = getFileIconInfo('MyConfig.yml');
+      expect(result.type).toBe('config');
+    });
+
+    it('should return config icon for .conf extension', () => {
+      const result = getFileIconInfo('app.conf');
+      expect(result.type).toBe('config');
+      expect(result.color).toBe('#6b7280');
+    });
+
+    it('should return config icon for .cfg extension', () => {
+      const result = getFileIconInfo('setup.cfg');
+      expect(result.type).toBe('config');
+      expect(result.color).toBe('#6b7280');
+    });
+  });
+
   describe('default behavior', () => {
     it('should return default file icon for unknown extensions', () => {
       const result = getFileIconInfo('unknown.xyz');
@@ -115,6 +152,30 @@ describe('getFileIconInfo', () => {
       const result = getFileIconInfo('noextension');
       expect(result.type).toBe('file');
     });
+  });
+});
+
+describe('isConfigFile', () => {
+  it('should return true for files containing "config"', () => {
+    expect(isConfigFile('vite.config.ts')).toBe(true);
+    expect(isConfigFile('tsconfig.json')).toBe(true);
+    expect(isConfigFile('app.config.yaml')).toBe(true);
+  });
+
+  it('should return true case-insensitively', () => {
+    expect(isConfigFile('MyConfig.yml')).toBe(true);
+    expect(isConfigFile('CONFIG.js')).toBe(true);
+  });
+
+  it('should return true for .conf and .cfg extensions', () => {
+    expect(isConfigFile('app.conf')).toBe(true);
+    expect(isConfigFile('setup.cfg')).toBe(true);
+  });
+
+  it('should return false for non-config files', () => {
+    expect(isConfigFile('index.ts')).toBe(false);
+    expect(isConfigFile('README.md')).toBe(false);
+    expect(isConfigFile('package.json')).toBe(false);
   });
 });
 

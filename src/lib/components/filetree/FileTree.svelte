@@ -6,6 +6,7 @@
   import { dragDropService } from '@/lib/services/dragDropService';
   import FileTreeItem from './FileTreeItem.svelte';
   import type { FileEntry } from './types';
+  import { isConfigFile } from '@/lib/utils/fileIcons';
   import { gitStore, gitStatusMap } from '@/lib/stores/gitStore';
   import {
     dragDropStore,
@@ -84,12 +85,18 @@
     });
   });
 
-  // Sort entries: directories first, then alphabetically by name (case-insensitive)
+  // Sort entries: directories first, config files last, then alphabetically
   function sortEntries(items: FileEntry[]): FileEntry[] {
     return [...items].sort((a, b) => {
       // Directories come first
       if (a.is_dir !== b.is_dir) {
         return a.is_dir ? -1 : 1;
+      }
+      // Config files go last (within files only)
+      if (!a.is_dir && !b.is_dir) {
+        const aConfig = isConfigFile(a.name);
+        const bConfig = isConfigFile(b.name);
+        if (aConfig !== bConfig) return aConfig ? 1 : -1;
       }
       // Then sort alphabetically (case-insensitive)
       return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
@@ -98,7 +105,7 @@
 
   // Combined entries: real entries + preview entries (during drag), sorted
   const displayEntries = $derived.by(() => {
-    if (previewEntries.length === 0) return entries;
+    if (previewEntries.length === 0) return sortEntries(entries);
     // Filter out any entries that have the same path as preview entries (avoid duplicates)
     const previewPaths = new Set(previewEntries.map((e) => e.path));
     const filtered = entries.filter((e) => !previewPaths.has(e.path));
