@@ -6,7 +6,7 @@
   import { dragDropService } from '@/lib/services/dragDropService';
   import FileTreeItem from './FileTreeItem.svelte';
   import type { FileEntry } from './types';
-  import { isConfigFile } from '@/lib/utils/fileIcons';
+  import { isConfigFile, getTestFileBase, computeTestTreeLines } from '@/lib/utils/fileIcons';
   import { gitStore, gitStatusMap } from '@/lib/stores/gitStore';
   import {
     dragDropStore,
@@ -85,20 +85,32 @@
     });
   });
 
-  // Sort entries: directories first, config files last, then alphabetically
+  // Sort entries: directories first, test files grouped with parent, config files last
   function sortEntries(items: FileEntry[]): FileEntry[] {
     return [...items].sort((a, b) => {
       // Directories come first
       if (a.is_dir !== b.is_dir) {
         return a.is_dir ? -1 : 1;
       }
-      // Config files go last (within files only)
-      if (!a.is_dir && !b.is_dir) {
-        const aConfig = isConfigFile(a.name);
-        const bConfig = isConfigFile(b.name);
-        if (aConfig !== bConfig) return aConfig ? 1 : -1;
+      if (a.is_dir) {
+        return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
       }
-      // Then sort alphabetically (case-insensitive)
+      // For files: group test files with their parent
+      const aBase = getTestFileBase(a.name);
+      const bBase = getTestFileBase(b.name);
+      const aGroupKey = (aBase || a.name).toLowerCase();
+      const bGroupKey = (bBase || b.name).toLowerCase();
+      // Config files (by group key) go last
+      const aIsConfig = isConfigFile(aBase || a.name);
+      const bIsConfig = isConfigFile(bBase || b.name);
+      if (aIsConfig !== bIsConfig) return aIsConfig ? 1 : -1;
+      // Sort by group key
+      if (aGroupKey !== bGroupKey) {
+        return aGroupKey.localeCompare(bGroupKey);
+      }
+      // Within same group: parent first, then tests alphabetically
+      if (!aBase && bBase) return -1;
+      if (aBase && !bBase) return 1;
       return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
     });
   }
@@ -111,6 +123,8 @@
     const filtered = entries.filter((e) => !previewPaths.has(e.path));
     return sortEntries([...filtered, ...previewEntries]);
   });
+
+  const testTreeLines = $derived(computeTestTreeLines(displayEntries));
 
   async function loadRootDirectory(showLoading = true) {
     if (showLoading) {
@@ -652,6 +666,7 @@
               repoRoot={$gitStore.repoInfo?.root ?? ''}
               projectRoot={rootPath}
               {refreshKey}
+              testTreeLine={testTreeLines.get(entry.path) ?? null}
             />
           {/each}
         {/if}

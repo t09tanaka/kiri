@@ -8,7 +8,13 @@
     getStatusColor,
     getDirectoryStatusColor,
   } from '@/lib/stores/gitStore';
-  import { getFileIconInfo, getFolderColor, isConfigFile } from '@/lib/utils/fileIcons';
+  import {
+    getFileIconInfo,
+    getFolderColor,
+    isConfigFile,
+    getTestFileBase,
+    computeTestTreeLines,
+  } from '@/lib/utils/fileIcons';
   import ContextMenu, { type MenuItem } from '@/lib/components/ui/ContextMenu.svelte';
   import { isDragging, dropTargetPath, draggedPaths } from '@/lib/stores/dragDropStore';
   import FileTreeItem from './FileTreeItem.svelte';
@@ -22,6 +28,7 @@
     repoRoot?: string;
     projectRoot?: string;
     refreshKey?: number;
+    testTreeLine?: 'branch' | 'last' | null;
   }
 
   let {
@@ -33,6 +40,7 @@
     repoRoot = '',
     projectRoot = '',
     refreshKey = 0,
+    testTreeLine = null,
   }: Props = $props();
 
   let expanded = $state(false);
@@ -47,7 +55,8 @@
 
   const isPending = $derived(entry.is_pending ?? false);
   const isSelected = $derived(selectedPath === entry.path);
-  const paddingLeft = $derived(12 + depth * 16);
+  const isTestFile = $derived(testTreeLine !== null);
+  const paddingLeft = $derived(12 + depth * 16 + (isTestFile ? 16 : 0));
 
   // File icon info
   const fileIconInfo = $derived(getFileIconInfo(entry.name));
@@ -121,12 +130,25 @@
   function sortEntries(items: FileEntry[]): FileEntry[] {
     return [...items].sort((a, b) => {
       if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-      // Config files go last (within files only)
-      if (!a.is_dir && !b.is_dir) {
-        const aConfig = isConfigFile(a.name);
-        const bConfig = isConfigFile(b.name);
-        if (aConfig !== bConfig) return aConfig ? 1 : -1;
+      if (a.is_dir) {
+        return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
       }
+      // Group test files with their parent
+      const aBase = getTestFileBase(a.name);
+      const bBase = getTestFileBase(b.name);
+      const aGroupKey = (aBase || a.name).toLowerCase();
+      const bGroupKey = (bBase || b.name).toLowerCase();
+      // Config files (by group key) go last
+      const aIsConfig = isConfigFile(aBase || a.name);
+      const bIsConfig = isConfigFile(bBase || b.name);
+      if (aIsConfig !== bIsConfig) return aIsConfig ? 1 : -1;
+      // Sort by group key
+      if (aGroupKey !== bGroupKey) {
+        return aGroupKey.localeCompare(bGroupKey);
+      }
+      // Within same group: parent first, then tests alphabetically
+      if (!aBase && bBase) return -1;
+      if (aBase && !bBase) return 1;
       return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
     });
   }
@@ -137,6 +159,8 @@
     const filtered = children.filter((e) => !previewPaths.has(e.path));
     return sortEntries([...filtered, ...previewEntries]);
   });
+
+  const childTestTreeLines = $derived(computeTestTreeLines(displayChildren));
 
   // Auto-expand listener for drag hover
   let autoExpandHandler: ((e: Event) => void) | null = null;
@@ -397,8 +421,27 @@
           </svg>
         </span>
       {:else}
-        <span class="spacer"></span>
-        <span class="icon file" style="color: {fileIconInfo.color}">
+        {#if testTreeLine}
+          <span class="test-tree-connector">
+            <svg width="16" height="20" viewBox="0 0 16 20">
+              <line
+                x1="12"
+                y1="0"
+                x2="12"
+                y2={testTreeLine === 'last' ? '10' : '20'}
+                stroke="currentColor"
+                stroke-width="1"
+              />
+              <line x1="12" y1="10" x2="16" y2="10" stroke="currentColor" stroke-width="1" />
+            </svg>
+          </span>
+        {:else}
+          <span class="spacer"></span>
+        {/if}
+        <span
+          class="icon file"
+          style="color: {isTestFile ? 'var(--text-muted)' : fileIconInfo.color}"
+        >
           <svg
             width="14"
             height="14"
@@ -409,7 +452,11 @@
             stroke-linecap="round"
             stroke-linejoin="round"
           >
-            {#if fileIconInfo.type === 'config'}
+            {#if isTestFile}
+              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path>
+              <path d="M14 2v4a2 2 0 0 0 2 2h4"></path>
+              <path d="m9 15 2 2 4-4"></path>
+            {:else if fileIconInfo.type === 'config'}
               <path
                 d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
               ></path>
@@ -421,8 +468,11 @@
           </svg>
         </span>
       {/if}
-      <span class="name" class:git-modified={statusColor()} style:color={statusColor() || null}
-        >{entry.name}</span
+      <span
+        class="name"
+        class:git-modified={statusColor()}
+        class:test-file={isTestFile}
+        style:color={statusColor() || null}>{entry.name}</span
       >
       {#if statusIcon}
         <span class="git-status" style="color: {statusColor()}">{statusIcon}</span>
@@ -482,6 +532,7 @@
               {repoRoot}
               {projectRoot}
               {refreshKey}
+              testTreeLine={childTestTreeLines.get(child.path) ?? null}
             />
           </div>
         {/each}
@@ -653,6 +704,16 @@
     flex-shrink: 0;
   }
 
+  .test-tree-connector {
+    width: 16px;
+    height: 20px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    color: var(--text-muted);
+    opacity: 0.6;
+  }
+
   .icon {
     display: flex;
     align-items: center;
@@ -698,6 +759,10 @@
 
   .directory .name {
     font-weight: 500;
+  }
+
+  .name.test-file {
+    opacity: 0.55;
   }
 
   .loading {

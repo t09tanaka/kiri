@@ -554,6 +554,54 @@ export function getFileIconInfo(filename: string): { type: string; color: string
   return { type: 'file', color: iconColors.text };
 }
 
+/**
+ * Returns the base filename if this is a test file, or null if not.
+ * Patterns: .test.*, .spec.*, _test.*, .browser.test.*
+ * e.g. "dialogService.test.ts" → "dialogService.ts"
+ *      "foo.browser.test.ts" → "foo.ts"
+ *      "foo_test.go" → "foo.go"
+ */
+export function getTestFileBase(filename: string): string | null {
+  // .browser.test.ext or .test.ext or .spec.ext
+  const dotPattern = /^(.+?)(?:\.browser)?\.(?:test|spec)\.(.+)$/;
+  const dotMatch = filename.match(dotPattern);
+  if (dotMatch) {
+    return `${dotMatch[1]}.${dotMatch[2]}`;
+  }
+  // _test.ext (Go style)
+  const underscorePattern = /^(.+?)_test\.(.+)$/;
+  const underscoreMatch = filename.match(underscorePattern);
+  if (underscoreMatch) {
+    return `${underscoreMatch[1]}.${underscoreMatch[2]}`;
+  }
+  return null;
+}
+
+/**
+ * Compute test file tree line info for a sorted list of entries.
+ * Returns a map of path → 'branch' (├) or 'last' (└).
+ */
+export function computeTestTreeLines(
+  items: { name: string; path: string; is_dir: boolean }[]
+): Map<string, 'branch' | 'last'> {
+  const map = new Map<string, 'branch' | 'last'>();
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.is_dir) continue;
+    const base = getTestFileBase(item.name);
+    if (!base) continue;
+    // Check if next item is also a test for same parent
+    const nextItem = items[i + 1];
+    const nextBase = nextItem && !nextItem.is_dir ? getTestFileBase(nextItem.name) : null;
+    if (nextBase && nextBase === base) {
+      map.set(item.path, 'branch');
+    } else {
+      map.set(item.path, 'last');
+    }
+  }
+  return map;
+}
+
 export function isConfigFile(filename: string): boolean {
   const lower = filename.toLowerCase();
   if (lower.includes('config')) return true;

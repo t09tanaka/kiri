@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { getFileIconInfo, getFolderColor, isConfigFile } from './fileIcons';
+import {
+  getFileIconInfo,
+  getFolderColor,
+  isConfigFile,
+  getTestFileBase,
+  computeTestTreeLines,
+} from './fileIcons';
 
 describe('getFileIconInfo', () => {
   describe('special filenames', () => {
@@ -176,6 +182,69 @@ describe('isConfigFile', () => {
     expect(isConfigFile('index.ts')).toBe(false);
     expect(isConfigFile('README.md')).toBe(false);
     expect(isConfigFile('package.json')).toBe(false);
+  });
+});
+
+describe('getTestFileBase', () => {
+  it('should detect .test.ts files', () => {
+    expect(getTestFileBase('dialogService.test.ts')).toBe('dialogService.ts');
+  });
+
+  it('should detect .spec.ts files', () => {
+    expect(getTestFileBase('dialogService.spec.ts')).toBe('dialogService.ts');
+  });
+
+  it('should detect .browser.test.ts files', () => {
+    expect(getTestFileBase('Button.browser.test.ts')).toBe('Button.ts');
+  });
+
+  it('should detect _test.go files', () => {
+    expect(getTestFileBase('handler_test.go')).toBe('handler.go');
+  });
+
+  it('should return null for non-test files', () => {
+    expect(getTestFileBase('dialogService.ts')).toBeNull();
+    expect(getTestFileBase('README.md')).toBeNull();
+    expect(getTestFileBase('test.ts')).toBeNull();
+  });
+
+  it('should handle config test files', () => {
+    expect(getTestFileBase('eslint.config.test.js')).toBe('eslint.config.js');
+  });
+});
+
+describe('computeTestTreeLines', () => {
+  it('should mark single test file as last', () => {
+    const items = [
+      { name: 'foo.ts', path: '/foo.ts', is_dir: false },
+      { name: 'foo.test.ts', path: '/foo.test.ts', is_dir: false },
+      { name: 'bar.ts', path: '/bar.ts', is_dir: false },
+    ];
+    const result = computeTestTreeLines(items);
+    expect(result.get('/foo.test.ts')).toBe('last');
+    expect(result.has('/foo.ts')).toBe(false);
+    expect(result.has('/bar.ts')).toBe(false);
+  });
+
+  it('should mark multiple test files with branch and last', () => {
+    const items = [
+      { name: 'foo.ts', path: '/foo.ts', is_dir: false },
+      { name: 'foo.test.ts', path: '/foo.test.ts', is_dir: false },
+      { name: 'foo.browser.test.ts', path: '/foo.browser.test.ts', is_dir: false },
+      { name: 'bar.ts', path: '/bar.ts', is_dir: false },
+    ];
+    const result = computeTestTreeLines(items);
+    expect(result.get('/foo.test.ts')).toBe('branch');
+    expect(result.get('/foo.browser.test.ts')).toBe('last');
+  });
+
+  it('should skip directories', () => {
+    const items = [
+      { name: 'test', path: '/test', is_dir: true },
+      { name: 'foo.test.ts', path: '/foo.test.ts', is_dir: false },
+    ];
+    const result = computeTestTreeLines(items);
+    expect(result.get('/foo.test.ts')).toBe('last');
   });
 });
 
