@@ -855,38 +855,39 @@
   }
 
   function getEffectiveInitCommands(): WorktreeInitCommand[] {
-    // Combine auto-detected and user-configured commands
     const commands: WorktreeInitCommand[] = [];
     const deferredCommands: WorktreeInitCommand[] = [];
 
-    // Add detected package managers if not already configured
-    // Husky must run after package install, so defer it
+    // Add all auto-detected package managers in detection order.
+    // If a command was toggled (saved in initCommands as auto override),
+    // use the override's enabled state but keep the original position.
+    // Husky is deferred to run after all package install commands.
     for (const pm of detectedPackageManagers) {
-      const hasPackageManagerCommand = initCommands.some((c) => c.command === pm.command);
-      if (!hasPackageManagerCommand) {
-        // Extract subdirectory from "cd subdir && " prefix if present
-        const cdMatch = pm.command.match(/^cd (.+?) && /);
-        const label = cdMatch ? `${pm.name} in ${cdMatch[1]}` : pm.name;
-        const baseName = pm.name === 'husky' ? 'Initialize git hooks' : 'Install dependencies';
-        const entry: WorktreeInitCommand = {
-          name: `${baseName} (${label})`,
-          command: pm.command,
-          enabled: true,
-          auto: true,
-        };
-        if (pm.name === 'husky') {
-          deferredCommands.push(entry);
-        } else {
-          commands.push(entry);
-        }
+      const autoOverride = initCommands.find((c) => c.command === pm.command && c.auto);
+      const hasUserOverride = initCommands.some((c) => c.command === pm.command && !c.auto);
+      if (hasUserOverride) continue; // User added their own command for this
+
+      const cdMatch = pm.command.match(/^cd (.+?) && /);
+      const label = cdMatch ? `${pm.name} in ${cdMatch[1]}` : pm.name;
+      const baseName = pm.name === 'husky' ? 'Initialize git hooks' : 'Install dependencies';
+      const entry: WorktreeInitCommand = {
+        name: `${baseName} (${label})`,
+        command: pm.command,
+        enabled: autoOverride ? autoOverride.enabled : true,
+        auto: true,
+      };
+      if (pm.name === 'husky') {
+        deferredCommands.push(entry);
+      } else {
+        commands.push(entry);
       }
     }
 
-    // Add husky after all package install commands
+    // Add husky after all auto-detected package install commands
     commands.push(...deferredCommands);
 
-    // Add user-configured commands
-    commands.push(...initCommands);
+    // Add user-configured commands (non-auto only, auto overrides already handled above)
+    commands.push(...initCommands.filter((c) => !c.auto));
 
     return commands;
   }
