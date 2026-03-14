@@ -540,6 +540,11 @@ export function getFileIconInfo(filename: string): { type: string; color: string
     return { type: 'docker', color: '#2496ed' };
   }
 
+  // .env.* variants (e.g. .env.sample, .env.staging)
+  if (lowerFilename.startsWith('.env.') || lowerFilename === '.env') {
+    return { type: 'env', color: '#ecd53f' };
+  }
+
   // Get extension
   const parts = filename.split('.');
   if (parts.length > 1) {

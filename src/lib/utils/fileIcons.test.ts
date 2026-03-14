@@ -40,6 +40,13 @@ describe('getFileIconInfo', () => {
       expect(getFileIconInfo('.dockerignore').type).toBe('docker');
     });
 
+    it('should return env icon for .env variants', () => {
+      expect(getFileIconInfo('.env').type).toBe('env');
+      expect(getFileIconInfo('.env.local').type).toBe('env');
+      expect(getFileIconInfo('.env.sample').type).toBe('env');
+      expect(getFileIconInfo('.env.staging').type).toBe('env');
+    });
+
     it('should handle case-insensitive filename matching via lowerFilename fallback', () => {
       // Test that PACKAGE.JSON (uppercase) matches package.json (lowercase in map)
       // This triggers the `filenameMap[lowerFilename]` branch in line 270
