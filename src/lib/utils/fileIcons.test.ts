@@ -290,10 +290,31 @@ describe('computeTestTreeLines', () => {
   it('should skip directories', () => {
     const items = [
       { name: 'test', path: '/test', is_dir: true },
+      { name: 'foo.ts', path: '/foo.ts', is_dir: false },
       { name: 'foo.test.ts', path: '/foo.test.ts', is_dir: false },
     ];
     const result = computeTestTreeLines(items);
     expect(result.get('/foo.test.ts')).toBe('last');
+  });
+
+  it('should not show tree lines for orphan test files without parent', () => {
+    const items = [
+      { name: 'bar.test.ts', path: '/bar.test.ts', is_dir: false },
+      { name: 'baz.ts', path: '/baz.ts', is_dir: false },
+    ];
+    const result = computeTestTreeLines(items);
+    expect(result.has('/bar.test.ts')).toBe(false);
+  });
+
+  it('should show tree lines only for test files with matching parent', () => {
+    const items = [
+      { name: 'foo.ts', path: '/foo.ts', is_dir: false },
+      { name: 'foo.test.ts', path: '/foo.test.ts', is_dir: false },
+      { name: 'orphan.test.ts', path: '/orphan.test.ts', is_dir: false },
+    ];
+    const result = computeTestTreeLines(items);
+    expect(result.get('/foo.test.ts')).toBe('last');
+    expect(result.has('/orphan.test.ts')).toBe(false);
   });
 });
 

@@ -609,17 +609,27 @@ export function computeTestTreeLines(
   items: { name: string; path: string; is_dir: boolean }[]
 ): Map<string, 'branch' | 'last'> {
   const map = new Map<string, 'branch' | 'last'>();
+  // Build a set of stems for non-test files (potential parents)
+  const parentStems = new Set<string>();
+  for (const item of items) {
+    if (item.is_dir) continue;
+    if (!getTestFileBase(item.name)) {
+      parentStems.add(getFileStem(item.name).toLowerCase());
+    }
+  }
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     if (item.is_dir) continue;
     const base = getTestFileBase(item.name);
     if (!base) continue;
+    const stem = getFileStem(base).toLowerCase();
+    // Only show tree lines if a parent file exists in the same directory
+    if (!parentStems.has(stem)) continue;
     // Check if next item is also a test for same parent (compare by stem to handle cross-extension matches)
-    const stem = getFileStem(base);
     const nextItem = items[i + 1];
     const nextBase = nextItem && !nextItem.is_dir ? getTestFileBase(nextItem.name) : null;
-    const nextStem = nextBase ? getFileStem(nextBase) : null;
-    if (nextStem && nextStem === stem) {
+    const nextStem = nextBase ? getFileStem(nextBase).toLowerCase() : null;
+    if (nextStem && nextStem === stem && parentStems.has(nextStem)) {
       map.set(item.path, 'branch');
     } else {
       map.set(item.path, 'last');
