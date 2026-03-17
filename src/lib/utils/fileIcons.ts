@@ -18,7 +18,7 @@ const iconColors = {
   css: '#70d7ff', // Light cyan
   svelte: '#ff6b4a', // Svelte orange
   rust: '#f29668', // Warm rust
-  markdown: '#5ac8fa', // Sky blue
+  markdown: '#6b7280', // Neutral gray (same as config)
   image: '#bf5af2', // Purple accent
   git: '#ff453a', // Bright red
   config: '#6b7280', // Neutral gray
@@ -371,7 +371,7 @@ const filenameMap: Record<string, { type: string; color: string }> = {
   'tailwind.config.ts': { type: 'tailwind', color: '#38bdf8' },
   '.gitignore': { type: 'git', color: iconColors.git },
   '.gitattributes': { type: 'git', color: iconColors.git },
-  'README.md': { type: 'readme', color: '#519aba' },
+  'README.md': { type: 'markdown', color: iconColors.markdown },
   LICENSE: { type: 'license', color: '#d4af37' },
   'Cargo.toml': { type: 'cargo', color: iconColors.rust },
   'Cargo.lock': { type: 'cargo-lock', color: iconColors.rust },
@@ -643,6 +643,11 @@ export function isConfigFile(filename: string): boolean {
   if (lower.includes('config')) return true;
   const ext = lower.split('.').pop();
   return ext === 'conf' || ext === 'cfg';
+}
+
+export function isMarkdownFile(filename: string): boolean {
+  const ext = filename.toLowerCase().split('.').pop();
+  return ext === 'md' || ext === 'mdx';
 }
 
 export function getFolderColor(isOpen: boolean): string {

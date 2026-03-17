@@ -12,6 +12,7 @@
     getFileIconInfo,
     getFolderColor,
     isConfigFile,
+    isMarkdownFile,
     getTestFileBase,
     getFileStem,
     computeTestTreeLines,
@@ -139,6 +140,10 @@
       const bBase = getTestFileBase(b.name);
       const aGroupKey = getFileStem(aBase || a.name).toLowerCase();
       const bGroupKey = getFileStem(bBase || b.name).toLowerCase();
+      // Markdown files come first (after directories)
+      const aIsMd = isMarkdownFile(aBase || a.name);
+      const bIsMd = isMarkdownFile(bBase || b.name);
+      if (aIsMd !== bIsMd) return aIsMd ? -1 : 1;
       // Config files (by group key) go last
       const aIsConfig = isConfigFile(aBase || a.name);
       const bIsConfig = isConfigFile(bBase || b.name);
@@ -457,6 +462,10 @@
               <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"></path>
               <path d="M14 2v4a2 2 0 0 0 2 2h4"></path>
               <path d="m9 15 2 2 4-4"></path>
+            {:else if fileIconInfo.type === 'markdown'}
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+              <polyline points="14 2 14 8 20 8"></polyline>
+              <path d="m9.5 16.5 4-4 1.5 1.5-4 4H9.5v-1.5Z"></path>
             {:else if fileIconInfo.type === 'docker'}
               <path d="M21 16c0 3-2 5-5 5H8c-4 0-6-2-6-5 0-2 2-4 5-4h10c3 0 4 2 4 4Z"></path>
               <path d="M3 14c-1-3 0-6 2-8"></path>

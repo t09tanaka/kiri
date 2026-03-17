@@ -8,6 +8,7 @@
   import type { FileEntry } from './types';
   import {
     isConfigFile,
+    isMarkdownFile,
     getTestFileBase,
     getFileStem,
     computeTestTreeLines,
@@ -90,7 +91,7 @@
     });
   });
 
-  // Sort entries: directories first, test files grouped with parent, config files last
+  // Sort entries: directories first, markdown files, regular files, config files last
   function sortEntries(items: FileEntry[]): FileEntry[] {
     return [...items].sort((a, b) => {
       // Directories come first
@@ -105,6 +106,10 @@
       const bBase = getTestFileBase(b.name);
       const aGroupKey = getFileStem(aBase || a.name).toLowerCase();
       const bGroupKey = getFileStem(bBase || b.name).toLowerCase();
+      // Markdown files come first (after directories)
+      const aIsMd = isMarkdownFile(aBase || a.name);
+      const bIsMd = isMarkdownFile(bBase || b.name);
+      if (aIsMd !== bIsMd) return aIsMd ? -1 : 1;
       // Config files (by group key) go last
       const aIsConfig = isConfigFile(aBase || a.name);
       const bIsConfig = isConfigFile(bBase || b.name);

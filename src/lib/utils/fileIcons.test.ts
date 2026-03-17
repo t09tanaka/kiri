@@ -3,6 +3,7 @@ import {
   getFileIconInfo,
   getFolderColor,
   isConfigFile,
+  isMarkdownFile,
   getTestFileBase,
   getFileStem,
   computeTestTreeLines,
@@ -204,6 +205,23 @@ describe('isConfigFile', () => {
     expect(isConfigFile('index.ts')).toBe(false);
     expect(isConfigFile('README.md')).toBe(false);
     expect(isConfigFile('package.json')).toBe(false);
+  });
+});
+
+describe('isMarkdownFile', () => {
+  it('should return true for .md files', () => {
+    expect(isMarkdownFile('README.md')).toBe(true);
+    expect(isMarkdownFile('CHANGELOG.md')).toBe(true);
+    expect(isMarkdownFile('notes.md')).toBe(true);
+  });
+
+  it('should return true for .mdx files', () => {
+    expect(isMarkdownFile('page.mdx')).toBe(true);
+  });
+
+  it('should return false for non-markdown files', () => {
+    expect(isMarkdownFile('index.ts')).toBe(false);
+    expect(isMarkdownFile('style.css')).toBe(false);
   });
 });
 
