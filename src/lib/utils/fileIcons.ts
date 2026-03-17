@@ -568,6 +568,17 @@ export function getFileIconInfo(filename: string): { type: string; color: string
 }
 
 /**
+ * Returns the stem of a filename (everything before the last extension).
+ * e.g. "AppLogo.vue" → "AppLogo"
+ *      "admin.controller.ts" → "admin.controller"
+ *      "foo" → "foo"
+ */
+export function getFileStem(filename: string): string {
+  const idx = filename.lastIndexOf('.');
+  return idx > 0 ? filename.substring(0, idx) : filename;
+}
+
+/**
  * Returns the base filename if this is a test file, or null if not.
  * Patterns: .test.*, .spec.*, _test.*, .browser.test.*
  * e.g. "dialogService.test.ts" → "dialogService.ts"
@@ -603,10 +614,12 @@ export function computeTestTreeLines(
     if (item.is_dir) continue;
     const base = getTestFileBase(item.name);
     if (!base) continue;
-    // Check if next item is also a test for same parent
+    // Check if next item is also a test for same parent (compare by stem to handle cross-extension matches)
+    const stem = getFileStem(base);
     const nextItem = items[i + 1];
     const nextBase = nextItem && !nextItem.is_dir ? getTestFileBase(nextItem.name) : null;
-    if (nextBase && nextBase === base) {
+    const nextStem = nextBase ? getFileStem(nextBase) : null;
+    if (nextStem && nextStem === stem) {
       map.set(item.path, 'branch');
     } else {
       map.set(item.path, 'last');

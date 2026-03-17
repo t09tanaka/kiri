@@ -6,7 +6,12 @@
   import { dragDropService } from '@/lib/services/dragDropService';
   import FileTreeItem from './FileTreeItem.svelte';
   import type { FileEntry } from './types';
-  import { isConfigFile, getTestFileBase, computeTestTreeLines } from '@/lib/utils/fileIcons';
+  import {
+    isConfigFile,
+    getTestFileBase,
+    getFileStem,
+    computeTestTreeLines,
+  } from '@/lib/utils/fileIcons';
   import { gitStore, gitStatusMap } from '@/lib/stores/gitStore';
   import {
     dragDropStore,
@@ -95,11 +100,11 @@
       if (a.is_dir) {
         return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
       }
-      // For files: group test files with their parent
+      // For files: group test files with their parent (compare by stem to handle cross-extension matches like .spec.ts → .vue)
       const aBase = getTestFileBase(a.name);
       const bBase = getTestFileBase(b.name);
-      const aGroupKey = (aBase || a.name).toLowerCase();
-      const bGroupKey = (bBase || b.name).toLowerCase();
+      const aGroupKey = getFileStem(aBase || a.name).toLowerCase();
+      const bGroupKey = getFileStem(bBase || b.name).toLowerCase();
       // Config files (by group key) go last
       const aIsConfig = isConfigFile(aBase || a.name);
       const bIsConfig = isConfigFile(bBase || b.name);

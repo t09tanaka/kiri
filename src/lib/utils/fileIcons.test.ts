@@ -4,6 +4,7 @@ import {
   getFolderColor,
   isConfigFile,
   getTestFileBase,
+  getFileStem,
   computeTestTreeLines,
 } from './fileIcons';
 
@@ -234,6 +235,23 @@ describe('getTestFileBase', () => {
   });
 });
 
+describe('getFileStem', () => {
+  it('should remove last extension', () => {
+    expect(getFileStem('AppLogo.vue')).toBe('AppLogo');
+    expect(getFileStem('AppLogo.ts')).toBe('AppLogo');
+    expect(getFileStem('admin.controller.ts')).toBe('admin.controller');
+  });
+
+  it('should return filename as-is when no extension', () => {
+    expect(getFileStem('Makefile')).toBe('Makefile');
+    expect(getFileStem('noext')).toBe('noext');
+  });
+
+  it('should handle dotfiles', () => {
+    expect(getFileStem('.gitignore')).toBe('.gitignore');
+  });
+});
+
 describe('computeTestTreeLines', () => {
   it('should mark single test file as last', () => {
     const items = [
@@ -257,6 +275,16 @@ describe('computeTestTreeLines', () => {
     const result = computeTestTreeLines(items);
     expect(result.get('/foo.test.ts')).toBe('branch');
     expect(result.get('/foo.browser.test.ts')).toBe('last');
+  });
+
+  it('should handle cross-extension test files (e.g. .spec.ts for .vue parent)', () => {
+    const items = [
+      { name: 'AppLogo.vue', path: '/AppLogo.vue', is_dir: false },
+      { name: 'AppLogo.spec.ts', path: '/AppLogo.spec.ts', is_dir: false },
+    ];
+    const result = computeTestTreeLines(items);
+    expect(result.get('/AppLogo.spec.ts')).toBe('last');
+    expect(result.has('/AppLogo.vue')).toBe(false);
   });
 
   it('should skip directories', () => {
