@@ -21,6 +21,13 @@ impl WindowRegistry {
 
     /// Register a window with a project path
     pub fn register(&mut self, label: &str, path: &str) {
+        // Clean up old path mapping if this label was previously registered with a different path
+        if let Some(old_path) = self.label_to_path.get(label) {
+            if old_path != path {
+                let old_path = old_path.clone();
+                self.path_to_label.remove(&old_path);
+            }
+        }
         self.path_to_label.insert(path.to_string(), label.to_string());
         self.label_to_path.insert(label.to_string(), path.to_string());
     }
@@ -252,5 +259,53 @@ mod tests {
     #[test]
     fn test_window_title_with_single_segment() {
         assert_eq!(window_title(Some("my-project")), "my-project — kiri");
+    }
+
+    #[test]
+    fn test_registry_register_and_lookup() {
+        let mut reg = WindowRegistry::new();
+        reg.register("window-1", "/path/a");
+        assert_eq!(reg.get_label_for_path("/path/a"), Some(&"window-1".to_string()));
+    }
+
+    #[test]
+    fn test_registry_reregister_cleans_old_path() {
+        let mut reg = WindowRegistry::new();
+        reg.register("window-1", "/path/a");
+        reg.register("window-1", "/path/b");
+
+        // Old path should be removed
+        assert_eq!(reg.get_label_for_path("/path/a"), None);
+        // New path should be registered
+        assert_eq!(reg.get_label_for_path("/path/b"), Some(&"window-1".to_string()));
+    }
+
+    #[test]
+    fn test_registry_reregister_same_path_is_idempotent() {
+        let mut reg = WindowRegistry::new();
+        reg.register("window-1", "/path/a");
+        reg.register("window-1", "/path/a");
+        assert_eq!(reg.get_label_for_path("/path/a"), Some(&"window-1".to_string()));
+    }
+
+    #[test]
+    fn test_registry_unregister_cleans_both_maps() {
+        let mut reg = WindowRegistry::new();
+        reg.register("window-1", "/path/a");
+        reg.unregister_by_label("window-1");
+        assert_eq!(reg.get_label_for_path("/path/a"), None);
+    }
+
+    #[test]
+    fn test_registry_multiple_windows_independent() {
+        let mut reg = WindowRegistry::new();
+        reg.register("window-1", "/path/a");
+        reg.register("window-2", "/path/b");
+
+        // Reregistering window-1 should not affect window-2
+        reg.register("window-1", "/path/c");
+        assert_eq!(reg.get_label_for_path("/path/a"), None);
+        assert_eq!(reg.get_label_for_path("/path/b"), Some(&"window-2".to_string()));
+        assert_eq!(reg.get_label_for_path("/path/c"), Some(&"window-1".to_string()));
     }
 }
