@@ -32,8 +32,20 @@ async fn start_test_server() -> (
             .unwrap();
     });
 
-    // Wait for the server to be ready
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // Wait for the server to be ready by polling the health endpoint
+    let client = reqwest::Client::new();
+    for _ in 0..50 {
+        if client
+            .get(format!("http://127.0.0.1:{}/api/health", port))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
 
     (port, shutdown_tx, handle)
 }
@@ -200,9 +212,19 @@ async fn test_live_token_update_takes_effect_immediately() {
             .unwrap();
     });
 
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
     let client = reqwest::Client::new();
+    for _ in 0..50 {
+        if client
+            .get(format!("http://127.0.0.1:{}/api/health", port))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
 
     // Old token works (200 from /api/health means token was accepted)
     let resp = client
@@ -302,7 +324,7 @@ async fn test_websocket_upgrade_with_invalid_token_fails() {
 }
 
 #[tokio::test]
-async fn test_websocket_client_action_does_not_panic() {
+async fn test_websocket_server_stays_healthy_after_client_action() {
     let (port, shutdown_tx, _handle) = start_test_server().await;
 
     let url = format!("ws://127.0.0.1:{}/{}/ws", port, TEST_TOKEN);

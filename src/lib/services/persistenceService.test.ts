@@ -451,7 +451,11 @@ describe('GlobalSettings (with Store mock)', () => {
 
       await saveRemoteAccessSettings(settings);
 
-      expect(mockStore.set).toHaveBeenCalledWith('remoteAccess', settings);
+      // authToken should be stripped (set to null) before persisting
+      expect(mockStore.set).toHaveBeenCalledWith('remoteAccess', {
+        ...settings,
+        authToken: null,
+      });
       expect(mockStore.save).toHaveBeenCalled();
     });
 

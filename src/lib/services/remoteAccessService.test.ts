@@ -36,6 +36,14 @@ describe('remoteAccessService', () => {
 
       await expect(remoteAccessService.startServer(9876)).rejects.toThrow('Port already in use');
     });
+
+    it('should return auth token from invoke', async () => {
+      vi.mocked(invoke).mockResolvedValue('auth-token-uuid-123');
+
+      const token = await remoteAccessService.startServer(9876);
+
+      expect(token).toBe('auth-token-uuid-123');
+    });
   });
 
   describe('stopServer', () => {

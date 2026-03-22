@@ -184,7 +184,11 @@ describe('RemoteAccessSettings', () => {
 
       await saveRemoteAccessSettings(settings);
 
-      expect(mockStore.set).toHaveBeenCalledWith('remoteAccess', settings);
+      // authToken should be stripped (set to null) before persisting
+      expect(mockStore.set).toHaveBeenCalledWith('remoteAccess', {
+        ...settings,
+        authToken: null,
+      });
     });
 
     it('should call save after setting values', async () => {

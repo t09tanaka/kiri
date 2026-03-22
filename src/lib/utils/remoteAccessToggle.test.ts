@@ -188,6 +188,9 @@ describe('toggleRemoteAccess', () => {
 
       expect(result).toBeNull();
       expect(opts.toggleCalls).toEqual([true, false]);
+      // onError should be called so the user sees feedback
+      expect(opts.errorCalls.length).toBeGreaterThan(0);
+      expect(opts.errorCalls[0]).toBe('load failed');
     });
   });
 });
