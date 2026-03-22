@@ -18,10 +18,10 @@ const iconColors = {
   css: '#70d7ff', // Light cyan
   svelte: '#ff6b4a', // Svelte orange
   rust: '#f29668', // Warm rust
-  markdown: '#5ac8fa', // Sky blue
+  markdown: '#6b7280', // Neutral gray (same as config)
   image: '#bf5af2', // Purple accent
   git: '#ff453a', // Bright red
-  config: '#8090a0', // Muted gray-blue
+  config: '#6b7280', // Neutral gray
   text: '#8b949e', // Text gray
   binary: '#6e7681', // Dark gray
   folder: '#64d2ff', // Cyan accent
@@ -312,8 +312,8 @@ const extensionMap: Record<string, { type: string; color: string }> = {
   hcl: { type: 'terraform', color: iconColors.terraform },
   proto: { type: 'protobuf', color: iconColors.protobuf },
   ini: { type: 'ini', color: iconColors.ini },
-  conf: { type: 'conf', color: iconColors.config },
-  cfg: { type: 'conf', color: iconColors.config },
+  conf: { type: 'config', color: iconColors.config },
+  cfg: { type: 'config', color: iconColors.config },
 
   // Data formats
   csv: { type: 'csv', color: iconColors.csv },
@@ -371,7 +371,7 @@ const filenameMap: Record<string, { type: string; color: string }> = {
   'tailwind.config.ts': { type: 'tailwind', color: '#38bdf8' },
   '.gitignore': { type: 'git', color: iconColors.git },
   '.gitattributes': { type: 'git', color: iconColors.git },
-  'README.md': { type: 'readme', color: '#519aba' },
+  'README.md': { type: 'markdown', color: iconColors.markdown },
   LICENSE: { type: 'license', color: '#d4af37' },
   'Cargo.toml': { type: 'cargo', color: iconColors.rust },
   'Cargo.lock': { type: 'cargo-lock', color: iconColors.rust },
@@ -383,6 +383,9 @@ const filenameMap: Record<string, { type: string; color: string }> = {
   Dockerfile: { type: 'docker', color: '#2496ed' },
   'docker-compose.yml': { type: 'docker', color: '#2496ed' },
   'docker-compose.yaml': { type: 'docker', color: '#2496ed' },
+  'compose.yml': { type: 'docker', color: '#2496ed' },
+  'compose.yaml': { type: 'docker', color: '#2496ed' },
+  '.dockerignore': { type: 'docker', color: '#2496ed' },
 
   // Python
   'requirements.txt': { type: 'pip', color: iconColors.python },
@@ -520,10 +523,26 @@ const filenameMap: Record<string, { type: string; color: string }> = {
 };
 
 export function getFileIconInfo(filename: string): { type: string; color: string } {
-  // Check special filenames first
   const lowerFilename = filename.toLowerCase();
+
+  // Check if filename contains "config" → settings icon
+  if (lowerFilename.includes('config')) {
+    return { type: 'config', color: iconColors.config };
+  }
+
+  // Check special filenames
   if (filenameMap[filename] || filenameMap[lowerFilename]) {
     return filenameMap[filename] || filenameMap[lowerFilename];
+  }
+
+  // Dockerfile.* variants (e.g. Dockerfile.dev, Dockerfile.prod)
+  if (filename.startsWith('Dockerfile.') || filename.startsWith('dockerfile.')) {
+    return { type: 'docker', color: '#2496ed' };
+  }
+
+  // .env.* variants (e.g. .env.sample, .env.staging)
+  if (lowerFilename.startsWith('.env.') || lowerFilename === '.env') {
+    return { type: 'env', color: '#ecd53f' };
   }
 
   // Get extension
@@ -546,6 +565,89 @@ export function getFileIconInfo(filename: string): { type: string; color: string
 
   // Default
   return { type: 'file', color: iconColors.text };
+}
+
+/**
+ * Returns the stem of a filename (everything before the last extension).
+ * e.g. "AppLogo.vue" → "AppLogo"
+ *      "admin.controller.ts" → "admin.controller"
+ *      "foo" → "foo"
+ */
+export function getFileStem(filename: string): string {
+  const idx = filename.lastIndexOf('.');
+  return idx > 0 ? filename.substring(0, idx) : filename;
+}
+
+/**
+ * Returns the base filename if this is a test file, or null if not.
+ * Patterns: .test.*, .spec.*, _test.*, .browser.test.*
+ * e.g. "dialogService.test.ts" → "dialogService.ts"
+ *      "foo.browser.test.ts" → "foo.ts"
+ *      "foo_test.go" → "foo.go"
+ */
+export function getTestFileBase(filename: string): string | null {
+  // .browser.test.ext or .test.ext or .spec.ext
+  const dotPattern = /^(.+?)(?:\.browser)?\.(?:test|spec)\.(.+)$/;
+  const dotMatch = filename.match(dotPattern);
+  if (dotMatch) {
+    return `${dotMatch[1]}.${dotMatch[2]}`;
+  }
+  // _test.ext (Go style)
+  const underscorePattern = /^(.+?)_test\.(.+)$/;
+  const underscoreMatch = filename.match(underscorePattern);
+  if (underscoreMatch) {
+    return `${underscoreMatch[1]}.${underscoreMatch[2]}`;
+  }
+  return null;
+}
+
+/**
+ * Compute test file tree line info for a sorted list of entries.
+ * Returns a map of path → 'branch' (├) or 'last' (└).
+ */
+export function computeTestTreeLines(
+  items: { name: string; path: string; is_dir: boolean }[]
+): Map<string, 'branch' | 'last'> {
+  const map = new Map<string, 'branch' | 'last'>();
+  // Build a set of stems for non-test files (potential parents)
+  const parentStems = new Set<string>();
+  for (const item of items) {
+    if (item.is_dir) continue;
+    if (!getTestFileBase(item.name)) {
+      parentStems.add(getFileStem(item.name).toLowerCase());
+    }
+  }
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item.is_dir) continue;
+    const base = getTestFileBase(item.name);
+    if (!base) continue;
+    const stem = getFileStem(base).toLowerCase();
+    // Only show tree lines if a parent file exists in the same directory
+    if (!parentStems.has(stem)) continue;
+    // Check if next item is also a test for same parent (compare by stem to handle cross-extension matches)
+    const nextItem = items[i + 1];
+    const nextBase = nextItem && !nextItem.is_dir ? getTestFileBase(nextItem.name) : null;
+    const nextStem = nextBase ? getFileStem(nextBase).toLowerCase() : null;
+    if (nextStem && nextStem === stem && parentStems.has(nextStem)) {
+      map.set(item.path, 'branch');
+    } else {
+      map.set(item.path, 'last');
+    }
+  }
+  return map;
+}
+
+export function isConfigFile(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  if (lower.includes('config')) return true;
+  const ext = lower.split('.').pop();
+  return ext === 'conf' || ext === 'cfg';
+}
+
+export function isMarkdownFile(filename: string): boolean {
+  const ext = filename.toLowerCase().split('.').pop();
+  return ext === 'md' || ext === 'mdx';
 }
 
 export function getFolderColor(isOpen: boolean): string {

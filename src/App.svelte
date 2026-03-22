@@ -3,7 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen, emit } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { open } from '@tauri-apps/plugin-dialog';
+  import { dialogService } from '@/lib/services/dialogService';
   import { AppLayout, StartScreen } from '@/lib/components';
   import QuickOpen from '@/lib/components/search/QuickOpen.svelte';
   import ContentSearchModal from '@/lib/components/search/ContentSearchModal.svelte';
@@ -66,16 +66,13 @@
   });
 
   async function handleOpenDirectory() {
-    const selected = await open({
-      directory: true,
-      multiple: false,
-      title: 'Open Directory',
-    });
+    const selected = await dialogService.openDirectory();
 
-    if (selected && typeof selected === 'string') {
-      // Skip reset if opening the same project
+    if (selected) {
+      // Clean up existing terminals if switching projects or if orphaned terminals remain
       const currentPath = projectStore.getCurrentPath();
-      if (currentPath && currentPath !== selected) {
+      const hasExistingTabs = get(tabStore).tabs.length > 0;
+      if ((currentPath && currentPath !== selected) || hasExistingTabs) {
         await resetTerminals();
       }
 
@@ -120,6 +117,7 @@
     // Cmd+Shift+W: Close project (return to start screen)
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'w') {
       e.preventDefault();
+      await resetTerminals();
       projectStore.closeProject();
       return;
     }

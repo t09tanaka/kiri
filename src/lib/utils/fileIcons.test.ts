@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { getFileIconInfo, getFolderColor } from './fileIcons';
+import {
+  getFileIconInfo,
+  getFolderColor,
+  isConfigFile,
+  isMarkdownFile,
+  getTestFileBase,
+  getFileStem,
+  computeTestTreeLines,
+} from './fileIcons';
 
 describe('getFileIconInfo', () => {
   describe('special filenames', () => {
@@ -18,6 +26,27 @@ describe('getFileIconInfo', () => {
       const result = getFileIconInfo('Dockerfile');
       expect(result.type).toBe('docker');
       expect(result.color).toBe('#2496ed');
+    });
+
+    it('should return docker icon for Dockerfile variants', () => {
+      expect(getFileIconInfo('Dockerfile.dev').type).toBe('docker');
+      expect(getFileIconInfo('Dockerfile.prod').type).toBe('docker');
+    });
+
+    it('should return docker icon for compose files', () => {
+      expect(getFileIconInfo('compose.yml').type).toBe('docker');
+      expect(getFileIconInfo('compose.yaml').type).toBe('docker');
+    });
+
+    it('should return docker icon for .dockerignore', () => {
+      expect(getFileIconInfo('.dockerignore').type).toBe('docker');
+    });
+
+    it('should return env icon for .env variants', () => {
+      expect(getFileIconInfo('.env').type).toBe('env');
+      expect(getFileIconInfo('.env.local').type).toBe('env');
+      expect(getFileIconInfo('.env.sample').type).toBe('env');
+      expect(getFileIconInfo('.env.staging').type).toBe('env');
     });
 
     it('should handle case-insensitive filename matching via lowerFilename fallback', () => {
@@ -104,6 +133,43 @@ describe('getFileIconInfo', () => {
     });
   });
 
+  describe('config filename detection', () => {
+    it('should return config icon for files containing "config"', () => {
+      const result = getFileIconInfo('app.config.yaml');
+      expect(result.type).toBe('config');
+      expect(result.color).toBe('#6b7280');
+    });
+
+    it('should return config icon for vite.config.ts', () => {
+      const result = getFileIconInfo('vite.config.ts');
+      expect(result.type).toBe('config');
+      expect(result.color).toBe('#6b7280');
+    });
+
+    it('should return config icon for tsconfig.json', () => {
+      const result = getFileIconInfo('tsconfig.json');
+      expect(result.type).toBe('config');
+      expect(result.color).toBe('#6b7280');
+    });
+
+    it('should return config icon case-insensitively', () => {
+      const result = getFileIconInfo('MyConfig.yml');
+      expect(result.type).toBe('config');
+    });
+
+    it('should return config icon for .conf extension', () => {
+      const result = getFileIconInfo('app.conf');
+      expect(result.type).toBe('config');
+      expect(result.color).toBe('#6b7280');
+    });
+
+    it('should return config icon for .cfg extension', () => {
+      const result = getFileIconInfo('setup.cfg');
+      expect(result.type).toBe('config');
+      expect(result.color).toBe('#6b7280');
+    });
+  });
+
   describe('default behavior', () => {
     it('should return default file icon for unknown extensions', () => {
       const result = getFileIconInfo('unknown.xyz');
@@ -115,6 +181,158 @@ describe('getFileIconInfo', () => {
       const result = getFileIconInfo('noextension');
       expect(result.type).toBe('file');
     });
+  });
+});
+
+describe('isConfigFile', () => {
+  it('should return true for files containing "config"', () => {
+    expect(isConfigFile('vite.config.ts')).toBe(true);
+    expect(isConfigFile('tsconfig.json')).toBe(true);
+    expect(isConfigFile('app.config.yaml')).toBe(true);
+  });
+
+  it('should return true case-insensitively', () => {
+    expect(isConfigFile('MyConfig.yml')).toBe(true);
+    expect(isConfigFile('CONFIG.js')).toBe(true);
+  });
+
+  it('should return true for .conf and .cfg extensions', () => {
+    expect(isConfigFile('app.conf')).toBe(true);
+    expect(isConfigFile('setup.cfg')).toBe(true);
+  });
+
+  it('should return false for non-config files', () => {
+    expect(isConfigFile('index.ts')).toBe(false);
+    expect(isConfigFile('README.md')).toBe(false);
+    expect(isConfigFile('package.json')).toBe(false);
+  });
+});
+
+describe('isMarkdownFile', () => {
+  it('should return true for .md files', () => {
+    expect(isMarkdownFile('README.md')).toBe(true);
+    expect(isMarkdownFile('CHANGELOG.md')).toBe(true);
+    expect(isMarkdownFile('notes.md')).toBe(true);
+  });
+
+  it('should return true for .mdx files', () => {
+    expect(isMarkdownFile('page.mdx')).toBe(true);
+  });
+
+  it('should return false for non-markdown files', () => {
+    expect(isMarkdownFile('index.ts')).toBe(false);
+    expect(isMarkdownFile('style.css')).toBe(false);
+  });
+});
+
+describe('getTestFileBase', () => {
+  it('should detect .test.ts files', () => {
+    expect(getTestFileBase('dialogService.test.ts')).toBe('dialogService.ts');
+  });
+
+  it('should detect .spec.ts files', () => {
+    expect(getTestFileBase('dialogService.spec.ts')).toBe('dialogService.ts');
+  });
+
+  it('should detect .browser.test.ts files', () => {
+    expect(getTestFileBase('Button.browser.test.ts')).toBe('Button.ts');
+  });
+
+  it('should detect _test.go files', () => {
+    expect(getTestFileBase('handler_test.go')).toBe('handler.go');
+  });
+
+  it('should return null for non-test files', () => {
+    expect(getTestFileBase('dialogService.ts')).toBeNull();
+    expect(getTestFileBase('README.md')).toBeNull();
+    expect(getTestFileBase('test.ts')).toBeNull();
+  });
+
+  it('should handle config test files', () => {
+    expect(getTestFileBase('eslint.config.test.js')).toBe('eslint.config.js');
+  });
+});
+
+describe('getFileStem', () => {
+  it('should remove last extension', () => {
+    expect(getFileStem('AppLogo.vue')).toBe('AppLogo');
+    expect(getFileStem('AppLogo.ts')).toBe('AppLogo');
+    expect(getFileStem('admin.controller.ts')).toBe('admin.controller');
+  });
+
+  it('should return filename as-is when no extension', () => {
+    expect(getFileStem('Makefile')).toBe('Makefile');
+    expect(getFileStem('noext')).toBe('noext');
+  });
+
+  it('should handle dotfiles', () => {
+    expect(getFileStem('.gitignore')).toBe('.gitignore');
+  });
+});
+
+describe('computeTestTreeLines', () => {
+  it('should mark single test file as last', () => {
+    const items = [
+      { name: 'foo.ts', path: '/foo.ts', is_dir: false },
+      { name: 'foo.test.ts', path: '/foo.test.ts', is_dir: false },
+      { name: 'bar.ts', path: '/bar.ts', is_dir: false },
+    ];
+    const result = computeTestTreeLines(items);
+    expect(result.get('/foo.test.ts')).toBe('last');
+    expect(result.has('/foo.ts')).toBe(false);
+    expect(result.has('/bar.ts')).toBe(false);
+  });
+
+  it('should mark multiple test files with branch and last', () => {
+    const items = [
+      { name: 'foo.ts', path: '/foo.ts', is_dir: false },
+      { name: 'foo.test.ts', path: '/foo.test.ts', is_dir: false },
+      { name: 'foo.browser.test.ts', path: '/foo.browser.test.ts', is_dir: false },
+      { name: 'bar.ts', path: '/bar.ts', is_dir: false },
+    ];
+    const result = computeTestTreeLines(items);
+    expect(result.get('/foo.test.ts')).toBe('branch');
+    expect(result.get('/foo.browser.test.ts')).toBe('last');
+  });
+
+  it('should handle cross-extension test files (e.g. .spec.ts for .vue parent)', () => {
+    const items = [
+      { name: 'AppLogo.vue', path: '/AppLogo.vue', is_dir: false },
+      { name: 'AppLogo.spec.ts', path: '/AppLogo.spec.ts', is_dir: false },
+    ];
+    const result = computeTestTreeLines(items);
+    expect(result.get('/AppLogo.spec.ts')).toBe('last');
+    expect(result.has('/AppLogo.vue')).toBe(false);
+  });
+
+  it('should skip directories', () => {
+    const items = [
+      { name: 'test', path: '/test', is_dir: true },
+      { name: 'foo.ts', path: '/foo.ts', is_dir: false },
+      { name: 'foo.test.ts', path: '/foo.test.ts', is_dir: false },
+    ];
+    const result = computeTestTreeLines(items);
+    expect(result.get('/foo.test.ts')).toBe('last');
+  });
+
+  it('should not show tree lines for orphan test files without parent', () => {
+    const items = [
+      { name: 'bar.test.ts', path: '/bar.test.ts', is_dir: false },
+      { name: 'baz.ts', path: '/baz.ts', is_dir: false },
+    ];
+    const result = computeTestTreeLines(items);
+    expect(result.has('/bar.test.ts')).toBe(false);
+  });
+
+  it('should show tree lines only for test files with matching parent', () => {
+    const items = [
+      { name: 'foo.ts', path: '/foo.ts', is_dir: false },
+      { name: 'foo.test.ts', path: '/foo.test.ts', is_dir: false },
+      { name: 'orphan.test.ts', path: '/orphan.test.ts', is_dir: false },
+    ];
+    const result = computeTestTreeLines(items);
+    expect(result.get('/foo.test.ts')).toBe('last');
+    expect(result.has('/orphan.test.ts')).toBe(false);
   });
 });
 

@@ -70,13 +70,6 @@
     }
   }
 
-  function handleKeyDown(e: KeyboardEvent) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
-      e.preventDefault();
-      handleOpenDirectory();
-    }
-  }
-
   onMount(async () => {
     mounted = true;
     try {
@@ -92,8 +85,6 @@
     }
   });
 </script>
-
-<svelte:window onkeydown={handleKeyDown} />
 
 <div class="start-screen">
   <!-- Misty background layers -->
