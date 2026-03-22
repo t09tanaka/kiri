@@ -7,20 +7,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [0.1.0] - 2026-03-22
 
-- Initial release preparation
-- GitHub Actions release workflow
-- Multi-platform builds (macOS, Windows, Linux)
-
-## [0.0.1] - TBD
+First feature-complete milestone release.
 
 ### Added
 
-- Basic window structure with sidebar and main content area
-- File tree navigation
-- Terminal with multiple tabs and pane splitting
-- Code editor with syntax highlighting
-- Git diff display (gutter indicators and DiffView window)
-- Search functionality (Quick Open and content search)
-- Multiple window support
+#### File Tree
+- File tree navigation with collapsible project header
+- Git status display with color propagation to parent directories
+- Gitignored files shown as semi-transparent
+- File icons with color schemes for 60+ extensions
+- Special icons for config files, Docker files, .env files, markdown, and test files
+- Test file grouping under parent with tree connectors
+- Create directory from context menu
+- Delete file/folder functionality
+- Drag-and-drop file move (internal) and file copy (from Finder)
+- Drag preview with optimistic UI
+
+#### Terminal
+- Terminal with PTY support and multiple tabs
+- Pane splitting with draggable dividers
+- Foreground process name as tab title
+- Memory usage display in pane header
+- macOS keyboard navigation shortcuts (Cmd+Delete, Shift+Enter)
+- Command suggestions with inline ghost text
+- Desktop notifications for terminal apps
+- Close confirmation when commands are running
+- OSC 8 hyperlink support with file:// handling
+- Resize buffering for smoother Ink app rendering
+- Claude Code / Ink app compatibility
+- CWD tracking and pane structure persistence across restarts
+
+#### Editor
+- Code editor with CodeMirror 6 and syntax highlighting (40+ languages)
+- Quick peek editor for terminal file path links
+- In-file search (Cmd+F)
+- Git diff display in editor gutter
+- External file change detection
+- Copy button in EditorModal and PeekEditor
+- Markdown and YAML syntax highlighting
+
+#### Git
+- Git changes view with diff display in separate window
+- Commit history with graph visualization
+- Branch divergence display
+- Infinite scroll for commit history
+- Diff statistics in status bar
+- Per-file line stats in DiffView file list
+- Image file preview in Changes window
+- Fetch, pull, and behind/ahead count
+- Unread commit indicator dots
+- Co-author display in commit detail
+
+#### Search
+- Quick Open file search (Cmd+P)
+- Project-wide content search (Cmd+Shift+F) with syntax highlighting
+
+#### Git Worktree
+- Create/remove worktrees with branch validation
+- Port isolation with automatic detection (.env, docker-compose, package.json)
+- Per-project 100-port block allocation (range 20000-39999)
+- Docker Compose host-only port transformation
+- File copy patterns (.env, docker-compose) including subdirectories
+- Package manager auto-detection (npm, yarn, pnpm, bun)
+- Husky auto-detection for init commands
+- Custom initialization commands
+- Conflict warning banner for compose files
+- Worktree disabled when opened from subdirectory
+
+#### Window Management
+- Multiple window support (Cmd+Shift+N)
+- Session persistence with multi-window restore
+- Window geometry persistence
+- Project name in window title
+- DiffView opens at same size/position as main window
+- Start screen with recent projects and startup command config
+- Open Recent submenu with dynamic project list
+
+#### UI
+- Mode switching between Terminal and Editor
+- Custom confirm dialog with keyboard support
+- Font zoom shortcuts with persistence
+- Sidebar toggle button in status bar
+- Keyboard shortcuts for Diff View (Cmd+D) and Worktrees (Cmd+G)
+- Mountain logo loading screen and favicon
+- Reusable UI component library
+- Service layer for Tauri API abstraction
+
+### Infrastructure
+- GitHub Actions CI (lint, test, build)
+- GitHub Actions release workflow (macOS, Windows, Linux)
+- Performance measurement system (dev-only)
+- Husky pre-commit hooks (lint-staged + tests)
