@@ -37,9 +37,11 @@
     }
   }
 
+  let closeAnimTimeout: ReturnType<typeof setTimeout> | null = null;
+
   function handleClose() {
     isVisible = false;
-    setTimeout(() => {
+    closeAnimTimeout = setTimeout(() => {
       onClose();
     }, 200);
   }
@@ -59,15 +61,25 @@
   }
 
   let prevUrl = $state<string | null>(null);
+  let loadGeneration = 0;
 
   async function loadQrCode(url: string) {
+    const generation = ++loadGeneration;
     isLoading = true;
     try {
-      qrDataUri = await remoteAccessService.generateQrCode($remoteAccessStore.port, url);
+      const result = await remoteAccessService.generateQrCode($remoteAccessStore.port, url);
+      // Only apply if this is still the latest request
+      if (generation === loadGeneration) {
+        qrDataUri = result;
+      }
     } catch {
-      qrDataUri = null;
+      if (generation === loadGeneration) {
+        qrDataUri = null;
+      }
     } finally {
-      isLoading = false;
+      if (generation === loadGeneration) {
+        isLoading = false;
+      }
     }
   }
 
@@ -94,6 +106,7 @@
     document.removeEventListener('keydown', handleKeyDown);
     if (copyTimeout) clearTimeout(copyTimeout);
     if (dotInterval) clearInterval(dotInterval);
+    if (closeAnimTimeout) clearTimeout(closeAnimTimeout);
   });
 </script>
 
@@ -210,6 +223,16 @@
             </button>
           </div>
         </div>
+
+        {#if !tunnelUrl && fullAccessUrl}
+          <div class="security-warning">
+            <span class="warning-icon">&#x26A0;</span>
+            <span
+              >LAN only — URL is transmitted over unencrypted HTTP. Use Cloudflare Tunnel for secure
+              access.</span
+            >
+          </div>
+        {/if}
       </div>
 
       <!-- Footer -->
@@ -528,5 +551,24 @@
     font-family: var(--font-mono);
     font-size: 10px;
     color: var(--text-secondary);
+  }
+
+  .security-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: 8px 12px;
+    margin-top: var(--space-3);
+    background: rgba(252, 211, 77, 0.08);
+    border: 1px solid rgba(252, 211, 77, 0.2);
+    border-radius: var(--radius-md);
+    font-size: 11px;
+    color: var(--accent3-color);
+    line-height: 1.5;
+  }
+
+  .warning-icon {
+    flex-shrink: 0;
+    font-size: 13px;
   }
 </style>

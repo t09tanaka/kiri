@@ -75,6 +75,14 @@
     try {
       const running = await remoteAccessService.isRunning();
       remoteAccessStore.setServerRunning(running);
+      // Restore persisted settings (port, tunnelUrl) so the UI is consistent after reload
+      if (running) {
+        const { loadRemoteAccessSettings } = await import('$lib/services/persistenceService');
+        const savedSettings = await loadRemoteAccessSettings();
+        if (savedSettings.port) {
+          remoteAccessStore.setPort(savedSettings.port);
+        }
+      }
     } catch {
       // Backend not ready yet
     }

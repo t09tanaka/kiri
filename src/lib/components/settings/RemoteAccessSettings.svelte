@@ -87,11 +87,13 @@
     }
   }
 
+  let closeAnimTimeout: ReturnType<typeof setTimeout> | null = null;
+
   async function handleClose() {
     // Auto-save on close
     await saveCurrentSettings();
     isVisible = false;
-    setTimeout(() => {
+    closeAnimTimeout = setTimeout(() => {
       onClose();
     }, 200);
   }
@@ -149,6 +151,7 @@
   onDestroy(() => {
     document.removeEventListener('keydown', handleKeyDown);
     if (copyTimeout) clearTimeout(copyTimeout);
+    if (closeAnimTimeout) clearTimeout(closeAnimTimeout);
   });
 </script>
 
@@ -231,7 +234,11 @@
 
           {#if $isRemoteActive}
             <div class="url-section">
-              <span class="url-label">Remote URL</span>
+              <span class="url-label"
+                >Base URL <span style="opacity: 0.5; font-weight: normal"
+                  >(use QR for full access URL)</span
+                ></span
+              >
               <div class="url-row">
                 <code class="url-text">{remoteUrl}</code>
                 <button

@@ -162,7 +162,8 @@ export async function loadRemoteAccessSettings(): Promise<RemoteAccessSettings> 
 export async function saveRemoteAccessSettings(settings: RemoteAccessSettings): Promise<void> {
   try {
     const s = await getStore();
-    await s.set('remoteAccess', settings);
+    // Never persist authToken to disk — it is a session credential
+    await s.set('remoteAccess', { ...settings, authToken: null });
     await s.save();
   } catch (error) {
     console.error('Failed to save remote access settings:', error);

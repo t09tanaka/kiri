@@ -83,6 +83,7 @@ export async function toggleRemoteAccess(
     }
   } catch (error) {
     console.error('Failed to toggle remote access:', error);
+    opts.onError(error instanceof Error ? error.message : 'Failed to toggle remote access');
     return null;
   } finally {
     opts.onToggling(false);
