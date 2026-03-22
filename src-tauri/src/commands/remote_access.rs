@@ -778,7 +778,7 @@ mod tests {
         };
         let cloned = status.clone();
         assert_eq!(cloned.id, 42);
-        assert_eq!(cloned.is_alive, true);
+        assert!(cloned.is_alive);
         assert_eq!(cloned.process_name, Some("node".to_string()));
         assert_eq!(cloned.cwd, Some("/tmp".to_string()));
     }

@@ -662,6 +662,7 @@ const EXCLUDED_DIRS: &[&str] = &[
 /// Returns the appropriate command based on the husky version:
 /// - v9+: `npx husky` (prepare script is `"husky"`)
 /// - v8 and earlier: `npx husky install` (prepare script is `"husky install"`)
+///
 /// Falls back to version detection from devDependencies if prepare script is absent.
 fn detect_husky_command(dir: &Path, command_prefix: &str) -> Option<PackageManager> {
     let package_json_path = dir.join("package.json");
@@ -2091,9 +2092,9 @@ mod tests {
         if branch.is_ok() {
             // "master" exists, make sure "main" doesn't
             let main_branch = repo.find_branch("main", git2::BranchType::Local);
-            if main_branch.is_ok() {
+            if let Ok(mut main_branch) = main_branch {
                 // Delete "main" so we test the master fallback
-                main_branch.unwrap().delete().unwrap();
+                main_branch.delete().unwrap();
             }
             let result = get_default_branch(&repo);
             assert!(result.is_ok());
@@ -2837,7 +2838,7 @@ mod tests {
         assert_eq!(result, std::cmp::Ordering::Less);
 
         // Verify full sort behavior
-        let mut branches = vec![with_time.clone(), without_time.clone()];
+        let mut branches = [with_time.clone(), without_time.clone()];
         branches.sort_by(compare_branches);
         assert_eq!(branches[0].name, "no-time");
         assert_eq!(branches[1].name, "has-time");
@@ -2871,7 +2872,7 @@ mod tests {
     /// Covers the (None, None) arm of compare_branches.
     #[test]
     fn test_compare_branches_none_none_alphabetical() {
-        let mut branches = vec![
+        let mut branches = [
             BranchInfo {
                 name: "zebra".to_string(),
                 is_head: false,
@@ -2894,7 +2895,7 @@ mod tests {
     /// Covers the Greater path when a is not head but b is head.
     #[test]
     fn test_compare_branches_non_head_vs_head() {
-        let mut branches = vec![
+        let mut branches = [
             BranchInfo {
                 name: "feature".to_string(),
                 is_head: false,
@@ -2955,7 +2956,7 @@ mod tests {
     /// then branches without time, then alphabetical tiebreaker for None.
     #[test]
     fn test_compare_branches_comprehensive_sort() {
-        let mut branches = vec![
+        let mut branches = [
             BranchInfo { name: "no-time-b".to_string(), is_head: false, last_commit_time: None },
             BranchInfo { name: "old".to_string(), is_head: false, last_commit_time: Some(1000) },
             BranchInfo { name: "no-time-a".to_string(), is_head: false, last_commit_time: None },

@@ -442,7 +442,7 @@ mod tests {
 
         let info = result.unwrap();
         assert!(info.root.contains(dir.path().file_name().unwrap().to_str().unwrap()) ||
-                info.root == dir.path().to_string_lossy().to_string());
+                info.root == *dir.path().to_string_lossy());
     }
 
     #[test]

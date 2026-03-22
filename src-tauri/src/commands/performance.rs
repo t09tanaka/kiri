@@ -397,7 +397,7 @@ mod tests {
     fn test_command_timing_serialization() {
         let timing = CommandTiming {
             command: "read_dir".to_string(),
-            duration_ms: 3.14,
+            duration_ms: std::f64::consts::PI,
             timestamp_ms: 42,
         };
 
@@ -405,7 +405,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed["command"], "read_dir");
-        assert!((parsed["duration_ms"].as_f64().unwrap() - 3.14).abs() < f64::EPSILON);
+        assert!((parsed["duration_ms"].as_f64().unwrap() - std::f64::consts::PI).abs() < f64::EPSILON);
         assert_eq!(parsed["timestamp_ms"], 42);
     }
 

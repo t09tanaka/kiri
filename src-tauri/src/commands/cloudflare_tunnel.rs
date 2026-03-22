@@ -305,7 +305,7 @@ mod tests {
         // so we just verify it returns a bool without panicking.
         let result = is_cloudflared_available();
         // result is either true or false depending on the environment
-        assert!(result || !result);
+        let _ = result; // Just verify it returns without panicking
     }
 
     #[test]
