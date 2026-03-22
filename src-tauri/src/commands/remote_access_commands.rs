@@ -115,17 +115,26 @@ pub async fn start_remote_server(
 pub async fn stop_remote_server(
     state: tauri::State<'_, RemoteServerStateType>,
 ) -> Result<(), String> {
-    let mut server = state.lock().await;
-    if !server.is_running {
-        return Ok(());
-    }
+    let (shutdown_tx, server_handle) = {
+        let mut server = state.lock().await;
+        if !server.is_running {
+            return Ok(());
+        }
+        server.is_running = false;
+        server.live_token = None;
+        // Clear the session token so a fresh one is generated on next start
+        server.auth_token = None;
+        (server.shutdown_tx.take(), server.server_handle.take())
+    };
+    // Mutex dropped here before awaiting the server task
 
-    if let Some(tx) = server.shutdown_tx.take() {
+    if let Some(tx) = shutdown_tx {
         let _ = tx.send(());
     }
-    server.server_handle = None;
-    server.is_running = false;
-    server.live_token = None;
+    // Wait for the server task to finish so the TCP listener is released
+    if let Some(handle) = server_handle {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), handle).await;
+    }
     Ok(())
 }
 
@@ -202,12 +211,18 @@ pub async fn generate_remote_qr_code(
 pub async fn regenerate_remote_token(
     state: tauri::State<'_, RemoteServerStateType>,
 ) -> Result<String, String> {
-    let mut server = state.lock().await;
-    let new_token = uuid::Uuid::new_v4().to_string();
-    server.auth_token = Some(new_token.clone());
+    let live_token_arc = {
+        let mut server = state.lock().await;
+        let new_token_inner = uuid::Uuid::new_v4().to_string();
+        server.auth_token = Some(new_token_inner.clone());
+        let arc = server.live_token.clone();
+        (new_token_inner, arc)
+    };
+    // Mutex is dropped here before awaiting RwLock to avoid deadlock
+    let (new_token, live_token_opt) = live_token_arc;
 
     // Update live server token immediately
-    if let Some(ref live_token) = server.live_token {
+    if let Some(ref live_token) = live_token_opt {
         let mut t = live_token.write().await;
         *t = new_token.clone();
     }

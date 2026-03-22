@@ -149,9 +149,9 @@ function buildProjectCard(p, terminals) {
     '</span>' +
     (p.isWorktree ? '<span class="wt-badge">WT</span>' : '') +
     (p.branch ? '<span class="branch-badge">' + escapeHtml(p.branch) + '</span>' : '') +
-    '<button class="btn-close" onclick="closeProject(\'' +
-    escapeAttr(p.path) +
-    '\')" aria-label="Close">' +
+    '<button class="btn-close" data-close-path="' +
+    escapeHtml(p.path) +
+    '" aria-label="Close">' +
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
     '<line x1="18" y1="6" x2="6" y2="18"></line>' +
     '<line x1="6" y1="6" x2="18" y2="18"></line>' +
@@ -173,7 +173,7 @@ function buildProjectCard(p, terminals) {
         '<span class="terminal-tag-dot"></span>' +
         name +
         ' #' +
-        t.id +
+        escapeHtml(String(t.id)) +
         '</span>';
     });
     html += '</div>';
@@ -213,9 +213,9 @@ function renderRecentProjects(projects) {
         '</span>' +
         '</div>' +
         '<div class="card-actions">' +
-        '<button class="btn btn-primary btn-sm" onclick="openProject(\'' +
-        escapeAttr(p.path) +
-        '\')">Open</button>' +
+        '<button class="btn btn-primary btn-sm" data-open-path="' +
+        escapeHtml(p.path) +
+        '">Open</button>' +
         '</div>',
     };
   });
@@ -355,10 +355,6 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-function escapeAttr(str) {
-  return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"');
-}
-
 function shortenPath(path) {
   var home = '/Users/';
   var idx = path.indexOf(home);
@@ -379,6 +375,22 @@ function timeAgo(timestamp) {
   if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
   return Math.floor(seconds / 86400) + 'd ago';
 }
+
+// ── Event delegation for data-* buttons ───────────────
+document.addEventListener('click', function (e) {
+  var target = e.target.closest('[data-close-path]');
+  if (target) {
+    e.stopPropagation();
+    closeProject(target.getAttribute('data-close-path'));
+    return;
+  }
+  target = e.target.closest('[data-open-path]');
+  if (target) {
+    e.stopPropagation();
+    openProject(target.getAttribute('data-open-path'));
+    return;
+  }
+});
 
 // ── Start ─────────────────────────────────────────────
 init();

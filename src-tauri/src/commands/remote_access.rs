@@ -212,11 +212,33 @@ pub(crate) fn lookup_process_name(sys: &sysinfo::System, shell_pid: u32) -> Opti
 ///
 /// Authentication is handled by the path-prefix middleware, so this
 /// handler simply accepts the WebSocket upgrade.
+///
+/// Defence-in-depth: rejects requests with a cross-origin `Origin` header
+/// to prevent CSRF-style WebSocket hijacking if the token leaks.
 pub async fn ws_handler(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     ws: WebSocketUpgrade,
-) -> impl IntoResponse {
+) -> Response {
+    // Allow requests with no Origin (non-browser clients) or same-origin.
+    // Block only when Origin is present and clearly cross-origin.
+    if let Some(origin) = headers.get(axum::http::header::ORIGIN) {
+        if let Ok(origin_str) = origin.to_str() {
+            // Extract host from Origin and compare with Host header
+            if let Some(host) = headers.get(axum::http::header::HOST) {
+                if let Ok(host_str) = host.to_str() {
+                    let origin_host = origin_str
+                        .trim_start_matches("http://")
+                        .trim_start_matches("https://");
+                    if origin_host != host_str {
+                        return StatusCode::FORBIDDEN.into_response();
+                    }
+                }
+            }
+        }
+    }
     ws.on_upgrade(|socket| handle_status_ws(socket, state))
+        .into_response()
 }
 
 /// Drive the WebSocket connection: send status every 2 s and handle
@@ -536,6 +558,27 @@ pub fn create_router(
             app_state: state,
             inner,
         })
+        .layer(axum::middleware::map_response(add_security_headers))
+}
+
+/// Add security headers (CSP, X-Frame-Options, etc.) to all HTTP responses.
+async fn add_security_headers(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        axum::http::HeaderValue::from_static(
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' ws: wss:; img-src 'self' data:; frame-ancestors 'none'",
+        ),
+    );
+    headers.insert(
+        axum::http::header::X_FRAME_OPTIONS,
+        axum::http::HeaderValue::from_static("DENY"),
+    );
+    headers.insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        axum::http::HeaderValue::from_static("nosniff"),
+    );
+    response
 }
 
 /// Combined state for the token-path fallback handler.

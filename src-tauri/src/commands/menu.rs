@@ -337,9 +337,10 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
             }
             _ if id.starts_with("recent_") => {
                 if let Ok(index) = id.strip_prefix("recent_").unwrap().parse::<usize>() {
-                    let paths = recent_paths_for_events.lock().unwrap();
-                    if let Some(path) = paths.get(index) {
-                        let _ = app_handle.emit("menu-open-recent", path.clone());
+                    if let Ok(paths) = recent_paths_for_events.lock() {
+                        if let Some(path) = paths.get(index) {
+                            let _ = app_handle.emit("menu-open-recent", path.clone());
+                        }
                     }
                 }
             }
@@ -355,17 +356,16 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         let handle = app.handle().clone();
         app.listen("update-recent-menu", move |event| {
             if let Ok(projects) = serde_json::from_str::<Vec<RecentProject>>(event.payload()) {
-                {
-                    let mut paths = recent_paths.lock().unwrap();
+                if let Ok(mut paths) = recent_paths.lock() {
                     *paths = projects.iter().map(|p| p.path.clone()).collect();
                 }
-                {
-                    let mut stored = recent_projects.lock().unwrap();
+                if let Ok(mut stored) = recent_projects.lock() {
                     *stored = projects.clone();
                 }
-                let tools = tools.lock().unwrap();
-                if let Ok(new_menu) = rebuild_menu(&handle, &projects, &tools) {
-                    let _ = handle.set_menu(new_menu);
+                if let Ok(tools) = tools.lock() {
+                    if let Ok(new_menu) = rebuild_menu(&handle, &projects, &tools) {
+                        let _ = handle.set_menu(new_menu);
+                    }
                 }
             }
         });
@@ -384,8 +384,7 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
                 startup_command: Option<String>,
             }
             if let Ok(update) = serde_json::from_str::<ToolsUpdate>(event.payload()) {
-                {
-                    let mut t = tools.lock().unwrap();
+                if let Ok(mut t) = tools.lock() {
                     if let Some(on) = update.remote_access_on {
                         t.remote_access_on = on;
                     }
@@ -393,10 +392,12 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
                         t.startup_command = cmd;
                     }
                 }
-                let projects = recent_projects.lock().unwrap();
-                let tools = tools.lock().unwrap();
-                if let Ok(new_menu) = rebuild_menu(&handle, &projects, &tools) {
-                    let _ = handle.set_menu(new_menu);
+                if let (Ok(projects), Ok(tools)) =
+                    (recent_projects.lock(), tools.lock())
+                {
+                    if let Ok(new_menu) = rebuild_menu(&handle, &projects, &tools) {
+                        let _ = handle.set_menu(new_menu);
+                    }
                 }
             }
         });

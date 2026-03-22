@@ -213,16 +213,24 @@ pub async fn start_cloudflare_tunnel(
 pub async fn stop_cloudflare_tunnel(
     state: tauri::State<'_, TunnelStateType>,
 ) -> Result<(), String> {
-    let mut tunnel = state.lock().await;
-    if let Some(ref mut child) = tunnel.child {
-        child
-            .kill()
-            .map_err(|e| format!("Failed to stop cloudflared: {}", e))?;
-        child.wait().ok();
+    let child_opt = {
+        let mut tunnel = state.lock().await;
+        tunnel.is_running = false;
+        tunnel.url = None;
+        tunnel.child.take()
+    };
+    // Mutex dropped before blocking syscalls
+    if let Some(mut child) = child_opt {
+        // Run kill/wait in a blocking task to avoid stalling the async runtime
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = child.kill() {
+                log::warn!("Failed to kill cloudflared: {}", e);
+            }
+            child.wait().ok();
+        })
+        .await
+        .map_err(|e| format!("Task join error: {}", e))?;
     }
-    tunnel.child = None;
-    tunnel.is_running = false;
-    tunnel.url = None;
     log::info!("Cloudflare Tunnel stopped");
     Ok(())
 }
