@@ -126,16 +126,15 @@
 
   .shortcut-btn:hover {
     color: #fff;
-    background: rgba(125, 211, 252, 0.2);
+    background: rgba(125, 211, 252, 0.22);
     border-color: rgba(125, 211, 252, 0.5);
     box-shadow:
-      0 0 16px rgba(125, 211, 252, 0.2),
-      0 0 4px rgba(125, 211, 252, 0.1);
-    transform: translateY(-1px);
+      0 0 16px rgba(125, 211, 252, 0.25),
+      0 0 4px rgba(125, 211, 252, 0.15);
   }
 
   .shortcut-btn:active {
-    transform: translateY(0) scale(0.96);
+    transform: scale(0.96);
     box-shadow: 0 0 6px rgba(125, 211, 252, 0.15);
   }
 
