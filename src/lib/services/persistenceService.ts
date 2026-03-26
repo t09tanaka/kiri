@@ -1,4 +1,5 @@
 import { Store } from '@tauri-apps/plugin-store';
+import type { TerminalShortcut } from '@/lib/stores/shortcutStore.svelte';
 
 const STORE_PATH = 'kiri-settings.json';
 
@@ -318,4 +319,36 @@ export async function saveProjectSettings(
  */
 export function getDefaultProjectSettings(): ProjectSettings {
   return { ...DEFAULT_PROJECT_SETTINGS };
+}
+
+// ============================================================================
+// Terminal Shortcuts
+// ============================================================================
+
+/**
+ * Load custom terminal shortcuts from settings
+ */
+export async function loadShortcuts(): Promise<TerminalShortcut[]> {
+  try {
+    const s = await getStore();
+    await s.reload();
+    const shortcuts = await s.get<TerminalShortcut[]>('terminalShortcuts');
+    return shortcuts ?? [];
+  } catch (error) {
+    console.error('Failed to load shortcuts:', error);
+    return [];
+  }
+}
+
+/**
+ * Save custom terminal shortcuts to settings
+ */
+export async function saveShortcuts(shortcuts: TerminalShortcut[]): Promise<void> {
+  try {
+    const s = await getStore();
+    await s.set('terminalShortcuts', shortcuts);
+    await s.save();
+  } catch (error) {
+    console.error('Failed to save shortcuts:', error);
+  }
 }
