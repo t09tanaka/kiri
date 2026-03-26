@@ -279,56 +279,58 @@
               <span class="section-desc">Quick phrases</span>
             </div>
 
-            {#each replyShortcuts as shortcut (shortcut.id)}
-              {@render shortcutRow(shortcut)}
-            {/each}
+            <div class="shortcut-list-items">
+              {#each replyShortcuts as shortcut (shortcut.id)}
+                {@render shortcutRow(shortcut)}
+              {/each}
 
-            <!-- Add reply -->
-            <div class="shortcut-row add-row">
-              <input
-                class="edit-input"
-                type="text"
-                bind:value={newReplyLabel}
-                placeholder="Label"
-                onkeydown={handleAddReplyKeyDown}
-                spellcheck="false"
-                autocomplete="off"
-                autocorrect="off"
-                autocapitalize="off"
-              />
-              <input
-                class="edit-input text-input"
-                type="text"
-                bind:value={newReplyText}
-                placeholder="Text to send"
-                onkeydown={handleAddReplyKeyDown}
-                spellcheck="false"
-                autocomplete="off"
-                autocorrect="off"
-                autocapitalize="off"
-              />
-              <div class="row-actions">
-                <button
-                  class="action-btn add-btn"
-                  onclick={handleAddReply}
-                  disabled={!newReplyLabel.trim() || !newReplyText.trim()}
-                  title="Add reply"
-                  aria-label="Add reply"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
+              <!-- Add reply -->
+              <div class="shortcut-row add-row">
+                <input
+                  class="edit-input"
+                  type="text"
+                  bind:value={newReplyLabel}
+                  placeholder="Label"
+                  onkeydown={handleAddReplyKeyDown}
+                  spellcheck="false"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="off"
+                />
+                <input
+                  class="edit-input text-input"
+                  type="text"
+                  bind:value={newReplyText}
+                  placeholder="Text to send"
+                  onkeydown={handleAddReplyKeyDown}
+                  spellcheck="false"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="off"
+                />
+                <div class="row-actions">
+                  <button
+                    class="action-btn add-btn"
+                    onclick={handleAddReply}
+                    disabled={!newReplyLabel.trim() || !newReplyText.trim()}
+                    title="Add reply"
+                    aria-label="Add reply"
                   >
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                </button>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -340,60 +342,62 @@
               <span class="section-desc">Slash commands</span>
             </div>
 
-            {#each commandShortcuts as shortcut (shortcut.id)}
-              {@render shortcutRow(shortcut)}
-            {/each}
+            <div class="shortcut-list-items">
+              {#each commandShortcuts as shortcut (shortcut.id)}
+                {@render shortcutRow(shortcut)}
+              {/each}
 
-            {#if commandShortcuts.length === 0}
-              <div class="empty-hint">No commands yet</div>
-            {/if}
+              {#if commandShortcuts.length === 0}
+                <div class="empty-hint">No commands yet</div>
+              {/if}
 
-            <!-- Add command -->
-            <div class="shortcut-row add-row">
-              <input
-                class="edit-input"
-                type="text"
-                bind:value={newCmdLabel}
-                placeholder="Label"
-                onkeydown={handleAddCmdKeyDown}
-                spellcheck="false"
-                autocomplete="off"
-                autocorrect="off"
-                autocapitalize="off"
-              />
-              <input
-                class="edit-input text-input"
-                type="text"
-                bind:value={newCmdText}
-                placeholder="Command to send"
-                onkeydown={handleAddCmdKeyDown}
-                spellcheck="false"
-                autocomplete="off"
-                autocorrect="off"
-                autocapitalize="off"
-              />
-              <div class="row-actions">
-                <button
-                  class="action-btn add-btn"
-                  onclick={handleAddCommand}
-                  disabled={!newCmdLabel.trim() || !newCmdText.trim()}
-                  title="Add command"
-                  aria-label="Add command"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
+              <!-- Add command -->
+              <div class="shortcut-row add-row">
+                <input
+                  class="edit-input"
+                  type="text"
+                  bind:value={newCmdLabel}
+                  placeholder="Label"
+                  onkeydown={handleAddCmdKeyDown}
+                  spellcheck="false"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="off"
+                />
+                <input
+                  class="edit-input text-input"
+                  type="text"
+                  bind:value={newCmdText}
+                  placeholder="Command to send"
+                  onkeydown={handleAddCmdKeyDown}
+                  spellcheck="false"
+                  autocomplete="off"
+                  autocorrect="off"
+                  autocapitalize="off"
+                />
+                <div class="row-actions">
+                  <button
+                    class="action-btn add-btn"
+                    onclick={handleAddCommand}
+                    disabled={!newCmdLabel.trim() || !newCmdText.trim()}
+                    title="Add command"
+                    aria-label="Add command"
                   >
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                </button>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <line x1="12" y1="5" x2="12" y2="19" />
+                      <line x1="5" y1="12" x2="19" y2="12" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -548,18 +552,20 @@
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-2);
-    margin-left: var(--space-2);
     border-radius: var(--radius-sm);
-    border-left: 2px solid transparent;
     transition: background var(--transition-fast);
   }
 
-  .section-reply .shortcut-row {
-    border-left-color: rgba(125, 211, 252, 0.3);
+  .section-reply .shortcut-list-items {
+    border-left: 2px solid rgba(125, 211, 252, 0.3);
+    margin-left: var(--space-2);
+    padding-left: var(--space-2);
   }
 
-  .section-command .shortcut-row {
-    border-left-color: rgba(196, 181, 253, 0.3);
+  .section-command .shortcut-list-items {
+    border-left: 2px solid rgba(196, 181, 253, 0.3);
+    margin-left: var(--space-2);
+    padding-left: var(--space-2);
   }
 
   .shortcut-row:hover {
