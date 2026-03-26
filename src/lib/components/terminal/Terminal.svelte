@@ -15,6 +15,10 @@
   import { createFilePathLinkProvider } from '@/lib/services/filePathLinkProvider';
   import { getTerminalSequence, isMacOS } from '@/lib/utils/terminalKeys';
   import { formatBytes } from '@/lib/utils/formatBytes';
+  import TerminalShortcutBar from './TerminalShortcutBar.svelte';
+  import TerminalShortcutSettings from './TerminalShortcutSettings.svelte';
+  import { shortcutState, isAiProcess } from '@/lib/stores/shortcutStore.svelte';
+  import { loadShortcuts, saveShortcuts } from '@/lib/services/persistenceService';
 
   // Lazy-loaded xterm modules (loaded on first terminal creation)
   let xtermLoaded = false;
@@ -54,6 +58,9 @@
   let resizeObserver: ResizeObserver | null = null;
   let isFocused = $state(false);
   let memoryDisplay = $state('');
+  let processName = $state('');
+  let showShortcutSettings = $state(false);
+  const isAiRunning = $derived(isAiProcess(processName));
 
   // Reserve 1 row for PTY to prevent Ink full-height flickering issue
   // See: https://github.com/vadimdemedes/ink/issues/450
@@ -582,6 +589,10 @@
         }
       }
 
+      // Load custom shortcuts
+      const customShortcuts = await loadShortcuts();
+      shortcutState.setCustomShortcuts(customShortcuts);
+
       // Send input to PTY
       terminal.onData((data) => {
         if (terminalId !== null) {
@@ -748,9 +759,31 @@
     try {
       const info = await terminalService.getProcessInfo(terminalId);
       memoryDisplay = info.memory_bytes > 0 ? formatBytes(info.memory_bytes) : '';
+      processName = info.name;
     } catch {
       // Terminal may have been closed
     }
+  }
+
+  function handleShortcutSend(text: string, withEnter: boolean) {
+    if (terminalId === null) return;
+    terminalService.writeTerminal(terminalId, withEnter ? text + '\r' : text);
+    terminal?.focus();
+  }
+
+  async function handleShortcutAdd(label: string, text: string) {
+    shortcutState.addShortcut(label, text);
+    await saveShortcuts(shortcutState.customShortcuts);
+  }
+
+  async function handleShortcutUpdate(id: string, label: string, text: string) {
+    shortcutState.updateShortcut(id, label, text);
+    await saveShortcuts(shortcutState.customShortcuts);
+  }
+
+  async function handleShortcutRemove(id: string) {
+    shortcutState.removeShortcut(id);
+    await saveShortcuts(shortcutState.customShortcuts);
   }
 
   onMount(() => {
@@ -933,6 +966,20 @@
   <div class="terminal-padding" bind:this={terminalPadding}>
     <div class="terminal-container" bind:this={terminalContainer}></div>
   </div>
+  <TerminalShortcutBar
+    visible={isAiRunning}
+    shortcuts={shortcutState.allShortcuts}
+    onSend={handleShortcutSend}
+    onSettingsClick={() => (showShortcutSettings = true)}
+  />
+  <TerminalShortcutSettings
+    open={showShortcutSettings}
+    shortcuts={shortcutState.allShortcuts}
+    onClose={() => (showShortcutSettings = false)}
+    onAdd={handleShortcutAdd}
+    onUpdate={handleShortcutUpdate}
+    onRemove={handleShortcutRemove}
+  />
   <div class="terminal-glow"></div>
   <div class="focus-indicator"></div>
   <div class="scanlines"></div>
