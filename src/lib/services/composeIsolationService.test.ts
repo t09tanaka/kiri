@@ -1,6 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { invoke } from '@tauri-apps/api/core';
 import { composeIsolationService } from './composeIsolationService';
 import type { DetectedComposeFiles } from './composeIsolationService';
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}));
 
 describe('composeIsolationService', () => {
   describe('generateWorktreeName', () => {
@@ -193,6 +198,73 @@ describe('composeIsolationService', () => {
         original_name: 'myapp',
         new_name: 'myapp-fix-bug',
       });
+    });
+  });
+
+  describe('detectComposeFiles', () => {
+    it('should invoke detect_compose_files command', async () => {
+      const mockResult: DetectedComposeFiles = {
+        files: [
+          {
+            file_path: 'docker-compose.yml',
+            project_name: 'myapp',
+            name_line_number: 1,
+            warnings: [],
+          },
+        ],
+      };
+      vi.mocked(invoke).mockResolvedValue(mockResult);
+
+      const result = await composeIsolationService.detectComposeFiles('/path/to/project');
+
+      expect(invoke).toHaveBeenCalledWith('detect_compose_files', { dirPath: '/path/to/project' });
+      expect(result).toEqual(mockResult);
+    });
+
+    it('should propagate errors from invoke', async () => {
+      vi.mocked(invoke).mockRejectedValue(new Error('Tauri error'));
+
+      await expect(composeIsolationService.detectComposeFiles('/path/to/project')).rejects.toThrow(
+        'Tauri error'
+      );
+    });
+  });
+
+  describe('applyComposeIsolation', () => {
+    it('should invoke apply_compose_isolation command', async () => {
+      const mockResult = {
+        transformed_files: ['docker-compose.yml'],
+        skipped_files: [],
+        errors: [],
+      };
+      vi.mocked(invoke).mockResolvedValue(mockResult);
+
+      const replacements = [
+        {
+          file_path: 'docker-compose.yml',
+          original_name: 'myapp',
+          new_name: 'myapp-feature',
+        },
+      ];
+
+      const result = await composeIsolationService.applyComposeIsolation(
+        '/path/to/worktree',
+        replacements
+      );
+
+      expect(invoke).toHaveBeenCalledWith('apply_compose_isolation', {
+        worktreePath: '/path/to/worktree',
+        replacements,
+      });
+      expect(result).toEqual(mockResult);
+    });
+
+    it('should propagate errors from invoke', async () => {
+      vi.mocked(invoke).mockRejectedValue(new Error('Apply error'));
+
+      await expect(composeIsolationService.applyComposeIsolation('/path', [])).rejects.toThrow(
+        'Apply error'
+      );
     });
   });
 });

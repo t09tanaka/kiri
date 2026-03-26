@@ -4,6 +4,7 @@ import {
   gitStore,
   gitStatusMap,
   currentBranch,
+  branchAheadCount,
   getStatusIcon,
   getStatusColor,
   getDirectoryStatusColor,
@@ -475,6 +476,26 @@ describe('gitStore derived stores', () => {
       await gitStore.refresh('/test/repo');
 
       expect(get(currentBranch)).toBeNull();
+    });
+  });
+
+  describe('branchAheadCount', () => {
+    it('should return 0 when no repo info', () => {
+      expect(get(branchAheadCount)).toBe(0);
+    });
+
+    it('should return ahead count after refresh', async () => {
+      const mockRepoInfo: GitRepoInfo = {
+        root: '/test/repo',
+        branch: 'main',
+        statuses: [],
+      };
+      mockInvoke
+        .mockResolvedValueOnce(mockRepoInfo) // get_git_status
+        .mockResolvedValueOnce(3); // get_branch_ahead_count
+      await gitStore.refresh('/test/repo');
+
+      expect(get(branchAheadCount)).toBe(3);
     });
   });
 });

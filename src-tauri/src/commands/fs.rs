@@ -80,7 +80,7 @@ pub fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
         // Check if path is gitignored
         let is_gitignored = repo
             .as_ref()
-            .map_or(false, |r| check_gitignore(r, &entry.path(), is_dir));
+            .is_some_and(|r| check_gitignore(r, &entry.path(), is_dir));
 
         entries.push(FileEntry {
             name: file_name.clone(),

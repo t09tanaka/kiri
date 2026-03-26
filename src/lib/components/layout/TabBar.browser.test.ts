@@ -6,15 +6,20 @@ import { tabStore } from '@/lib/stores/tabStore';
 import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
 import { terminalService } from '@/lib/services/terminalService';
 
-// Mock tabStore
-vi.mock('@/lib/stores/tabStore', () => ({
-  tabStore: {
-    setActiveTab: vi.fn(),
-    closeTab: vi.fn(),
-    addTerminalTab: vi.fn(),
-  },
-  getAllTerminalIds: vi.fn().mockReturnValue([1]),
-}));
+// Mock tabStore - include all named exports used by TabBar.svelte
+vi.mock('@/lib/stores/tabStore', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/stores/tabStore')>();
+  return {
+    ...actual,
+    tabStore: {
+      setActiveTab: vi.fn(),
+      closeTab: vi.fn(),
+      addTerminalTab: vi.fn(),
+    },
+    getAllTerminalIds: vi.fn().mockReturnValue([1]),
+    getFirstTerminalId: vi.fn().mockReturnValue(1),
+  };
+});
 
 // Mock confirmDialogStore
 vi.mock('@/lib/stores/confirmDialogStore', () => ({

@@ -24,8 +24,8 @@ export const windowService = {
   /**
    * Register a window with a project path (for windows not created via createWindow)
    */
-  registerWindow: (label: string, projectPath: string): Promise<void> =>
-    invoke('register_window', { label, projectPath }),
+  registerWindow: (label: string, projectPath: string, isWorktree?: boolean): Promise<void> =>
+    invoke('register_window', { label, projectPath, isWorktree: isWorktree ?? false }),
 
   /**
    * Unregister the current window from the registry (call on window close)

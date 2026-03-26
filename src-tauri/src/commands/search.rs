@@ -52,7 +52,7 @@ fn fuzzy_match(query: &str, target: &str) -> Option<i32> {
                 }
             }
 
-            if i == 0 || target_chars.get(i.saturating_sub(1)).map_or(false, |c| {
+            if i == 0 || target_chars.get(i.saturating_sub(1)).is_some_and(|c| {
                 *c == '/' || *c == '\\' || *c == '_' || *c == '-' || *c == '.'
             }) {
                 score += 10;
@@ -1011,5 +1011,99 @@ mod tests {
         ];
         let patterns = parse_exclude_patterns(&input);
         assert_eq!(patterns.len(), 3);
+    }
+
+    #[test]
+    fn test_collect_files_max_results_reached() {
+        let dir = tempdir().unwrap();
+        // Create several files
+        for i in 0..5 {
+            fs::write(dir.path().join(format!("file{}.txt", i)), "content").unwrap();
+        }
+
+        let mut results = Vec::new();
+        // Set max_results to 2 so we hit the early return
+        collect_files(dir.path(), "file", &mut results, 2, false);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_files_unreadable_directory() {
+        // Test with a non-existent directory (read_dir fails)
+        let mut results = Vec::new();
+        collect_files(Path::new("/nonexistent/path"), "test", &mut results, 100, false);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_file_content_no_match() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.rs");
+        fs::write(&file_path, "fn main() {\n    println!(\"hello\");\n}\n").unwrap();
+
+        let result = search_file_content(&file_path, "nonexistent_query", 10);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_search_file_content_with_match() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.rs");
+        fs::write(&file_path, "fn main() {\n    println!(\"hello\");\n}\n").unwrap();
+
+        let result = search_file_content(&file_path, "hello", 10);
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.matches.len(), 1);
+        assert_eq!(result.matches[0].line, 2); // line 2 contains "hello"
+    }
+
+    #[test]
+    fn test_collect_content_matches_max_results() {
+        let dir = tempdir().unwrap();
+        // Create several searchable files
+        for i in 0..5 {
+            fs::write(
+                dir.path().join(format!("file{}.rs", i)),
+                format!("fn test_{i}() {{ /* matching content */ }}\n"),
+            ).unwrap();
+        }
+
+        let mut results = Vec::new();
+        let exclude_patterns = parse_exclude_patterns(&[]);
+        // Set max_results to 2 to trigger early returns
+        collect_content_matches(dir.path(), "matching", &mut results, 2, 10, false, &exclude_patterns);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_collect_content_matches_unreadable_directory() {
+        let mut results = Vec::new();
+        let exclude_patterns = parse_exclude_patterns(&[]);
+        collect_content_matches(Path::new("/nonexistent"), "query", &mut results, 100, 10, false, &exclude_patterns);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_should_exclude_path_component() {
+        let patterns = parse_exclude_patterns(&["node_modules".to_string()]);
+        let path = Path::new("/project/node_modules/lodash/index.js");
+        assert!(should_exclude(path, &patterns));
+    }
+
+    #[test]
+    fn test_search_file_content_max_matches_per_file() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test.rs");
+        // Create file with many matching lines
+        let content: String = (0..10)
+            .map(|i| format!("line {} has the keyword search here\n", i))
+            .collect();
+        fs::write(&file_path, content).unwrap();
+
+        let result = search_file_content(&file_path, "keyword", 3);
+        assert!(result.is_some());
+        // Should be limited to 3 matches
+        assert_eq!(result.unwrap().matches.len(), 3);
     }
 }

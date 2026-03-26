@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   portIsolationService,
   targetFilePatternToRegex,
@@ -7,6 +7,11 @@ import {
 } from './portIsolationService';
 import type { DetectedPorts, PortSource } from './portIsolationService';
 import type { PortConfig } from './persistenceService';
+import { invoke } from '@tauri-apps/api/core';
+
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+}));
 
 function makePortSource(overrides: Partial<PortSource> = {}): PortSource {
   return {
@@ -187,6 +192,93 @@ describe('portIsolationService', () => {
     });
   });
 
+  describe('isScriptPort', () => {
+    it('should return true for script port variable names', () => {
+      expect(portIsolationService.isScriptPort('SCRIPT:3000')).toBe(true);
+      expect(portIsolationService.isScriptPort('SCRIPT:8080')).toBe(true);
+    });
+
+    it('should return false for non-script variable names', () => {
+      expect(portIsolationService.isScriptPort('PORT')).toBe(false);
+      expect(portIsolationService.isScriptPort('COMPOSE:3000')).toBe(false);
+      expect(portIsolationService.isScriptPort('')).toBe(false);
+    });
+
+    it('should be case-sensitive', () => {
+      expect(portIsolationService.isScriptPort('script:3000')).toBe(false);
+    });
+  });
+
+  describe('getUniqueScriptPorts', () => {
+    it('should return empty array when no script ports', () => {
+      const detected = makeEmptyDetected();
+      expect(portIsolationService.getUniqueScriptPorts(detected)).toEqual([]);
+    });
+
+    it('should return all script ports when no duplicates', () => {
+      const detected: DetectedPorts = {
+        ...makeEmptyDetected(),
+        script_ports: [
+          makePortSource({
+            variable_name: 'SCRIPT:3000',
+            port_value: 3000,
+            file_path: 'package.json',
+          }),
+          makePortSource({
+            variable_name: 'SCRIPT:8080',
+            port_value: 8080,
+            file_path: 'package.json',
+          }),
+        ],
+      };
+      const result = portIsolationService.getUniqueScriptPorts(detected);
+      expect(result).toHaveLength(2);
+    });
+
+    it('should deduplicate script ports by variable_name', () => {
+      const detected: DetectedPorts = {
+        ...makeEmptyDetected(),
+        script_ports: [
+          makePortSource({
+            variable_name: 'SCRIPT:3000',
+            port_value: 3000,
+            file_path: 'package.json',
+            line_number: 5,
+          }),
+          makePortSource({
+            variable_name: 'SCRIPT:3000',
+            port_value: 3000,
+            file_path: 'package.json',
+            line_number: 10,
+          }),
+        ],
+      };
+      const result = portIsolationService.getUniqueScriptPorts(detected);
+      expect(result).toHaveLength(1);
+      expect(result[0].line_number).toBe(5); // Keeps first occurrence
+    });
+  });
+
+  describe('createDefaultConfig', () => {
+    it('should return default port config', () => {
+      const config = portIsolationService.createDefaultConfig();
+      expect(config.enabled).toBe(true);
+      expect(config.worktreeAssignments).toEqual({});
+      expect(config.targetFiles).toContain('**/.env*');
+      expect(config.targetFiles).toContain('**/docker-compose.yml');
+      expect(config.targetFiles).toContain('**/package.json');
+      expect(config.targetFiles.length).toBeGreaterThan(0);
+    });
+
+    it('should return a new object each time', () => {
+      const config1 = portIsolationService.createDefaultConfig();
+      const config2 = portIsolationService.createDefaultConfig();
+      expect(config1).toEqual(config2);
+      expect(config1).not.toBe(config2);
+      expect(config1.targetFiles).not.toBe(config2.targetFiles);
+    });
+  });
+
   describe('hasDetectablePorts', () => {
     it('should return false when no ports detected', () => {
       expect(portIsolationService.hasDetectablePorts(makeEmptyDetected())).toBe(false);
@@ -275,6 +367,39 @@ describe('portIsolationService', () => {
           'feature-a': {
             worktreeName: 'feature-a',
             assignments: [],
+          },
+        },
+      });
+      const result = portIsolationService.getUsedWorktreeIndices(config);
+      expect(result.size).toBe(0);
+    });
+
+    it('should skip worktrees with zero or negative index', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            // assignedValue === originalValue → index = 0, skipped
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3000 }],
+          },
+          'feature-b': {
+            worktreeName: 'feature-b',
+            // assignedValue < originalValue → negative index, skipped
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 2900 }],
+          },
+        },
+      });
+      const result = portIsolationService.getUsedWorktreeIndices(config);
+      expect(result.size).toBe(0);
+    });
+
+    it('should skip worktrees with non-integer index', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            // (3050 - 3000) / 100 = 0.5 → not integer, skipped
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3050 }],
           },
         },
       });
@@ -674,6 +799,213 @@ describe('portIsolationService', () => {
       expect(
         portIsolationService.isPortTransformable('PORT', sources, projectPath, ['**/.env*'])
       ).toBe(true);
+    });
+
+    it('should handle project path ending with slash', () => {
+      const sources: PortSource[] = [
+        makePortSource({ variable_name: 'PORT', file_path: '/project/.env' }),
+      ];
+      expect(
+        portIsolationService.isPortTransformable('PORT', sources, '/project/', ['**/.env*'])
+      ).toBe(true);
+    });
+  });
+
+  describe('registerWorktreeAssignments', () => {
+    it('should add assignments for a new worktree', () => {
+      const config = makeDefaultConfig();
+      const assignments = [
+        { variable_name: 'PORT', original_value: 3000, assigned_value: 3100 },
+        { variable_name: 'DB_PORT', original_value: 5432, assigned_value: 5532 },
+      ];
+
+      const result = portIsolationService.registerWorktreeAssignments(
+        config,
+        'feature-a',
+        assignments
+      );
+
+      expect(result.worktreeAssignments['feature-a']).toBeDefined();
+      expect(result.worktreeAssignments['feature-a'].worktreeName).toBe('feature-a');
+      expect(result.worktreeAssignments['feature-a'].assignments).toHaveLength(2);
+      expect(result.worktreeAssignments['feature-a'].assignments[0]).toEqual({
+        variableName: 'PORT',
+        originalValue: 3000,
+        assignedValue: 3100,
+      });
+      expect(result.worktreeAssignments['feature-a'].assignments[1]).toEqual({
+        variableName: 'DB_PORT',
+        originalValue: 5432,
+        assignedValue: 5532,
+      });
+    });
+
+    it('should preserve existing worktree assignments', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+        },
+      });
+      const assignments = [{ variable_name: 'PORT', original_value: 3000, assigned_value: 3200 }];
+
+      const result = portIsolationService.registerWorktreeAssignments(
+        config,
+        'feature-b',
+        assignments
+      );
+
+      expect(result.worktreeAssignments['feature-a']).toBeDefined();
+      expect(result.worktreeAssignments['feature-b']).toBeDefined();
+    });
+
+    it('should handle empty assignments array', () => {
+      const config = makeDefaultConfig();
+
+      const result = portIsolationService.registerWorktreeAssignments(config, 'empty-wt', []);
+
+      expect(result.worktreeAssignments['empty-wt']).toBeDefined();
+      expect(result.worktreeAssignments['empty-wt'].assignments).toHaveLength(0);
+    });
+
+    it('should handle config with undefined worktreeAssignments', () => {
+      const config = { enabled: true, targetFiles: ['**/.env*'] } as PortConfig;
+
+      const assignments = [{ variable_name: 'PORT', original_value: 3000, assigned_value: 3100 }];
+
+      const result = portIsolationService.registerWorktreeAssignments(
+        config,
+        'feature-a',
+        assignments
+      );
+
+      expect(result.worktreeAssignments['feature-a']).toBeDefined();
+    });
+  });
+
+  describe('removeWorktreeAssignments', () => {
+    it('should remove assignments for a specific worktree', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+          'feature-b': {
+            worktreeName: 'feature-b',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3200 }],
+          },
+        },
+      });
+
+      const result = portIsolationService.removeWorktreeAssignments(config, 'feature-a');
+
+      expect(result.worktreeAssignments['feature-a']).toBeUndefined();
+      expect(result.worktreeAssignments['feature-b']).toBeDefined();
+    });
+
+    it('should handle removing non-existent worktree gracefully', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+        },
+      });
+
+      const result = portIsolationService.removeWorktreeAssignments(config, 'nonexistent');
+
+      expect(result.worktreeAssignments['feature-a']).toBeDefined();
+    });
+
+    it('should handle config with undefined worktreeAssignments', () => {
+      const config = { enabled: true, targetFiles: ['**/.env*'] } as PortConfig;
+
+      const result = portIsolationService.removeWorktreeAssignments(config, 'feature-a');
+
+      expect(result).toBe(config); // Should return same reference
+    });
+
+    it('should return new object, not mutate original', () => {
+      const config = makeDefaultConfig({
+        worktreeAssignments: {
+          'feature-a': {
+            worktreeName: 'feature-a',
+            assignments: [{ variableName: 'PORT', originalValue: 3000, assignedValue: 3100 }],
+          },
+        },
+      });
+
+      const result = portIsolationService.removeWorktreeAssignments(config, 'feature-a');
+
+      expect(result).not.toBe(config);
+      // Original should still have feature-a
+      expect(config.worktreeAssignments['feature-a']).toBeDefined();
+    });
+  });
+
+  describe('detectPorts (invoke wrapper)', () => {
+    it('should invoke detect_ports command', async () => {
+      const mockResult: DetectedPorts = {
+        env_ports: [makePortSource()],
+        dockerfile_ports: [],
+        compose_ports: [],
+        script_ports: [],
+      };
+      vi.mocked(invoke).mockResolvedValue(mockResult);
+
+      const result = await portIsolationService.detectPorts('/path/to/project');
+
+      expect(invoke).toHaveBeenCalledWith('detect_ports', { dirPath: '/path/to/project' });
+      expect(result).toEqual(mockResult);
+    });
+
+    it('should propagate errors from invoke', async () => {
+      vi.mocked(invoke).mockRejectedValue(new Error('Tauri error'));
+
+      await expect(portIsolationService.detectPorts('/path')).rejects.toThrow('Tauri error');
+    });
+  });
+
+  describe('allocatePorts (invoke wrapper)', () => {
+    it('should invoke allocate_worktree_ports command', async () => {
+      const ports = [makePortSource()];
+      const mockResult = { assignments: [], overflow_warnings: [] };
+      vi.mocked(invoke).mockResolvedValue(mockResult);
+
+      const result = await portIsolationService.allocatePorts(ports, 1);
+
+      expect(invoke).toHaveBeenCalledWith('allocate_worktree_ports', {
+        ports,
+        worktreeIndex: 1,
+      });
+      expect(result).toEqual(mockResult);
+    });
+  });
+
+  describe('copyFilesWithPorts (invoke wrapper)', () => {
+    it('should invoke copy_files_with_ports command', async () => {
+      const assignments = [{ variable_name: 'PORT', original_value: 3000, assigned_value: 3100 }];
+      const mockResult = { copied: ['file.env'], skipped: [], errors: [] };
+      vi.mocked(invoke).mockResolvedValue(mockResult);
+
+      const result = await portIsolationService.copyFilesWithPorts(
+        '/source',
+        '/target',
+        ['**/.env*'],
+        assignments
+      );
+
+      expect(invoke).toHaveBeenCalledWith('copy_files_with_ports', {
+        sourcePath: '/source',
+        targetPath: '/target',
+        patterns: ['**/.env*'],
+        assignments,
+      });
+      expect(result).toEqual(mockResult);
     });
   });
 

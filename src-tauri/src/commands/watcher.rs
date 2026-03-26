@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_classify_events_fs_only() {
-        let events = vec![
+        let events = [
             DebouncedEvent {
                 path: PathBuf::from("/repo/src/main.rs"),
                 kind: DebouncedEventKind::Any,
@@ -229,7 +229,7 @@ mod tests {
 
     #[test]
     fn test_classify_events_git_only() {
-        let events = vec![
+        let events = [
             DebouncedEvent {
                 path: PathBuf::from("/repo/.git/index"),
                 kind: DebouncedEventKind::Any,
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn test_classify_events_mixed() {
-        let events = vec![
+        let events = [
             DebouncedEvent {
                 path: PathBuf::from("/repo/src/main.rs"),
                 kind: DebouncedEventKind::Any,
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn test_classify_events_git_continuous_event() {
         // AnyContinuous events should not trigger git_changed
-        let events = vec![DebouncedEvent {
+        let events = [DebouncedEvent {
             path: PathBuf::from("/repo/.git/index"),
             kind: DebouncedEventKind::AnyContinuous,
         }];

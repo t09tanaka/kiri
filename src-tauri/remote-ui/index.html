@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0a0e14" />
+    <title>kiri remote</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=Noto+Sans+JP:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- Atmospheric background elements -->
+    <div class="atmosphere">
+      <div class="mist-orb mist-orb-1"></div>
+      <div class="mist-orb mist-orb-2"></div>
+      <div class="mist-orb mist-orb-3"></div>
+      <div class="grain-overlay"></div>
+    </div>
+
+    <div id="app">
+      <header class="app-header">
+        <div class="header-left">
+          <h1 class="app-title">
+            <span class="title-kiri">kiri</span>
+            <span class="title-divider"></span>
+            <span class="title-sub">remote</span>
+          </h1>
+        </div>
+        <div class="header-right">
+          <div class="status-indicator">
+            <span id="status-dot" class="status-dot"></span>
+            <span id="status-text" class="status-text">Connecting...</span>
+          </div>
+        </div>
+      </header>
+      <main id="main-content">
+        <div id="dashboard-screen" class="screen">
+          <section class="section">
+            <div class="section-header">
+              <h2 class="section-title">Projects</h2>
+              <button
+                id="open-project-btn"
+                class="btn btn-open-project"
+                onclick="openBottomSheet()"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                Open Project
+              </button>
+            </div>
+            <div id="projects" class="project-list">
+              <div class="empty-state">
+                <div class="empty-state-icon">
+                  <svg
+                    width="40"
+                    height="40"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path
+                      d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+                    ></path>
+                  </svg>
+                </div>
+                <p class="empty-state-text">No open projects</p>
+                <p class="empty-state-hint">Tap "Open Project" to get started</p>
+              </div>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <!-- Bottom Sheet for Recent Projects -->
+    <div
+      id="bottom-sheet-backdrop"
+      class="bottom-sheet-backdrop"
+      onclick="closeBottomSheet()"
+    ></div>
+    <div id="bottom-sheet" class="bottom-sheet">
+      <div class="bottom-sheet-handle-area" onclick="closeBottomSheet()">
+        <div class="bottom-sheet-handle"></div>
+      </div>
+      <div class="bottom-sheet-header">
+        <h2 class="bottom-sheet-title">Recent Projects</h2>
+      </div>
+      <div id="recent-projects" class="bottom-sheet-content">
+        <p class="empty-state-text">No recent projects</p>
+      </div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

@@ -135,6 +135,11 @@
   box-sizing: border-box;
 }
 
+::placeholder {
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+
 html,
 body {
   height: 100%;

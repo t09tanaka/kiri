@@ -78,6 +78,11 @@ describe('languages', () => {
       expect(ext).toBeNull();
     });
 
+    it('should return null for empty string filename', async () => {
+      const ext = await getLanguageExtension('');
+      expect(ext).toBeNull();
+    });
+
     it('should handle uppercase extensions', async () => {
       const ext = await getLanguageExtension('file.TS');
       expect(ext).not.toBeNull();

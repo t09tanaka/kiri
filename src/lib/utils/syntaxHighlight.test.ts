@@ -60,6 +60,10 @@ describe('getLanguageFromPath', () => {
     expect(getLanguageFromPath('file.xyz')).toBeNull();
   });
 
+  it('returns null for empty path', () => {
+    expect(getLanguageFromPath('')).toBeNull();
+  });
+
   it('returns makefile for Makefile', () => {
     expect(getLanguageFromPath('Makefile')).toBe('makefile');
   });
@@ -274,6 +278,12 @@ describe('detectEmbeddedContext', () => {
     // First meaningful line is TS, even if later lines look like HTML
     expect(detectEmbeddedContext(['const x = 5;', '<div>'])).toBe('script');
   });
+
+  it('returns template for unrecognized patterns', () => {
+    // A line that does not match any script, template, or style pattern
+    expect(detectEmbeddedContext(['---'])).toBe('template');
+    expect(detectEmbeddedContext(['123 some text'])).toBe('template');
+  });
 });
 
 describe('insertMarksIntoHighlightedHtml', () => {
@@ -353,5 +363,27 @@ describe('insertMarksIntoHighlightedHtml', () => {
     const result = insertMarksIntoHighlightedHtml(html, [{ start: 0, end: 4 }]);
     // Opening span is emitted first, then mark opens after closing span
     expect(result).toBe('<span class="hljs-keyword"></span><mark>text</mark>');
+  });
+
+  it('handles ampersand without valid HTML entity (no semicolon within 10 chars)', () => {
+    // & followed by text that doesn't have a semicolon within 10 characters
+    // This triggers the else branch at lines 416-418
+    const html = 'a&longenoughtext b';
+    const result = insertMarksIntoHighlightedHtml(html, [{ start: 0, end: 2 }]);
+    expect(result).toBe('<mark>a&</mark>longenoughtext b');
+  });
+
+  it('handles ampersand at end of string without semicolon', () => {
+    const html = 'text&';
+    const result = insertMarksIntoHighlightedHtml(html, [{ start: 0, end: 5 }]);
+    expect(result).toBe('<mark>text&</mark>');
+  });
+
+  it('handles unclosed tag (< without closing >)', () => {
+    // When peekTag encounters '<' but no '>' exists, it returns null
+    // and the '<' is treated as regular text character
+    const html = 'abc<def';
+    const result = insertMarksIntoHighlightedHtml(html, [{ start: 0, end: 7 }]);
+    expect(result).toBe('<mark>abc<def</mark>');
   });
 });
