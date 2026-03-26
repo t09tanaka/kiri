@@ -1,14 +1,15 @@
 <script lang="ts">
-  import type { TerminalShortcut } from '@/lib/stores/shortcutStore.svelte';
+  import type { TerminalShortcut, ShortcutType } from '@/lib/stores/shortcutStore.svelte';
 
   interface Props {
     visible: boolean;
     shortcuts: TerminalShortcut[];
     onSend: (text: string, withEnter: boolean) => void;
     onSettingsClick: () => void;
+    onAddClick: (type: ShortcutType) => void;
   }
 
-  let { visible, shortcuts, onSend, onSettingsClick }: Props = $props();
+  let { visible, shortcuts, onSend, onSettingsClick, onAddClick }: Props = $props();
 
   const replies = $derived(shortcuts.filter((s) => s.type === 'reply'));
   const commands = $derived(shortcuts.filter((s) => s.type === 'command'));
@@ -23,7 +24,7 @@
   <div class="shortcut-bar">
     <!-- Row 1: Quick Reply -->
     <div class="shortcut-row">
-      <span class="bar-label">REPLY</span>
+      <span class="bar-label reply-label">REPLY</span>
       <div class="shortcut-buttons">
         {#each replies as shortcut (shortcut.id)}
           <button
@@ -34,26 +35,62 @@
             {shortcut.label}
           </button>
         {/each}
+        <button
+          class="add-btn reply-add"
+          onclick={() => onAddClick('reply')}
+          title="Add reply"
+          aria-label="Add reply shortcut"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+          >
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </button>
       </div>
     </div>
 
-    <!-- Row 2: Commands (only if any exist) -->
-    {#if commands.length > 0}
-      <div class="shortcut-row">
-        <span class="bar-label">CMD</span>
-        <div class="shortcut-buttons">
-          {#each commands as shortcut (shortcut.id)}
-            <button
-              class="shortcut-btn command-btn"
-              onclick={(e) => handleClick(e, shortcut)}
-              title="{shortcut.label} (Shift+click: input only)"
-            >
-              {shortcut.label}
-            </button>
-          {/each}
-        </div>
+    <!-- Row 2: Commands -->
+    <div class="shortcut-row">
+      <span class="bar-label cmd-label">CMD</span>
+      <div class="shortcut-buttons">
+        {#each commands as shortcut (shortcut.id)}
+          <button
+            class="shortcut-btn command-btn"
+            onclick={(e) => handleClick(e, shortcut)}
+            title="{shortcut.label} (Shift+click: input only)"
+          >
+            {shortcut.label}
+          </button>
+        {/each}
+        <button
+          class="add-btn cmd-add"
+          onclick={() => onAddClick('command')}
+          title="Add command"
+          aria-label="Add command shortcut"
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+          >
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </button>
       </div>
-    {/if}
+    </div>
 
     <!-- Settings button -->
     <button
@@ -83,8 +120,9 @@
   .shortcut-bar {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 6px var(--space-3);
+    gap: 6px;
+    padding: 8px var(--space-3);
+    padding-right: 36px;
     background: linear-gradient(180deg, rgba(125, 211, 252, 0.08) 0%, rgba(13, 17, 23, 0.85) 100%);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
@@ -106,20 +144,28 @@
 
   .shortcut-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--space-2);
   }
 
   .bar-label {
     flex-shrink: 0;
     width: 38px;
+    margin-top: 4px;
     font-size: 9px;
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.1em;
-    color: var(--text-muted);
     user-select: none;
     text-align: right;
+  }
+
+  .reply-label {
+    color: rgba(125, 211, 252, 0.6);
+  }
+
+  .cmd-label {
+    color: rgba(196, 181, 253, 0.6);
   }
 
   .shortcut-buttons {
@@ -127,12 +173,7 @@
     align-items: center;
     gap: var(--space-1);
     flex: 1;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .shortcut-buttons::-webkit-scrollbar {
-    display: none;
+    flex-wrap: wrap;
   }
 
   .shortcut-btn {
@@ -193,9 +234,55 @@
     transform: scale(0.96);
   }
 
+  /* Add buttons */
+  .add-btn {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border-radius: 12px;
+    cursor: pointer;
+    transition:
+      color var(--transition-fast),
+      background var(--transition-fast),
+      border-color var(--transition-fast);
+  }
+
+  .reply-add {
+    color: rgba(125, 211, 252, 0.4);
+    background: transparent;
+    border: 1px dashed rgba(125, 211, 252, 0.2);
+  }
+
+  .reply-add:hover {
+    color: var(--accent-color);
+    background: rgba(125, 211, 252, 0.08);
+    border-color: rgba(125, 211, 252, 0.4);
+  }
+
+  .cmd-add {
+    color: rgba(196, 181, 253, 0.4);
+    background: transparent;
+    border: 1px dashed rgba(196, 181, 253, 0.2);
+  }
+
+  .cmd-add:hover {
+    color: var(--accent2-color, #c4b5fd);
+    background: rgba(196, 181, 253, 0.08);
+    border-color: rgba(196, 181, 253, 0.4);
+  }
+
+  .add-btn:active {
+    transform: scale(0.92);
+  }
+
+  /* Settings button */
   .settings-btn {
     position: absolute;
-    top: 6px;
+    top: 8px;
     right: 8px;
     display: flex;
     align-items: center;

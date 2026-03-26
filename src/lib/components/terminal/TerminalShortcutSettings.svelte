@@ -15,10 +15,15 @@
 
   let mounted = $state(false);
 
-  // New shortcut form
-  let newLabel = $state('');
-  let newText = $state('');
-  let newType = $state<ShortcutType>('reply');
+  // Derived sections
+  const replyShortcuts = $derived(shortcuts.filter((s) => s.type === 'reply'));
+  const commandShortcuts = $derived(shortcuts.filter((s) => s.type === 'command'));
+
+  // New shortcut form (per section)
+  let newReplyLabel = $state('');
+  let newReplyText = $state('');
+  let newCmdLabel = $state('');
+  let newCmdText = $state('');
 
   // Edit state
   let editingId = $state<string | null>(null);
@@ -44,12 +49,19 @@
     }
   }
 
-  function handleAdd() {
-    if (newLabel.trim() && newText.trim()) {
-      onAdd(newLabel.trim(), newText.trim(), newType);
-      newLabel = '';
-      newText = '';
-      newType = 'reply';
+  function handleAddReply() {
+    if (newReplyLabel.trim() && newReplyText.trim()) {
+      onAdd(newReplyLabel.trim(), newReplyText.trim(), 'reply');
+      newReplyLabel = '';
+      newReplyText = '';
+    }
+  }
+
+  function handleAddCommand() {
+    if (newCmdLabel.trim() && newCmdText.trim()) {
+      onAdd(newCmdLabel.trim(), newCmdText.trim(), 'command');
+      newCmdLabel = '';
+      newCmdText = '';
     }
   }
 
@@ -78,10 +90,17 @@
     }
   }
 
-  function handleAddKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && newLabel.trim() && newText.trim()) {
+  function handleAddReplyKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Enter' && newReplyLabel.trim() && newReplyText.trim()) {
       e.preventDefault();
-      handleAdd();
+      handleAddReply();
+    }
+  }
+
+  function handleAddCmdKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Enter' && newCmdLabel.trim() && newCmdText.trim()) {
+      e.preventDefault();
+      handleAddCommand();
     }
   }
 
@@ -94,6 +113,123 @@
     document.removeEventListener('keydown', handleKeyDown, true);
   });
 </script>
+
+{#snippet shortcutRow(shortcut: TerminalShortcut)}
+  <div
+    class="shortcut-row"
+    class:builtin={shortcut.builtin}
+    class:editing={editingId === shortcut.id}
+  >
+    {#if editingId === shortcut.id}
+      <input
+        class="edit-input"
+        type="text"
+        bind:value={editLabel}
+        placeholder="Label"
+        spellcheck="false"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"
+      />
+      <input
+        class="edit-input text-input"
+        type="text"
+        bind:value={editText}
+        placeholder="Text to send"
+        spellcheck="false"
+        autocomplete="off"
+        autocorrect="off"
+        autocapitalize="off"
+      />
+      <div class="row-actions">
+        <button class="action-btn save-btn" onclick={saveEdit} title="Save" aria-label="Save">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        </button>
+        <button
+          class="action-btn cancel-btn"
+          onclick={cancelEdit}
+          title="Cancel"
+          aria-label="Cancel edit"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M18 6L6 18" /><path d="M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    {:else}
+      <span class="shortcut-label">{shortcut.label}</span>
+      <span class="shortcut-text">{shortcut.text}</span>
+      <div class="row-actions">
+        {#if shortcut.builtin}
+          <span class="builtin-badge">built-in</span>
+        {:else}
+          <button
+            class="action-btn edit-btn"
+            onclick={() => startEdit(shortcut)}
+            title="Edit"
+            aria-label="Edit shortcut"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+          </button>
+          <button
+            class="action-btn delete-btn"
+            onclick={() => onRemove(shortcut.id)}
+            title="Delete"
+            aria-label="Delete shortcut"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <polyline points="3 6 5 6 21 6" />
+              <path
+                d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+              />
+            </svg>
+          </button>
+        {/if}
+      </div>
+    {/if}
+  </div>
+{/snippet}
 
 {#if open}
   <div
@@ -136,188 +272,129 @@
 
         <!-- Shortcut list -->
         <div class="shortcut-list">
-          {#each shortcuts as shortcut (shortcut.id)}
-            <div
-              class="shortcut-row"
-              class:builtin={shortcut.builtin}
-              class:editing={editingId === shortcut.id}
-            >
-              <span class="type-badge" class:type-command={shortcut.type === 'command'}>
-                {shortcut.type === 'command' ? 'CMD' : 'REPLY'}
-              </span>
-              {#if editingId === shortcut.id}
-                <!-- Edit mode -->
-                <input
-                  class="edit-input"
-                  type="text"
-                  bind:value={editLabel}
-                  placeholder="Label"
-                  spellcheck="false"
-                  autocomplete="off"
-                  autocorrect="off"
-                  autocapitalize="off"
-                />
-                <input
-                  class="edit-input text-input"
-                  type="text"
-                  bind:value={editText}
-                  placeholder="Text to send"
-                  spellcheck="false"
-                  autocomplete="off"
-                  autocorrect="off"
-                  autocapitalize="off"
-                />
-                <div class="row-actions">
-                  <button
-                    class="action-btn save-btn"
-                    onclick={saveEdit}
-                    title="Save"
-                    aria-label="Save"
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                  </button>
-                  <button
-                    class="action-btn cancel-btn"
-                    onclick={cancelEdit}
-                    title="Cancel"
-                    aria-label="Cancel edit"
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path d="M18 6L6 18" />
-                      <path d="M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              {:else}
-                <!-- Display mode -->
-                <span class="shortcut-label">{shortcut.label}</span>
-                <span class="shortcut-text">{shortcut.text}</span>
-                <div class="row-actions">
-                  {#if shortcut.builtin}
-                    <span class="builtin-badge">built-in</span>
-                  {:else}
-                    <button
-                      class="action-btn edit-btn"
-                      onclick={() => startEdit(shortcut)}
-                      title="Edit"
-                      aria-label="Edit shortcut"
-                    >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                      </svg>
-                    </button>
-                    <button
-                      class="action-btn delete-btn"
-                      onclick={() => onRemove(shortcut.id)}
-                      title="Delete"
-                      aria-label="Delete shortcut"
-                    >
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      >
-                        <polyline points="3 6 5 6 21 6" />
-                        <path
-                          d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
-                        />
-                      </svg>
-                    </button>
-                  {/if}
-                </div>
-              {/if}
+          <!-- Reply Section -->
+          <div class="section section-reply">
+            <div class="section-header">
+              <span class="section-badge reply">REPLY</span>
+              <span class="section-desc">Quick phrases</span>
             </div>
-          {/each}
 
-          <!-- Add new shortcut row -->
-          <div class="shortcut-row add-row">
-            <button
-              class="type-toggle"
-              class:type-command={newType === 'command'}
-              onclick={() => (newType = newType === 'reply' ? 'command' : 'reply')}
-              title="Toggle type (Reply / Command)"
-            >
-              {newType === 'command' ? 'CMD' : 'REPLY'}
-            </button>
-            <input
-              class="edit-input"
-              type="text"
-              bind:value={newLabel}
-              placeholder="Label"
-              onkeydown={handleAddKeyDown}
-              spellcheck="false"
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="off"
-            />
-            <input
-              class="edit-input text-input"
-              type="text"
-              bind:value={newText}
-              placeholder="Text to send"
-              onkeydown={handleAddKeyDown}
-              spellcheck="false"
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="off"
-            />
-            <div class="row-actions">
-              <button
-                class="action-btn add-btn"
-                onclick={handleAdd}
-                disabled={!newLabel.trim() || !newText.trim()}
-                title="Add shortcut"
-                aria-label="Add shortcut"
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
+            {#each replyShortcuts as shortcut (shortcut.id)}
+              {@render shortcutRow(shortcut)}
+            {/each}
+
+            <!-- Add reply -->
+            <div class="shortcut-row add-row">
+              <input
+                class="edit-input"
+                type="text"
+                bind:value={newReplyLabel}
+                placeholder="Label"
+                onkeydown={handleAddReplyKeyDown}
+                spellcheck="false"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+              />
+              <input
+                class="edit-input text-input"
+                type="text"
+                bind:value={newReplyText}
+                placeholder="Text to send"
+                onkeydown={handleAddReplyKeyDown}
+                spellcheck="false"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+              />
+              <div class="row-actions">
+                <button
+                  class="action-btn add-btn"
+                  onclick={handleAddReply}
+                  disabled={!newReplyLabel.trim() || !newReplyText.trim()}
+                  title="Add reply"
+                  aria-label="Add reply"
                 >
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
-                </svg>
-              </button>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Command Section -->
+          <div class="section section-command">
+            <div class="section-header">
+              <span class="section-badge command">CMD</span>
+              <span class="section-desc">Slash commands</span>
+            </div>
+
+            {#each commandShortcuts as shortcut (shortcut.id)}
+              {@render shortcutRow(shortcut)}
+            {/each}
+
+            {#if commandShortcuts.length === 0}
+              <div class="empty-hint">No commands yet</div>
+            {/if}
+
+            <!-- Add command -->
+            <div class="shortcut-row add-row">
+              <input
+                class="edit-input"
+                type="text"
+                bind:value={newCmdLabel}
+                placeholder="Label"
+                onkeydown={handleAddCmdKeyDown}
+                spellcheck="false"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+              />
+              <input
+                class="edit-input text-input"
+                type="text"
+                bind:value={newCmdText}
+                placeholder="Command to send"
+                onkeydown={handleAddCmdKeyDown}
+                spellcheck="false"
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+              />
+              <div class="row-actions">
+                <button
+                  class="action-btn add-btn"
+                  onclick={handleAddCommand}
+                  disabled={!newCmdLabel.trim() || !newCmdText.trim()}
+                  title="Add command"
+                  aria-label="Add command"
+                >
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -471,8 +548,18 @@
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-2);
+    margin-left: var(--space-2);
     border-radius: var(--radius-sm);
+    border-left: 2px solid transparent;
     transition: background var(--transition-fast);
+  }
+
+  .section-reply .shortcut-row {
+    border-left-color: rgba(125, 211, 252, 0.3);
+  }
+
+  .section-command .shortcut-row {
+    border-left-color: rgba(196, 181, 253, 0.3);
   }
 
   .shortcut-row:hover {
@@ -506,56 +593,55 @@
     white-space: nowrap;
   }
 
-  .type-badge {
-    flex-shrink: 0;
+  .section {
+    margin-bottom: var(--space-5);
+  }
+
+  .section:last-child {
+    margin-bottom: 0;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+    padding: 0 var(--space-2);
+  }
+
+  .section-badge {
     font-family: var(--font-mono);
-    font-size: 9px;
+    font-size: 10px;
     font-weight: 700;
-    letter-spacing: 0.06em;
-    padding: 2px 6px;
+    letter-spacing: 0.08em;
+    padding: 2px 8px;
     border-radius: 6px;
-    color: var(--accent-color);
-    background: rgba(125, 211, 252, 0.08);
-    border: 1px solid rgba(125, 211, 252, 0.2);
     user-select: none;
   }
 
-  .type-badge.type-command {
-    color: var(--accent2-color, #c4b5fd);
-    background: rgba(196, 181, 253, 0.08);
-    border-color: rgba(196, 181, 253, 0.2);
-  }
-
-  .type-toggle {
-    flex-shrink: 0;
-    font-family: var(--font-mono);
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    padding: 2px 6px;
-    border-radius: 6px;
+  .section-badge.reply {
     color: var(--accent-color);
-    background: rgba(125, 211, 252, 0.08);
-    border: 1px solid rgba(125, 211, 252, 0.2);
-    cursor: pointer;
-    transition:
-      color var(--transition-fast),
-      background var(--transition-fast),
-      border-color var(--transition-fast);
+    background: rgba(125, 211, 252, 0.1);
+    border: 1px solid rgba(125, 211, 252, 0.25);
   }
 
-  .type-toggle:hover {
-    background: rgba(125, 211, 252, 0.15);
-  }
-
-  .type-toggle.type-command {
+  .section-badge.command {
     color: var(--accent2-color, #c4b5fd);
-    background: rgba(196, 181, 253, 0.08);
-    border-color: rgba(196, 181, 253, 0.2);
+    background: rgba(196, 181, 253, 0.1);
+    border: 1px solid rgba(196, 181, 253, 0.25);
   }
 
-  .type-toggle.type-command:hover {
-    background: rgba(196, 181, 253, 0.15);
+  .section-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .empty-hint {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: var(--space-2) var(--space-2);
+    text-align: center;
+    opacity: 0.6;
   }
 
   .builtin-badge {

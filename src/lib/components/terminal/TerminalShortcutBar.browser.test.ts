@@ -10,12 +10,19 @@ describe('TerminalShortcutBar', () => {
   const defaultProps = {
     visible: true,
     shortcuts: [
-      { id: 'builtin-ok', label: 'OK', text: 'OK', builtin: true },
-      { id: 'builtin-continue', label: 'Continue', text: 'continue', builtin: true },
-      { id: 'builtin-lgtm', label: 'LGTM', text: 'LGTM', builtin: true },
+      { id: 'builtin-ok', label: 'OK', text: 'OK', builtin: true, type: 'reply' as const },
+      {
+        id: 'builtin-continue',
+        label: 'Continue',
+        text: 'continue',
+        builtin: true,
+        type: 'reply' as const,
+      },
+      { id: 'builtin-lgtm', label: 'LGTM', text: 'LGTM', builtin: true, type: 'reply' as const },
     ],
     onSend: vi.fn(),
     onSettingsClick: vi.fn(),
+    onAddClick: vi.fn(),
   };
 
   it('should render shortcut buttons when visible', () => {

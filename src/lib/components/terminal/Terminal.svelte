@@ -790,6 +790,10 @@
     await saveShortcuts(shortcutState.customShortcuts);
   }
 
+  function handleShortcutAddClick(_type: 'reply' | 'command') {
+    showShortcutSettings = true;
+  }
+
   onMount(() => {
     initTerminal();
 
@@ -975,6 +979,7 @@
     shortcuts={shortcutState.allShortcuts}
     onSend={handleShortcutSend}
     onSettingsClick={() => (showShortcutSettings = true)}
+    onAddClick={handleShortcutAddClick}
   />
   <TerminalShortcutSettings
     open={showShortcutSettings}
