@@ -5,15 +5,26 @@
   interface Props {
     open: boolean;
     shortcuts: TerminalShortcut[];
+    focusSection?: ShortcutType | null;
     onClose: () => void;
     onAdd: (label: string, text: string, type: ShortcutType) => void;
     onUpdate: (id: string, label: string, text: string) => void;
     onRemove: (id: string) => void;
   }
 
-  let { open, shortcuts, onClose, onAdd, onUpdate, onRemove }: Props = $props();
+  let {
+    open,
+    shortcuts,
+    focusSection = null,
+    onClose,
+    onAdd,
+    onUpdate,
+    onRemove,
+  }: Props = $props();
 
   let mounted = $state(false);
+  let replyLabelInput = $state<HTMLInputElement | null>(null);
+  let cmdLabelInput = $state<HTMLInputElement | null>(null);
 
   // Derived sections
   const replyShortcuts = $derived(shortcuts.filter((s) => s.type === 'reply'));
@@ -107,6 +118,19 @@
       handleAddCommand();
     }
   }
+
+  $effect(() => {
+    if (open && mounted && focusSection) {
+      // Delay to allow modal animation to start
+      requestAnimationFrame(() => {
+        if (focusSection === 'reply') {
+          replyLabelInput?.focus();
+        } else if (focusSection === 'command') {
+          cmdLabelInput?.focus();
+        }
+      });
+    }
+  });
 
   onMount(() => {
     mounted = true;
@@ -293,6 +317,7 @@
                 <input
                   class="edit-input"
                   type="text"
+                  bind:this={replyLabelInput}
                   bind:value={newReplyLabel}
                   placeholder="Label"
                   onkeydown={handleAddReplyKeyDown}
@@ -360,6 +385,7 @@
                 <input
                   class="edit-input"
                   type="text"
+                  bind:this={cmdLabelInput}
                   bind:value={newCmdLabel}
                   placeholder="Label"
                   onkeydown={handleAddCmdKeyDown}

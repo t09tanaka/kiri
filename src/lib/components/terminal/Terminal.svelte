@@ -60,6 +60,7 @@
   let memoryDisplay = $state('');
   let processName = $state('');
   let showShortcutSettings = $state(false);
+  let shortcutFocusSection = $state<'reply' | 'command' | null>(null);
   const isAiRunning = $derived(isAiProcess(processName));
 
   // Reserve 1 row for PTY to prevent Ink full-height flickering issue
@@ -790,7 +791,8 @@
     await saveShortcuts(shortcutState.customShortcuts);
   }
 
-  function handleShortcutAddClick(_type: 'reply' | 'command') {
+  function handleShortcutAddClick(type: 'reply' | 'command') {
+    shortcutFocusSection = type;
     showShortcutSettings = true;
   }
 
@@ -978,13 +980,20 @@
     visible={isAiRunning}
     shortcuts={shortcutState.allShortcuts}
     onSend={handleShortcutSend}
-    onSettingsClick={() => (showShortcutSettings = true)}
+    onSettingsClick={() => {
+      shortcutFocusSection = null;
+      showShortcutSettings = true;
+    }}
     onAddClick={handleShortcutAddClick}
   />
   <TerminalShortcutSettings
     open={showShortcutSettings}
     shortcuts={shortcutState.allShortcuts}
-    onClose={() => (showShortcutSettings = false)}
+    focusSection={shortcutFocusSection}
+    onClose={() => {
+      showShortcutSettings = false;
+      shortcutFocusSection = null;
+    }}
     onAdd={handleShortcutAdd}
     onUpdate={handleShortcutUpdate}
     onRemove={handleShortcutRemove}
