@@ -57,9 +57,13 @@
     }
   }
 
+  function ensureSlashPrefix(text: string): string {
+    return text.startsWith('/') ? text : `/${text}`;
+  }
+
   function handleAddCommand() {
     if (newCmdLabel.trim() && newCmdText.trim()) {
-      onAdd(newCmdLabel.trim(), newCmdText.trim(), 'command');
+      onAdd(newCmdLabel.trim(), ensureSlashPrefix(newCmdText.trim()), 'command');
       newCmdLabel = '';
       newCmdText = '';
     }
