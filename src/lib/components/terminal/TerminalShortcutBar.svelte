@@ -18,6 +18,7 @@
 
 {#if visible}
   <div class="shortcut-bar">
+    <span class="bar-label">Quick Reply</span>
     <div class="shortcut-buttons">
       {#each shortcuts as shortcut (shortcut.id)}
         <button
@@ -57,11 +58,11 @@
     display: flex;
     align-items: center;
     gap: var(--space-2);
-    padding: var(--space-1) var(--space-3);
-    background: var(--bg-glass);
+    padding: 8px var(--space-3);
+    background: linear-gradient(180deg, rgba(125, 211, 252, 0.08) 0%, rgba(13, 17, 23, 0.85) 100%);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
-    border-top: 1px solid var(--border-glow);
+    border-top: 1px solid rgba(125, 211, 252, 0.25);
     animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
@@ -74,6 +75,17 @@
       opacity: 1;
       transform: translateY(0);
     }
+  }
+
+  .bar-label {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    padding-right: 4px;
+    user-select: none;
   }
 
   .shortcut-buttons {
@@ -91,32 +103,40 @@
 
   .shortcut-btn {
     flex-shrink: 0;
-    padding: 2px 10px;
+    padding: 5px 14px;
     font-family: var(--font-mono);
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-secondary);
-    background: rgba(125, 211, 252, 0.06);
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--accent-color);
+    background: rgba(125, 211, 252, 0.1);
+    border: 1px solid rgba(125, 211, 252, 0.3);
+    border-radius: 14px;
     cursor: pointer;
     white-space: nowrap;
+    text-shadow: 0 0 12px rgba(125, 211, 252, 0.3);
+    box-shadow: 0 0 8px rgba(125, 211, 252, 0.08);
     transition:
       background var(--transition-fast),
       color var(--transition-fast),
       border-color var(--transition-fast),
-      box-shadow var(--transition-fast);
+      box-shadow var(--transition-fast),
+      transform var(--transition-fast);
   }
 
   .shortcut-btn:hover {
-    color: var(--text-primary);
-    background: rgba(125, 211, 252, 0.12);
-    border-color: var(--border-glow);
-    box-shadow: 0 0 12px rgba(125, 211, 252, 0.1);
+    color: #fff;
+    background: rgba(125, 211, 252, 0.2);
+    border-color: rgba(125, 211, 252, 0.5);
+    box-shadow:
+      0 0 16px rgba(125, 211, 252, 0.2),
+      0 0 4px rgba(125, 211, 252, 0.1);
+    transform: translateY(-1px);
   }
 
   .shortcut-btn:active {
-    transform: scale(0.96);
+    transform: translateY(0) scale(0.96);
+    box-shadow: 0 0 6px rgba(125, 211, 252, 0.15);
   }
 
   .settings-btn {
