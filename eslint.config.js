@@ -27,6 +27,12 @@ export default [
       },
     },
   },
+  {
+    files: ['**/*.svelte.ts'],
+    languageOptions: {
+      parser: ts.parser,
+    },
+  },
   // Restrict direct Tauri API imports in components
   {
     files: ['src/lib/components/**/*.svelte', 'src/lib/components/**/*.ts'],
