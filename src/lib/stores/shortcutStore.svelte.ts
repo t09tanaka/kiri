@@ -1,14 +1,17 @@
+export type ShortcutType = 'reply' | 'command';
+
 export interface TerminalShortcut {
   id: string;
   label: string;
   text: string;
   builtin: boolean;
+  type: ShortcutType;
 }
 
 export const BUILTIN_SHORTCUTS: TerminalShortcut[] = [
-  { id: 'builtin-ok', label: 'OK', text: 'OK', builtin: true },
-  { id: 'builtin-continue', label: 'Continue', text: 'continue', builtin: true },
-  { id: 'builtin-lgtm', label: 'LGTM', text: 'LGTM', builtin: true },
+  { id: 'builtin-ok', label: 'OK', text: 'OK', builtin: true, type: 'reply' },
+  { id: 'builtin-continue', label: 'Continue', text: 'continue', builtin: true, type: 'reply' },
+  { id: 'builtin-lgtm', label: 'LGTM', text: 'LGTM', builtin: true, type: 'reply' },
 ];
 
 let nextId = 1;
@@ -31,8 +34,11 @@ export function createShortcutStore() {
       return [...customShortcuts];
     },
 
-    addShortcut(label: string, text: string): void {
-      customShortcuts = [...customShortcuts, { id: generateId(), label, text, builtin: false }];
+    addShortcut(label: string, text: string, type: ShortcutType = 'reply'): void {
+      customShortcuts = [
+        ...customShortcuts,
+        { id: generateId(), label, text, builtin: false, type },
+      ];
     },
 
     updateShortcut(id: string, label: string, text: string): void {
@@ -70,10 +76,10 @@ class ShortcutState {
     return [...BUILTIN_SHORTCUTS, ...this.customShortcuts];
   }
 
-  addShortcut(label: string, text: string): void {
+  addShortcut(label: string, text: string, type: ShortcutType = 'reply'): void {
     this.customShortcuts = [
       ...this.customShortcuts,
-      { id: generateId(), label, text, builtin: false },
+      { id: generateId(), label, text, builtin: false, type },
     ];
   }
 

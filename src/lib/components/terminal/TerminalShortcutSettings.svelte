@@ -1,12 +1,12 @@
 <script lang="ts">
-  import type { TerminalShortcut } from '@/lib/stores/shortcutStore.svelte';
+  import type { TerminalShortcut, ShortcutType } from '@/lib/stores/shortcutStore.svelte';
   import { onMount, onDestroy } from 'svelte';
 
   interface Props {
     open: boolean;
     shortcuts: TerminalShortcut[];
     onClose: () => void;
-    onAdd: (label: string, text: string) => void;
+    onAdd: (label: string, text: string, type: ShortcutType) => void;
     onUpdate: (id: string, label: string, text: string) => void;
     onRemove: (id: string) => void;
   }
@@ -18,6 +18,7 @@
   // New shortcut form
   let newLabel = $state('');
   let newText = $state('');
+  let newType = $state<ShortcutType>('reply');
 
   // Edit state
   let editingId = $state<string | null>(null);
@@ -45,9 +46,10 @@
 
   function handleAdd() {
     if (newLabel.trim() && newText.trim()) {
-      onAdd(newLabel.trim(), newText.trim());
+      onAdd(newLabel.trim(), newText.trim(), newType);
       newLabel = '';
       newText = '';
+      newType = 'reply';
     }
   }
 
@@ -140,6 +142,9 @@
               class:builtin={shortcut.builtin}
               class:editing={editingId === shortcut.id}
             >
+              <span class="type-badge" class:type-command={shortcut.type === 'command'}>
+                {shortcut.type === 'command' ? 'CMD' : 'REPLY'}
+              </span>
               {#if editingId === shortcut.id}
                 <!-- Edit mode -->
                 <input
@@ -261,6 +266,14 @@
 
           <!-- Add new shortcut row -->
           <div class="shortcut-row add-row">
+            <button
+              class="type-toggle"
+              class:type-command={newType === 'command'}
+              onclick={() => (newType = newType === 'reply' ? 'command' : 'reply')}
+              title="Toggle type (Reply / Command)"
+            >
+              {newType === 'command' ? 'CMD' : 'REPLY'}
+            </button>
             <input
               class="edit-input"
               type="text"
@@ -491,6 +504,58 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .type-badge {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 2px 6px;
+    border-radius: 6px;
+    color: var(--accent-color);
+    background: rgba(125, 211, 252, 0.08);
+    border: 1px solid rgba(125, 211, 252, 0.2);
+    user-select: none;
+  }
+
+  .type-badge.type-command {
+    color: var(--accent2-color, #c4b5fd);
+    background: rgba(196, 181, 253, 0.08);
+    border-color: rgba(196, 181, 253, 0.2);
+  }
+
+  .type-toggle {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 2px 6px;
+    border-radius: 6px;
+    color: var(--accent-color);
+    background: rgba(125, 211, 252, 0.08);
+    border: 1px solid rgba(125, 211, 252, 0.2);
+    cursor: pointer;
+    transition:
+      color var(--transition-fast),
+      background var(--transition-fast),
+      border-color var(--transition-fast);
+  }
+
+  .type-toggle:hover {
+    background: rgba(125, 211, 252, 0.15);
+  }
+
+  .type-toggle.type-command {
+    color: var(--accent2-color, #c4b5fd);
+    background: rgba(196, 181, 253, 0.08);
+    border-color: rgba(196, 181, 253, 0.2);
+  }
+
+  .type-toggle.type-command:hover {
+    background: rgba(196, 181, 253, 0.15);
   }
 
   .builtin-badge {

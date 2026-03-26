@@ -10,6 +10,9 @@
 
   let { visible, shortcuts, onSend, onSettingsClick }: Props = $props();
 
+  const replies = $derived(shortcuts.filter((s) => s.type === 'reply'));
+  const commands = $derived(shortcuts.filter((s) => s.type === 'command'));
+
   function handleClick(event: MouseEvent, shortcut: TerminalShortcut) {
     const withEnter = !event.shiftKey;
     onSend(shortcut.text, withEnter);
@@ -18,18 +21,41 @@
 
 {#if visible}
   <div class="shortcut-bar">
-    <span class="bar-label">Quick Reply</span>
-    <div class="shortcut-buttons">
-      {#each shortcuts as shortcut (shortcut.id)}
-        <button
-          class="shortcut-btn"
-          onclick={(e) => handleClick(e, shortcut)}
-          title="{shortcut.label} (Shift+click: input only)"
-        >
-          {shortcut.label}
-        </button>
-      {/each}
+    <!-- Row 1: Quick Reply -->
+    <div class="shortcut-row">
+      <span class="bar-label">REPLY</span>
+      <div class="shortcut-buttons">
+        {#each replies as shortcut (shortcut.id)}
+          <button
+            class="shortcut-btn reply-btn"
+            onclick={(e) => handleClick(e, shortcut)}
+            title="{shortcut.label} (Shift+click: input only)"
+          >
+            {shortcut.label}
+          </button>
+        {/each}
+      </div>
     </div>
+
+    <!-- Row 2: Commands (only if any exist) -->
+    {#if commands.length > 0}
+      <div class="shortcut-row">
+        <span class="bar-label">CMD</span>
+        <div class="shortcut-buttons">
+          {#each commands as shortcut (shortcut.id)}
+            <button
+              class="shortcut-btn command-btn"
+              onclick={(e) => handleClick(e, shortcut)}
+              title="{shortcut.label} (Shift+click: input only)"
+            >
+              {shortcut.label}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
+    <!-- Settings button -->
     <button
       class="settings-btn"
       onclick={onSettingsClick}
@@ -56,14 +82,15 @@
 <style>
   .shortcut-bar {
     display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: 8px var(--space-3);
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px var(--space-3);
     background: linear-gradient(180deg, rgba(125, 211, 252, 0.08) 0%, rgba(13, 17, 23, 0.85) 100%);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
     border-top: 1px solid rgba(125, 211, 252, 0.25);
     animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    position: relative;
   }
 
   @keyframes slideUp {
@@ -77,15 +104,22 @@
     }
   }
 
+  .shortcut-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
   .bar-label {
     flex-shrink: 0;
-    font-size: 10px;
-    font-weight: 600;
+    width: 38px;
+    font-size: 9px;
+    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.1em;
     color: var(--text-muted);
-    padding-right: 4px;
     user-select: none;
+    text-align: right;
   }
 
   .shortcut-buttons {
@@ -103,19 +137,14 @@
 
   .shortcut-btn {
     flex-shrink: 0;
-    padding: 5px 14px;
+    padding: 4px 12px;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.03em;
-    color: var(--accent-color);
-    background: rgba(125, 211, 252, 0.1);
-    border: 1px solid rgba(125, 211, 252, 0.3);
-    border-radius: 14px;
+    border-radius: 12px;
     cursor: pointer;
     white-space: nowrap;
-    text-shadow: 0 0 12px rgba(125, 211, 252, 0.3);
-    box-shadow: 0 0 8px rgba(125, 211, 252, 0.08);
     transition:
       background var(--transition-fast),
       color var(--transition-fast),
@@ -124,7 +153,16 @@
       transform var(--transition-fast);
   }
 
-  .shortcut-btn:hover {
+  /* Reply buttons — accent blue */
+  .reply-btn {
+    color: var(--accent-color);
+    background: rgba(125, 211, 252, 0.1);
+    border: 1px solid rgba(125, 211, 252, 0.3);
+    text-shadow: 0 0 12px rgba(125, 211, 252, 0.3);
+    box-shadow: 0 0 8px rgba(125, 211, 252, 0.08);
+  }
+
+  .reply-btn:hover {
     color: #fff;
     background: rgba(125, 211, 252, 0.22);
     border-color: rgba(125, 211, 252, 0.5);
@@ -133,13 +171,32 @@
       0 0 4px rgba(125, 211, 252, 0.15);
   }
 
+  /* Command buttons — secondary purple */
+  .command-btn {
+    color: var(--accent2-color, #c4b5fd);
+    background: rgba(196, 181, 253, 0.08);
+    border: 1px solid rgba(196, 181, 253, 0.25);
+    text-shadow: 0 0 12px rgba(196, 181, 253, 0.25);
+    box-shadow: 0 0 8px rgba(196, 181, 253, 0.06);
+  }
+
+  .command-btn:hover {
+    color: #fff;
+    background: rgba(196, 181, 253, 0.2);
+    border-color: rgba(196, 181, 253, 0.45);
+    box-shadow:
+      0 0 16px rgba(196, 181, 253, 0.2),
+      0 0 4px rgba(196, 181, 253, 0.12);
+  }
+
   .shortcut-btn:active {
     transform: scale(0.96);
-    box-shadow: 0 0 6px rgba(125, 211, 252, 0.15);
   }
 
   .settings-btn {
-    flex-shrink: 0;
+    position: absolute;
+    top: 6px;
+    right: 8px;
     display: flex;
     align-items: center;
     justify-content: center;

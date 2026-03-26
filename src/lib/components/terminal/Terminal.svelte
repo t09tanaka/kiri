@@ -771,8 +771,12 @@
     terminal?.focus();
   }
 
-  async function handleShortcutAdd(label: string, text: string) {
-    shortcutState.addShortcut(label, text);
+  async function handleShortcutAdd(
+    label: string,
+    text: string,
+    type: 'reply' | 'command' = 'reply'
+  ) {
+    shortcutState.addShortcut(label, text, type);
     await saveShortcuts(shortcutState.customShortcuts);
   }
 
