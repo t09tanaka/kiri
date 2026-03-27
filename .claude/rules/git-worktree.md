@@ -91,8 +91,8 @@ The default branch is determined in the following order:
 
 1. User enters branch name in WorktreePanel
 2. Worktree is created via `worktreeService.create()`
-3. Files are copied based on copy patterns (`**/.env*`, user-configured patterns). The `**/` prefix ensures `.env*` files in subdirectories are also copied.
-4. Initialization commands are executed (e.g., `npm install`)
+3. Files are copied using `copy_gitignored_files` — copies files that are tracked by .gitignore rules and enabled by the user
+4. Initialization commands are executed (user-defined commands only; no auto-detection)
 5. New window opens with the worktree path
 6. WorktreePanel form resets
 
@@ -131,11 +131,11 @@ getContext(repoPath: string): Promise<WorktreeContext>
 // List available branches
 listBranches(repoPath: string): Promise<BranchInfo[]>
 
-// Copy files matching patterns from source to target
-copyFiles(sourcePath: string, targetPath: string, patterns: string[]): Promise<CopyResult>
+// List gitignore rules with match counts
+listGitignoreRules(repoPath: string): Promise<GitignoreRule[]>
 
-// Detect package manager from lock files
-detectPackageManager(projectPath: string): Promise<PackageManager | null>
+// Copy .gitignore'd files filtered by enabled patterns
+copyGitignoredFiles(repoPath: string, targetPath: string, enabledPatterns: string[]): Promise<CopyResult>
 
 // Run initialization command in worktree directory
 runInitCommand(cwd: string, command: string): Promise<CommandOutput>
@@ -150,8 +150,8 @@ Located in `src-tauri/src/commands/git_worktree.rs`:
 - `remove_worktree` - Prunes worktree and removes directory
 - `get_worktree_context` - Determines if current path is a worktree
 - `list_branches` - Lists local branches (HEAD first, then alphabetical)
-- `copy_files_to_worktree` - Copies files matching glob patterns
-- `detect_package_manager` - Detects npm/yarn/pnpm/bun from lock files
+- `list_gitignore_rules` - Parses .gitignore files and returns rules with match counts
+- `copy_gitignored_files` - Copies ignored files filtered by enabled patterns
 - `run_init_command` - Executes shell command in specified directory
 
 ## Data Structures
@@ -187,16 +187,6 @@ interface WorktreeContext {
 | `isWorktree` | `boolean` | True if current path is a linked worktree |
 | `isSubdirectoryOfRepo` | `boolean` | True if project path differs from repo root |
 
-### PackageManager
-
-```typescript
-interface PackageManager {
-  name: string;      // "npm", "yarn", "pnpm", "bun"
-  lock_file: string; // "package-lock.json", etc.
-  command: string;   // "npm install", etc.
-}
-```
-
 ### WorktreeInitCommand
 
 ```typescript
@@ -204,30 +194,26 @@ interface WorktreeInitCommand {
   name: string;      // Display name (e.g., "Install dependencies")
   command: string;   // Shell command (e.g., "npm install")
   enabled: boolean;  // Whether to run this command
-  auto: boolean;     // True if auto-detected, false if user-added
+}
+```
+
+### GitignoreRule
+
+```typescript
+interface GitignoreRule {
+  pattern: string;
+  source_file: string;
+  matched_file_count: number;
 }
 ```
 
 ## Initialization Commands
 
-### Package Manager Detection
+Initialization commands are user-defined only. There is no auto-detection of package managers or other tooling. Users configure all commands manually via the Settings modal.
 
-The system automatically detects the package manager from lock files:
+### User-Defined Commands
 
-| Lock File | Package Manager | Command |
-|-----------|-----------------|---------|
-| pnpm-lock.yaml | pnpm | `pnpm install` |
-| yarn.lock | yarn | `yarn install` |
-| bun.lockb | bun | `bun install` |
-| package-lock.json | npm | `npm install` |
-
-If multiple lock files exist, priority is: pnpm > yarn > bun > npm.
-
-If only `package.json` exists (no lock file), defaults to `npm install`.
-
-### Custom Commands
-
-Users can add custom initialization commands via Settings modal:
+Users add initialization commands via the Settings modal:
 - Name: Display name for the command
 - Command: Shell command to execute
 - Can be enabled/disabled individually
@@ -243,7 +229,9 @@ Commands run in order after worktree creation and file copying.
 - Validation for current/in-use branches
 - Tree visualization of main repo and worktrees
 - Progress view during creation (steps: worktree → copy → init → done)
-- Settings modal for copy patterns and initialization commands
+- Settings modal with:
+  - Gitignore rules list with ON/OFF toggles per rule (for file copying)
+  - User-defined initialization commands (no auto-detected section)
 
 ### Keyboard Shortcuts
 
