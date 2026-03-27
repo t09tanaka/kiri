@@ -352,3 +352,35 @@ export async function saveShortcuts(shortcuts: TerminalShortcut[]): Promise<void
     console.error('Failed to save shortcuts:', error);
   }
 }
+
+// ============================================================================
+// Number Row Setting
+// ============================================================================
+
+/**
+ * Load number row enabled setting (default: true)
+ */
+export async function loadNumberRowEnabled(): Promise<boolean> {
+  try {
+    const s = await getStore();
+    await s.reload();
+    const value = await s.get<boolean>('numberRowEnabled');
+    return value ?? false;
+  } catch (error) {
+    console.error('Failed to load numberRowEnabled:', error);
+    return false;
+  }
+}
+
+/**
+ * Save number row enabled setting
+ */
+export async function saveNumberRowEnabled(enabled: boolean): Promise<void> {
+  try {
+    const s = await getStore();
+    await s.set('numberRowEnabled', enabled);
+    await s.save();
+  } catch (error) {
+    console.error('Failed to save numberRowEnabled:', error);
+  }
+}

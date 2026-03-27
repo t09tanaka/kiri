@@ -6,20 +6,24 @@
     open: boolean;
     shortcuts: TerminalShortcut[];
     focusSection?: ShortcutType | null;
+    numberRowEnabled: boolean;
     onClose: () => void;
     onAdd: (label: string, text: string, type: ShortcutType) => void;
     onUpdate: (id: string, label: string, text: string) => void;
     onRemove: (id: string) => void;
+    onNumberRowToggle: (enabled: boolean) => void;
   }
 
   let {
     open,
     shortcuts,
     focusSection = null,
+    numberRowEnabled,
     onClose,
     onAdd,
     onUpdate,
     onRemove,
+    onNumberRowToggle,
   }: Props = $props();
 
   let mounted = $state(false);
@@ -433,6 +437,28 @@
           </div>
         </div>
 
+        <!-- Number Row Toggle -->
+        <div class="toggle-section">
+          <div class="toggle-row">
+            <div class="toggle-info">
+              <span class="toggle-label">Number Row</span>
+              <span class="toggle-desc">Show 1, 2, 3 buttons for quick selection</span>
+            </div>
+            <button
+              class="toggle-btn"
+              class:active={numberRowEnabled}
+              onclick={() => onNumberRowToggle(!numberRowEnabled)}
+              role="switch"
+              aria-checked={numberRowEnabled}
+              aria-label="Toggle Number Row"
+            >
+              <span class="toggle-track">
+                <span class="toggle-thumb"></span>
+              </span>
+            </button>
+          </div>
+        </div>
+
         <!-- Footer -->
         <div class="modal-footer">
           <span class="footer-item">
@@ -775,6 +801,80 @@
     margin-top: var(--space-2);
     padding-top: var(--space-2);
     border-top: 1px solid var(--border-subtle);
+  }
+
+  /* Toggle section */
+  .toggle-section {
+    padding: var(--space-3) var(--space-4);
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+  }
+
+  .toggle-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .toggle-label {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .toggle-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .toggle-btn {
+    flex-shrink: 0;
+    padding: 2px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+  }
+
+  .toggle-track {
+    display: flex;
+    align-items: center;
+    width: 36px;
+    height: 20px;
+    padding: 2px;
+    background: rgba(125, 211, 252, 0.1);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    transition:
+      background var(--transition-fast),
+      border-color var(--transition-fast);
+  }
+
+  .toggle-btn.active .toggle-track {
+    background: rgba(252, 211, 77, 0.25);
+    border-color: rgba(252, 211, 77, 0.4);
+  }
+
+  .toggle-thumb {
+    width: 14px;
+    height: 14px;
+    background: var(--text-muted);
+    border-radius: 50%;
+    transition:
+      transform var(--transition-fast),
+      background var(--transition-fast);
+  }
+
+  .toggle-btn.active .toggle-thumb {
+    transform: translateX(16px);
+    background: var(--accent3-color, #fcd34d);
+    box-shadow: 0 0 8px rgba(252, 211, 77, 0.3);
   }
 
   /* Footer */

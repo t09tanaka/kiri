@@ -4,12 +4,15 @@
   interface Props {
     visible: boolean;
     shortcuts: TerminalShortcut[];
+    showNumberRow: boolean;
     onSend: (text: string, withEnter: boolean) => void;
     onSettingsClick: () => void;
     onAddClick: (type: ShortcutType) => void;
   }
 
-  let { visible, shortcuts, onSend, onSettingsClick, onAddClick }: Props = $props();
+  let { visible, shortcuts, showNumberRow, onSend, onSettingsClick, onAddClick }: Props = $props();
+
+  const numberChoices = [1, 2, 3];
 
   const replies = $derived(shortcuts.filter((s) => s.type === 'reply'));
   const commands = $derived(shortcuts.filter((s) => s.type === 'command'));
@@ -92,6 +95,24 @@
       </div>
     </div>
 
+    <!-- Row 3: Number choices -->
+    {#if showNumberRow}
+      <div class="shortcut-row">
+        <span class="bar-label choice-label">PICK</span>
+        <div class="shortcut-buttons">
+          {#each numberChoices as num (num)}
+            <button
+              class="shortcut-btn choice-btn"
+              onclick={(e) => onSend(String(num), !e.shiftKey)}
+              title="{num} (Shift+click: input only)"
+            >
+              {num}
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     <!-- Settings button -->
     <button
       class="settings-btn"
@@ -168,6 +189,10 @@
     color: rgba(196, 181, 253, 0.6);
   }
 
+  .choice-label {
+    color: rgba(252, 211, 77, 0.6);
+  }
+
   .shortcut-buttons {
     display: flex;
     align-items: center;
@@ -228,6 +253,26 @@
     box-shadow:
       0 0 16px rgba(196, 181, 253, 0.2),
       0 0 4px rgba(196, 181, 253, 0.12);
+  }
+
+  /* Choice buttons — tertiary amber */
+  .choice-btn {
+    color: var(--accent3-color, #fcd34d);
+    background: rgba(252, 211, 77, 0.08);
+    border: 1px solid rgba(252, 211, 77, 0.25);
+    text-shadow: 0 0 12px rgba(252, 211, 77, 0.25);
+    box-shadow: 0 0 8px rgba(252, 211, 77, 0.06);
+    min-width: 32px;
+    text-align: center;
+  }
+
+  .choice-btn:hover {
+    color: #fff;
+    background: rgba(252, 211, 77, 0.2);
+    border-color: rgba(252, 211, 77, 0.45);
+    box-shadow:
+      0 0 16px rgba(252, 211, 77, 0.2),
+      0 0 4px rgba(252, 211, 77, 0.12);
   }
 
   .shortcut-btn:active {

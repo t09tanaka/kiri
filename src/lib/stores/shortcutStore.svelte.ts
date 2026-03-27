@@ -71,6 +71,7 @@ export function isAiProcess(processName: string): boolean {
  */
 class ShortcutState {
   customShortcuts = $state<TerminalShortcut[]>([]);
+  numberRowEnabled = $state<boolean>(false);
 
   get allShortcuts(): TerminalShortcut[] {
     return [...BUILTIN_SHORTCUTS, ...this.customShortcuts];

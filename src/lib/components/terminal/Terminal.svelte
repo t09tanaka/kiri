@@ -18,7 +18,12 @@
   import TerminalShortcutBar from './TerminalShortcutBar.svelte';
   import TerminalShortcutSettings from './TerminalShortcutSettings.svelte';
   import { shortcutState, isAiProcess } from '@/lib/stores/shortcutStore.svelte';
-  import { loadShortcuts, saveShortcuts } from '@/lib/services/persistenceService';
+  import {
+    loadShortcuts,
+    saveShortcuts,
+    loadNumberRowEnabled,
+    saveNumberRowEnabled,
+  } from '@/lib/services/persistenceService';
 
   // Lazy-loaded xterm modules (loaded on first terminal creation)
   let xtermLoaded = false;
@@ -61,6 +66,7 @@
   let processName = $state('');
   let showShortcutSettings = $state(false);
   let shortcutFocusSection = $state<'reply' | 'command' | null>(null);
+  let numberRowEnabled = $state(false);
   const isAiRunning = $derived(isAiProcess(processName));
 
   // Reserve 1 row for PTY to prevent Ink full-height flickering issue
@@ -590,9 +596,10 @@
         }
       }
 
-      // Load custom shortcuts
+      // Load custom shortcuts and settings
       const customShortcuts = await loadShortcuts();
       shortcutState.setCustomShortcuts(customShortcuts);
+      numberRowEnabled = await loadNumberRowEnabled();
 
       // Send input to PTY
       terminal.onData((data) => {
@@ -796,6 +803,12 @@
     showShortcutSettings = true;
   }
 
+  async function handleNumberRowToggle(enabled: boolean) {
+    numberRowEnabled = enabled;
+    shortcutState.numberRowEnabled = enabled;
+    await saveNumberRowEnabled(enabled);
+  }
+
   onMount(() => {
     initTerminal();
 
@@ -979,6 +992,7 @@
   <TerminalShortcutBar
     visible={isAiRunning}
     shortcuts={shortcutState.allShortcuts}
+    showNumberRow={numberRowEnabled}
     onSend={handleShortcutSend}
     onSettingsClick={() => {
       shortcutFocusSection = null;
@@ -990,6 +1004,7 @@
     open={showShortcutSettings}
     shortcuts={shortcutState.allShortcuts}
     focusSection={shortcutFocusSection}
+    {numberRowEnabled}
     onClose={() => {
       showShortcutSettings = false;
       shortcutFocusSection = null;
@@ -997,6 +1012,7 @@
     onAdd={handleShortcutAdd}
     onUpdate={handleShortcutUpdate}
     onRemove={handleShortcutRemove}
+    onNumberRowToggle={handleNumberRowToggle}
   />
   <div class="terminal-glow"></div>
   <div class="focus-indicator"></div>
