@@ -29,17 +29,17 @@ export interface CopyResult {
   errors: string[];
 }
 
-export interface PackageManager {
-  name: string;
-  lock_file: string;
-  command: string;
-}
-
 export interface CommandOutput {
   success: boolean;
   stdout: string;
   stderr: string;
   exit_code: number;
+}
+
+export interface GitignoreRule {
+  pattern: string;
+  source_file: string;
+  matched_file_count: number;
 }
 
 /**
@@ -80,22 +80,20 @@ export const worktreeService = {
   listBranches: (repoPath: string): Promise<BranchInfo[]> => invoke('list_branches', { repoPath }),
 
   /**
-   * Copy files matching patterns from source to target directory
+   * List gitignore rules for a repository
    */
-  copyFiles: (sourcePath: string, targetPath: string, patterns: string[]): Promise<CopyResult> =>
-    invoke('copy_files_to_worktree', { sourcePath, targetPath, patterns }),
+  listGitignoreRules: (repoPath: string): Promise<GitignoreRule[]> =>
+    invoke('list_gitignore_rules', { repoPath }),
 
   /**
-   * Detect package manager from lock files in the project directory
+   * Copy gitignored files to a target directory, filtered by enabled patterns
    */
-  detectPackageManager: (projectPath: string): Promise<PackageManager | null> =>
-    invoke('detect_package_manager', { projectPath }),
-
-  /**
-   * Detect all package managers from lock files in the project directory
-   */
-  detectPackageManagers: (projectPath: string): Promise<PackageManager[]> =>
-    invoke('detect_package_managers', { projectPath }),
+  copyGitignoredFiles: (
+    repoPath: string,
+    targetPath: string,
+    enabledPatterns: string[]
+  ): Promise<CopyResult> =>
+    invoke('copy_gitignored_files', { repoPath, targetPath, enabledPatterns }),
 
   /**
    * Run an initialization command in the specified directory

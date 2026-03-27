@@ -7,7 +7,6 @@ import {
   getDefaultSettings,
   getDefaultProjectSettings,
   DEFAULT_EXCLUDE_PATTERNS,
-  DEFAULT_WORKTREE_COPY_PATTERNS,
   type StartupCommand,
 } from './persistenceService';
 
@@ -78,7 +77,7 @@ describe('getDefaultProjectSettings', () => {
     const settings = getDefaultProjectSettings();
 
     expect(settings.searchExcludePatterns).toEqual(DEFAULT_EXCLUDE_PATTERNS);
-    expect(settings.worktreeCopyPatterns).toEqual([]);
+    expect(settings.worktreeDisabledCopyRules).toEqual([]);
     expect(settings.worktreeInitCommands).toEqual([]);
   });
 
@@ -88,12 +87,6 @@ describe('getDefaultProjectSettings', () => {
 
     expect(settings1).toEqual(settings2);
     expect(settings1).not.toBe(settings2);
-  });
-});
-
-describe('DEFAULT_WORKTREE_COPY_PATTERNS', () => {
-  it('should include .env file patterns', () => {
-    expect(DEFAULT_WORKTREE_COPY_PATTERNS).toEqual(['**/.env*']);
   });
 });
 
@@ -225,7 +218,7 @@ describe('GlobalSettings (with Store mock)', () => {
       const result = await loadProjectSettings('/path/to/project');
 
       expect(result.searchExcludePatterns).toEqual(DEFAULT_EXCLUDE_PATTERNS);
-      expect(result.worktreeCopyPatterns).toEqual([]);
+      expect(result.worktreeDisabledCopyRules).toEqual([]);
       expect(result.worktreeInitCommands).toEqual([]);
     });
 
@@ -242,17 +235,15 @@ describe('GlobalSettings (with Store mock)', () => {
       const { loadProjectSettings } = await importModule();
       const storedSettings = {
         searchExcludePatterns: ['*.log'],
-        worktreeCopyPatterns: ['**/.env*', 'config.json'],
-        worktreeInitCommands: [
-          { name: 'Install', command: 'npm install', enabled: true, auto: true },
-        ],
+        worktreeDisabledCopyRules: ['**/.env*', 'config.json'],
+        worktreeInitCommands: [{ name: 'Install', command: 'npm install', enabled: true }],
       };
       mockStore.get.mockResolvedValue(storedSettings);
 
       const result = await loadProjectSettings('/path/to/project');
 
       expect(result.searchExcludePatterns).toEqual(['*.log']);
-      expect(result.worktreeCopyPatterns).toEqual(['**/.env*', 'config.json']);
+      expect(result.worktreeDisabledCopyRules).toEqual(['**/.env*', 'config.json']);
       expect(result.worktreeInitCommands).toHaveLength(1);
     });
 
@@ -263,7 +254,7 @@ describe('GlobalSettings (with Store mock)', () => {
       const result = await loadProjectSettings('/path/to/project');
 
       expect(result.searchExcludePatterns).toEqual(['*.tmp']);
-      expect(result.worktreeCopyPatterns).toEqual([]);
+      expect(result.worktreeDisabledCopyRules).toEqual([]);
       expect(result.worktreeInitCommands).toEqual([]);
     });
 
@@ -271,21 +262,21 @@ describe('GlobalSettings (with Store mock)', () => {
       const { loadProjectSettings } = await importModule();
       mockStore.get.mockResolvedValue({
         searchExcludePatterns: undefined,
-        worktreeCopyPatterns: ['**/.env*'],
+        worktreeDisabledCopyRules: ['**/.env*'],
         worktreeInitCommands: [],
       });
 
       const result = await loadProjectSettings('/path/to/project');
 
       expect(result.searchExcludePatterns).toEqual(DEFAULT_EXCLUDE_PATTERNS);
-      expect(result.worktreeCopyPatterns).toEqual(['**/.env*']);
+      expect(result.worktreeDisabledCopyRules).toEqual(['**/.env*']);
     });
 
     it('should preserve portConfig and composeIsolationConfig if present', async () => {
       const { loadProjectSettings } = await importModule();
       const storedSettings = {
         searchExcludePatterns: [],
-        worktreeCopyPatterns: [],
+        worktreeDisabledCopyRules: [],
         worktreeInitCommands: [],
         portConfig: {
           enabled: true,
@@ -322,7 +313,7 @@ describe('GlobalSettings (with Store mock)', () => {
       const { saveProjectSettings } = await importModule();
       const settings = {
         searchExcludePatterns: ['*.log'],
-        worktreeCopyPatterns: [],
+        worktreeDisabledCopyRules: [],
         worktreeInitCommands: [],
       };
 
@@ -340,7 +331,7 @@ describe('GlobalSettings (with Store mock)', () => {
       await expect(
         saveProjectSettings('/path', {
           searchExcludePatterns: [],
-          worktreeCopyPatterns: [],
+          worktreeDisabledCopyRules: [],
           worktreeInitCommands: [],
         })
       ).resolves.not.toThrow();

@@ -182,7 +182,6 @@ export interface WorktreeInitCommand {
   name: string; // Display name (e.g., "Install dependencies")
   command: string; // Shell command (e.g., "npm install")
   enabled: boolean; // Whether to run this command
-  auto: boolean; // True if auto-detected, false if user-added
 }
 
 /**
@@ -225,7 +224,7 @@ export interface ComposeIsolationConfig {
  */
 export interface ProjectSettings {
   searchExcludePatterns: string[];
-  worktreeCopyPatterns: string[];
+  worktreeDisabledCopyRules: string[];
   worktreeInitCommands: WorktreeInitCommand[];
   portConfig?: PortConfig;
   composeIsolationConfig?: ComposeIsolationConfig;
@@ -247,14 +246,9 @@ export const DEFAULT_EXCLUDE_PATTERNS: string[] = [
   '*.log',
 ];
 
-/**
- * Default copy patterns for worktree creation (cannot be removed)
- */
-export const DEFAULT_WORKTREE_COPY_PATTERNS: string[] = ['**/.env*'];
-
 const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   searchExcludePatterns: [...DEFAULT_EXCLUDE_PATTERNS],
-  worktreeCopyPatterns: [],
+  worktreeDisabledCopyRules: [],
   worktreeInitCommands: [],
 };
 
@@ -284,8 +278,8 @@ export async function loadProjectSettings(projectPath: string): Promise<ProjectS
     return {
       searchExcludePatterns:
         settings.searchExcludePatterns ?? DEFAULT_PROJECT_SETTINGS.searchExcludePatterns,
-      worktreeCopyPatterns:
-        settings.worktreeCopyPatterns ?? DEFAULT_PROJECT_SETTINGS.worktreeCopyPatterns,
+      worktreeDisabledCopyRules:
+        settings.worktreeDisabledCopyRules ?? DEFAULT_PROJECT_SETTINGS.worktreeDisabledCopyRules,
       worktreeInitCommands:
         settings.worktreeInitCommands ?? DEFAULT_PROJECT_SETTINGS.worktreeInitCommands,
       portConfig: settings.portConfig,

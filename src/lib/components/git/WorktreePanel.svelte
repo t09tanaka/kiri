@@ -8,7 +8,6 @@
   import {
     loadProjectSettings,
     saveProjectSettings,
-    DEFAULT_WORKTREE_COPY_PATTERNS,
     type WorktreeInitCommand,
     type PortConfig,
   } from '@/lib/services/persistenceService';
@@ -16,7 +15,7 @@
     WorktreeInfo,
     BranchInfo,
     WorktreeContext,
-    PackageManager,
+    GitignoreRule,
   } from '@/lib/services/worktreeService';
   import {
     portIsolationService,
@@ -57,14 +56,15 @@
   // Worktree context for current window
   let currentContext = $state<WorktreeContext | null>(null);
 
-  // Copy settings state
+  // Copy settings state (gitignore-based)
   let showCopySettingsModal = $state(false);
-  let userCopyPatterns = $state<string[]>([]);
-  let newCopyPattern = $state('');
+  let gitignoreRules = $state<GitignoreRule[]>([]);
+  let disabledCopyRules = $state<string[]>([]);
+  let isLoadingRules = $state(true);
 
   // Init commands state
   let initCommands = $state<WorktreeInitCommand[]>([]);
-  let detectedPackageManagers = $state<PackageManager[]>([]);
+  let isLoadingCommands = $state(true);
   let newInitCommandName = $state('');
   let newInitCommandValue = $state('');
 
@@ -88,7 +88,7 @@
   // Port isolation state
   let portConfig = $state<PortConfig | null>(null);
   let detectedPorts = $state<DetectedPorts | null>(null);
-  let isDetectingPorts = $state(false);
+  let isDetectingPorts = $state(true);
   let selectedPorts = $state<Map<string, boolean>>(new Map());
   let portAssignments = $state<PortAssignment[]>([]);
   let portOverflowWarnings = $state<string[]>([]);
@@ -97,7 +97,7 @@
   // Compose isolation state
   let composeConfig = $state<ComposeIsolationConfig | null>(null);
   let detectedComposeFiles = $state<DetectedComposeFiles | null>(null);
-  let isDetectingCompose = $state(false);
+  let isDetectingCompose = $state(true);
   let composeReplacements = $state<ComposeNameReplacement[]>([]);
 
   // Settings save mutex to prevent concurrent read-modify-write races
@@ -227,18 +227,21 @@
       }
     );
 
-    await loadWorktrees();
-    await loadBranches();
-    await loadContext();
-    await loadCopySettings();
-    await loadInitCommands();
-    await loadPortConfig();
-    await loadComposeConfig();
-    await detectPackageManagers();
-    await detectPortsForWorktree();
-    await detectComposeFilesForWorktree();
-
+    // Load only essential data for panel display, everything else loads lazily
+    await Promise.all([loadWorktrees(), loadBranches(), loadContext()]);
     isInitializing = false;
+
+    // Load remaining data in background (needed for footer stats, settings, and creation)
+    loadCopySettings().catch(console.error);
+    loadInitCommands().catch(console.error);
+    loadGitignoreRules().catch(console.error);
+    // Detection depends on config being loaded first
+    loadPortConfig()
+      .then(() => detectPortsForWorktree())
+      .catch(console.error);
+    loadComposeConfig()
+      .then(() => detectComposeFilesForWorktree())
+      .catch(console.error);
   });
 
   async function loadContext() {
@@ -252,9 +255,9 @@
   async function loadCopySettings() {
     try {
       const settings = await loadProjectSettings(projectPath);
-      userCopyPatterns = settings.worktreeCopyPatterns;
+      disabledCopyRules = settings.worktreeDisabledCopyRules ?? [];
     } catch {
-      userCopyPatterns = [];
+      disabledCopyRules = [];
     }
   }
 
@@ -262,7 +265,7 @@
     await withSettingsLock(async () => {
       try {
         const settings = await loadProjectSettings(projectPath);
-        settings.worktreeCopyPatterns = userCopyPatterns;
+        settings.worktreeDisabledCopyRules = disabledCopyRules;
         await saveProjectSettings(projectPath, settings);
       } catch (e) {
         console.error('Failed to save copy settings:', e);
@@ -270,33 +273,37 @@
     });
   }
 
-  function addCopyPattern() {
-    const pattern = newCopyPattern.trim();
-    if (!pattern) return;
-    if (userCopyPatterns.includes(pattern)) {
-      newCopyPattern = '';
-      return;
+  async function loadGitignoreRules() {
+    isLoadingRules = true;
+    try {
+      gitignoreRules = await worktreeService.listGitignoreRules(projectPath);
+    } catch {
+      gitignoreRules = [];
+    } finally {
+      isLoadingRules = false;
     }
-    if (DEFAULT_WORKTREE_COPY_PATTERNS.includes(pattern)) {
-      newCopyPattern = '';
-      return;
-    }
-    userCopyPatterns = [...userCopyPatterns, pattern];
-    newCopyPattern = '';
-    saveCopySettings();
   }
 
-  function removeCopyPattern(pattern: string) {
-    userCopyPatterns = userCopyPatterns.filter((p) => p !== pattern);
+  function toggleCopyRule(pattern: string) {
+    if (disabledCopyRules.includes(pattern)) {
+      disabledCopyRules = disabledCopyRules.filter((r) => r !== pattern);
+    } else {
+      disabledCopyRules = [...disabledCopyRules, pattern];
+    }
     saveCopySettings();
   }
 
   async function loadInitCommands() {
     try {
       const settings = await loadProjectSettings(projectPath);
-      initCommands = settings.worktreeInitCommands;
+      // Filter out legacy auto-detected commands (from before simplification)
+      initCommands = settings.worktreeInitCommands.filter(
+        (c) => !(c as Record<string, unknown>).auto
+      );
     } catch {
       initCommands = [];
+    } finally {
+      isLoadingCommands = false;
     }
   }
 
@@ -310,14 +317,6 @@
         console.error('Failed to save init commands:', e);
       }
     });
-  }
-
-  async function detectPackageManagers() {
-    try {
-      detectedPackageManagers = await worktreeService.detectPackageManagers(projectPath);
-    } catch {
-      detectedPackageManagers = [];
-    }
   }
 
   async function loadPortConfig() {
@@ -371,6 +370,7 @@
   async function detectPortsForWorktree(): Promise<void> {
     if (!portConfig?.enabled) {
       detectedPorts = null;
+      isDetectingPorts = false;
       return;
     }
     isDetectingPorts = true;
@@ -509,30 +509,12 @@
 
   // Counts for execution summary
   function getCopyFileCount(): number {
-    // Default patterns + user patterns + enabled target files (for port isolation)
-    const regularPatterns = DEFAULT_WORKTREE_COPY_PATTERNS.length + userCopyPatterns.length;
-    const disabledFiles = portConfig?.disabledTargetFiles ?? [];
-    const enabledTargetFiles = (portConfig?.targetFiles ?? DEFAULT_TARGET_FILES).filter(
-      (f) => !disabledFiles.includes(f)
-    );
-    return regularPatterns + enabledTargetFiles.length;
+    // Count of enabled gitignore rules
+    return gitignoreRules.filter((r) => !disabledCopyRules.includes(r.pattern)).length;
   }
 
   function getEnabledCommandCount(): number {
-    let count = 0;
-    // Check auto-detected package managers
-    for (const pm of detectedPackageManagers) {
-      const autoOverride = initCommands.find((c) => c.command === pm.command && c.auto);
-      if (autoOverride) {
-        if (autoOverride.enabled) count++;
-      } else {
-        const hasUserOverride = initCommands.some((c) => c.command === pm.command);
-        if (!hasUserOverride) count++;
-      }
-    }
-    // Count enabled user commands (exclude auto overrides, already counted above)
-    count += initCommands.filter((c) => c.enabled && !c.auto).length;
-    return count;
+    return initCommands.filter((c) => c.enabled).length;
   }
 
   function getPortCount(): number {
@@ -542,39 +524,13 @@
 
   // Tooltip descriptions for execution summary
   function getCopyFilesTooltip(): string {
-    const patterns: string[] = [];
-    // Default patterns
-    patterns.push(...DEFAULT_WORKTREE_COPY_PATTERNS);
-    // User patterns
-    patterns.push(...userCopyPatterns);
-    // Enabled target files
-    const disabledFiles = portConfig?.disabledTargetFiles ?? [];
-    const enabledTargetFiles = (portConfig?.targetFiles ?? DEFAULT_TARGET_FILES).filter(
-      (f) => !disabledFiles.includes(f)
-    );
-    patterns.push(...enabledTargetFiles);
-
-    if (patterns.length === 0) return 'No files to copy';
-    return `Copy to worktree:\n${patterns.map((p) => `  ${p}`).join('\n')}`;
+    const enabledRules = gitignoreRules.filter((r) => !disabledCopyRules.includes(r.pattern));
+    if (enabledRules.length === 0) return 'No files to copy';
+    return `Copy to worktree:\n${enabledRules.map((r) => `  ${r.pattern}`).join('\n')}`;
   }
 
   function getCommandsTooltip(): string {
-    const commands: string[] = [];
-    // Auto-detected package managers
-    for (const pm of detectedPackageManagers) {
-      const autoOverride = initCommands.find((c) => c.command === pm.command && c.auto);
-      if (autoOverride) {
-        if (autoOverride.enabled) commands.push(pm.command);
-      } else {
-        const hasUserOverride = initCommands.some((c) => c.command === pm.command);
-        if (!hasUserOverride) commands.push(pm.command);
-      }
-    }
-    // User commands (exclude auto overrides, already handled above)
-    for (const cmd of initCommands.filter((c) => c.enabled && !c.auto)) {
-      commands.push(cmd.command);
-    }
-
+    const commands = initCommands.filter((c) => c.enabled).map((c) => c.command);
     if (commands.length === 0) return 'No commands to run';
     return `Run after creation:\n${commands.map((c) => `  ${c}`).join('\n')}`;
   }
@@ -695,6 +651,7 @@
     if (!composeConfig?.enabled) {
       detectedComposeFiles = null;
       composeReplacements = [];
+      isDetectingCompose = false;
       return;
     }
     isDetectingCompose = true;
@@ -780,8 +737,13 @@
     return detectedComposeFiles.files.reduce((sum, f) => sum + f.warnings.length, 0);
   }
 
-  function openComposeSettings() {
+  function openSettingsModal() {
     showCopySettingsModal = true;
+    loadGitignoreRules();
+  }
+
+  function openComposeSettings() {
+    openSettingsModal();
     // Scroll to compose isolation section after modal renders
     requestAnimationFrame(() => {
       const section = document.getElementById('compose-isolation-section');
@@ -809,7 +771,6 @@
         name,
         command,
         enabled: true,
-        auto: false,
       },
     ];
     newInitCommandName = '';
@@ -829,76 +790,8 @@
     saveInitCommands();
   }
 
-  function toggleAutoCommand(pm: PackageManager) {
-    const existing = initCommands.find((c) => c.command === pm.command && c.auto);
-    if (existing) {
-      // Already overridden: toggle enabled state
-      initCommands = initCommands.map((c) =>
-        c.command === pm.command && c.auto ? { ...c, enabled: !c.enabled } : c
-      );
-    } else {
-      // First disable: add as disabled auto command
-      const cdMatch = pm.command.match(/^cd (.+?) && /);
-      const label = cdMatch ? `${pm.name} in ${cdMatch[1]}` : pm.name;
-      const baseName = pm.name === 'husky' ? 'Initialize git hooks' : 'Install dependencies';
-      initCommands = [
-        ...initCommands,
-        {
-          name: `${baseName} (${label})`,
-          command: pm.command,
-          enabled: false,
-          auto: true,
-        },
-      ];
-    }
-    saveInitCommands();
-  }
-
   function getEffectiveInitCommands(): WorktreeInitCommand[] {
-    const commands: WorktreeInitCommand[] = [];
-    const deferredCommands: WorktreeInitCommand[] = [];
-
-    // Add all auto-detected package managers in detection order.
-    // If a command was toggled (saved in initCommands as auto override),
-    // use the override's enabled state but keep the original position.
-    // Husky is deferred to run after all package install commands.
-    for (const pm of detectedPackageManagers) {
-      const autoOverride = initCommands.find((c) => c.command === pm.command && c.auto);
-      const hasUserOverride = initCommands.some((c) => c.command === pm.command && !c.auto);
-      if (hasUserOverride) continue; // User added their own command for this
-
-      const cdMatch = pm.command.match(/^cd (.+?) && /);
-      const label = cdMatch ? `${pm.name} in ${cdMatch[1]}` : pm.name;
-      const baseName = pm.name === 'husky' ? 'Initialize git hooks' : 'Install dependencies';
-      const entry: WorktreeInitCommand = {
-        name: `${baseName} (${label})`,
-        command: pm.command,
-        enabled: autoOverride ? autoOverride.enabled : true,
-        auto: true,
-      };
-      if (pm.name === 'husky') {
-        deferredCommands.push(entry);
-      } else {
-        commands.push(entry);
-      }
-    }
-
-    // Add husky after all auto-detected package install commands
-    commands.push(...deferredCommands);
-
-    // Add user-configured commands (non-auto only, auto overrides already handled above)
-    commands.push(...initCommands.filter((c) => !c.auto));
-
-    return commands;
-  }
-
-  /** Split "Install dependencies (npm)" → { baseName: "Install dependencies", suffix: "npm" } */
-  function splitCommandName(name: string): { baseName: string; suffix?: string } {
-    const match = name.match(/^(.+?)\s*\((.+)\)$/);
-    if (match) {
-      return { baseName: match[1].trim(), suffix: match[2] };
-    }
-    return { baseName: name };
+    return initCommands.filter((c) => c.enabled);
   }
 
   function buildCreationTaskList(
@@ -937,12 +830,10 @@
     }
 
     effectiveCommands.forEach((cmd, index) => {
-      const { baseName, suffix } = splitCommandName(cmd.name);
       tasks.push({
         id: `init-${index}`,
-        name: baseName,
+        name: cmd.name,
         status: 'pending',
-        detail: suffix,
       });
     });
 
@@ -959,12 +850,10 @@
     const tasks: ProgressTask[] = [];
 
     effectiveCommands.forEach((cmd, index) => {
-      const { baseName, suffix } = splitCommandName(cmd.name);
       tasks.push({
         id: `init-${index}`,
-        name: baseName,
+        name: cmd.name,
         status: 'pending',
-        detail: suffix,
       });
     });
 
@@ -1047,7 +936,12 @@
     creationCancelled = false;
 
     const branchName = createName.trim();
-    const effectiveCommands = getEffectiveInitCommands().filter((c) => c.enabled);
+    const effectiveCommands = getEffectiveInitCommands();
+
+    // Ensure gitignore rules are loaded before creation
+    if (gitignoreRules.length === 0) {
+      await loadGitignoreRules();
+    }
 
     // Build and display the full task list immediately
     const currentPortAssignments = portConfig?.enabled ? portAssignments : [];
@@ -1088,28 +982,30 @@
       await forceUIUpdate();
       await pauseBetweenTasks();
 
-      // Step 2: Copy files
+      // Step 2: Copy files (gitignore-based)
       updateTask('copy', 'running');
       await forceUIUpdate();
       let copyFailed = false;
-      const regularCopyPatterns = [...DEFAULT_WORKTREE_COPY_PATTERNS, ...userCopyPatterns];
-      const disabledFiles = portConfig?.disabledTargetFiles ?? [];
-      const enabledTargetFiles = (portConfig?.targetFiles ?? DEFAULT_TARGET_FILES).filter(
-        (f) => !disabledFiles.includes(f)
-      );
-      const allPatterns = [...new Set([...regularCopyPatterns, ...enabledTargetFiles])];
-      if (allPatterns.length > 0) {
+      const enabledGitignorePatterns = gitignoreRules
+        .filter((r) => !disabledCopyRules.includes(r.pattern))
+        .map((r) => r.pattern);
+      if (enabledGitignorePatterns.length > 0) {
         try {
           let copyResult;
           if (hasPortAssignments) {
+            // Copy with port transformation
             copyResult = await portIsolationService.copyFilesWithPorts(
               currentProjectPath,
               wt.path,
-              allPatterns,
+              enabledGitignorePatterns,
               currentPortAssignments
             );
           } else {
-            copyResult = await worktreeService.copyFiles(currentProjectPath, wt.path, allPatterns);
+            copyResult = await worktreeService.copyGitignoredFiles(
+              currentProjectPath,
+              wt.path,
+              enabledGitignorePatterns
+            );
           }
           const copiedCount = copyResult.copied_files.length;
           const transformedCount = copyResult.transformed_files?.length ?? 0;
@@ -1127,7 +1023,7 @@
           copyFailed = true;
         }
       } else {
-        updateTask('copy', 'completed', 'No copy patterns configured');
+        updateTask('copy', 'completed', 'No copy rules enabled');
       }
       await forceUIUpdate();
       await pauseBetweenTasks();
@@ -1295,7 +1191,7 @@
 
     // For clicking on existing worktrees, run init commands first
     openCancelled = false;
-    const effectiveCommands = getEffectiveInitCommands().filter((c) => c.enabled);
+    const effectiveCommands = getEffectiveInitCommands();
 
     progressTasks = buildOpenTaskList(effectiveCommands);
     isProgressActive = true;
@@ -1390,7 +1286,7 @@
         <div class="header-actions">
           <button
             class="action-btn settings-btn"
-            onclick={() => (showCopySettingsModal = true)}
+            onclick={() => openSettingsModal()}
             title="Settings"
           >
             <svg
@@ -1644,7 +1540,7 @@
           <button
             type="button"
             class="init-settings-btn"
-            onclick={() => (showCopySettingsModal = true)}
+            onclick={() => openSettingsModal()}
             title="Settings"
           >
             <svg
@@ -1665,39 +1561,24 @@
         <div class="init-content">
           <div class="init-stats">
             <span class="stat-item has-tooltip">
-              <svg
-                class="stat-icon stat-files"
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <rect x="8" y="2" width="13" height="18" rx="2" />
-                <path d="M16 2v4a2 2 0 0 0 2 2h4" />
-                <path d="M5 10H3a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2" />
-              </svg>
+              {#if isLoadingRules}
+                <span class="stat-spinner"></span>
+              {:else}
+                <span class="stat-check">&#10003;</span>
+              {/if}
               <span class="stat-text"
                 >{getCopyFileCount()}
-                {getCopyFileCount() === 1 ? 'file' : 'files'}
+                {getCopyFileCount() === 1 ? 'rule' : 'rules'}
                 <span class="stat-verb">copy</span></span
               >
               <span class="tooltip">{getCopyFilesTooltip()}</span>
             </span>
             <span class="stat-item has-tooltip">
-              <svg
-                class="stat-icon stat-commands"
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <polyline points="4 17 10 11 4 5" />
-                <line x1="12" y1="19" x2="20" y2="19" />
-              </svg>
+              {#if isLoadingCommands}
+                <span class="stat-spinner"></span>
+              {:else}
+                <span class="stat-check">&#10003;</span>
+              {/if}
               <span class="stat-text"
                 >{getEnabledCommandCount()}
                 {getEnabledCommandCount() === 1 ? 'command' : 'commands'}
@@ -1706,20 +1587,11 @@
               <span class="tooltip">{getCommandsTooltip()}</span>
             </span>
             <span class="stat-item has-tooltip">
-              <svg
-                class="stat-icon stat-ports"
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <circle cx="12" cy="12" r="3" />
-                <path
-                  d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"
-                />
-              </svg>
+              {#if isDetectingPorts}
+                <span class="stat-spinner"></span>
+              {:else}
+                <span class="stat-check">&#10003;</span>
+              {/if}
               <span class="stat-text"
                 >{getPortCount()}
                 {getPortCount() === 1 ? 'port' : 'ports'}
@@ -1728,21 +1600,11 @@
               <span class="tooltip">{getPortsTooltip()}</span>
             </span>
             <span class="stat-item has-tooltip">
-              <svg
-                class="stat-icon stat-compose"
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path
-                  d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
-                />
-                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-                <line x1="12" y1="22.08" x2="12" y2="12" />
-              </svg>
+              {#if isDetectingCompose}
+                <span class="stat-spinner"></span>
+              {:else}
+                <span class="stat-check">&#10003;</span>
+              {/if}
               <span class="stat-text"
                 >{getComposeCount()}
                 {getComposeCount() === 1 ? 'compose file' : 'compose files'}
@@ -1859,70 +1721,34 @@
         <div class="settings-section">
           <div class="settings-section-title">Copy files</div>
           <p class="settings-section-description">
-            Files matching these patterns will be copied from the main repository when creating a
-            new worktree.
+            Files matching .gitignore rules will be copied from the main repository. Disable rules
+            to exclude specific patterns.
           </p>
 
-          <!-- Default patterns (cannot be removed) -->
-          {#each DEFAULT_WORKTREE_COPY_PATTERNS as pattern (pattern)}
-            <div class="pattern-item pattern-default">
-              <span class="pattern-text">{pattern}</span>
-              <span class="pattern-badge">default</span>
-            </div>
-          {/each}
-
-          <!-- User patterns (can be removed) -->
-          {#each userCopyPatterns as pattern (pattern)}
-            <div class="pattern-item pattern-user">
-              <span class="pattern-text">{pattern}</span>
-              <button
-                type="button"
-                class="pattern-remove"
-                onclick={() => removeCopyPattern(pattern)}
-                title="Remove pattern"
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
+          {#if isLoadingRules}
+            <div class="settings-loading">Loading gitignore rules...</div>
+          {:else if gitignoreRules.length === 0}
+            <div class="settings-empty">No .gitignore rules found</div>
+          {:else}
+            {#each gitignoreRules as rule (rule.pattern + ':' + rule.source_file)}
+              {@const isEnabled = !disabledCopyRules.includes(rule.pattern)}
+              <div class="command-item" class:command-disabled={!isEnabled}>
+                <input
+                  type="checkbox"
+                  class="command-checkbox"
+                  checked={isEnabled}
+                  onchange={() => toggleCopyRule(rule.pattern)}
+                />
+                <div class="command-info">
+                  <span class="command-name">{rule.pattern}</span>
+                </div>
+                <span
+                  style="font-size: 8px; color: var(--text-tertiary); margin-left: auto; flex-shrink: 0;"
+                  >{rule.source_file}</span
                 >
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
-            </div>
-          {/each}
-
-          <!-- Add new pattern -->
-          <div class="pattern-add">
-            <input
-              type="text"
-              class="pattern-input"
-              bind:value={newCopyPattern}
-              placeholder="Add pattern (e.g. config/*.local)"
-              spellcheck="false"
-              autocomplete="off"
-              autocorrect="off"
-              autocapitalize="off"
-              onkeydown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  addCopyPattern();
-                }
-              }}
-            />
-            <button
-              type="button"
-              class="pattern-add-btn"
-              onclick={() => addCopyPattern()}
-              disabled={!newCopyPattern.trim()}
-            >
-              Add
-            </button>
-          </div>
+              </div>
+            {/each}
+          {/if}
         </div>
 
         <!-- Initialization Commands Section -->
@@ -1932,32 +1758,8 @@
             These commands will run in the new worktree after creation.
           </p>
 
-          <!-- Auto-detected package managers -->
-          {#each detectedPackageManagers as pm (pm.command)}
-            {@const autoOverride = initCommands.find((c) => c.command === pm.command && c.auto)}
-            {@const hasUserOverride = initCommands.some((c) => c.command === pm.command && !c.auto)}
-            {@const cdMatch = pm.command.match(/^cd (.+?) && /)}
-            {@const label = cdMatch ? `${pm.name} in ${cdMatch[1]}` : pm.name}
-            {@const isEnabled = autoOverride ? autoOverride.enabled : true}
-            {#if !hasUserOverride}
-              <div class="command-item command-auto" class:command-disabled={!isEnabled}>
-                <input
-                  type="checkbox"
-                  class="command-checkbox"
-                  checked={isEnabled}
-                  onchange={() => toggleAutoCommand(pm)}
-                />
-                <div class="command-info">
-                  <span class="command-name">Install dependencies ({label})</span>
-                  <span class="command-value">{pm.command}</span>
-                </div>
-                <span class="pattern-badge">auto</span>
-              </div>
-            {/if}
-          {/each}
-
           <!-- User-configured commands -->
-          {#each initCommands.filter((c) => !c.auto) as cmd (cmd.command)}
+          {#each initCommands as cmd (cmd.command)}
             <div class="command-item command-user">
               <input
                 type="checkbox"
@@ -2521,6 +2323,29 @@
     top: 2px;
   }
 
+  .stat-spinner {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid var(--text-muted);
+    border-top-color: var(--accent-color);
+    border-radius: 50%;
+    animation: stat-spin 0.6s linear infinite;
+    flex-shrink: 0;
+  }
+
+  @keyframes stat-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .stat-check {
+    color: var(--accent-color);
+    font-size: 10px;
+    flex-shrink: 0;
+    opacity: 0.8;
+  }
+
   .stat-text {
     color: var(--text-secondary);
   }
@@ -3082,6 +2907,14 @@
     line-height: 1.5;
   }
 
+  .settings-loading,
+  .settings-empty {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: var(--space-3);
+    text-align: center;
+  }
+
   .pattern-item {
     display: flex;
     align-items: center;
@@ -3570,19 +3403,6 @@
     background: var(--bg-secondary);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
-  }
-
-  .command-auto {
-    opacity: 0.85;
-  }
-
-  .command-auto.command-disabled {
-    opacity: 0.4;
-  }
-
-  .command-auto.command-disabled .command-name,
-  .command-auto.command-disabled .command-value {
-    text-decoration: line-through;
   }
 
   .command-checkbox {
