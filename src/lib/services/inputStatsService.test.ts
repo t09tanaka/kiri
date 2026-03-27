@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createInputStatsService, normalizeText } from './inputStatsService';
+import { createInputStatsService, MAX_RECORDS, normalizeText } from './inputStatsService';
 
 // ============================================================================
 // normalizeText
@@ -160,5 +160,74 @@ describe('createInputStatsService - getRecords / setRecords', () => {
     const service = createInputStatsService(initial);
     expect(service.getRecords()).toHaveLength(1);
     expect(service.getRecords()[0].count).toBe(3);
+  });
+});
+
+// ============================================================================
+// Eviction (Task 3)
+// ============================================================================
+
+describe('createInputStatsService - eviction', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('MAX_RECORDS is 1000', () => {
+    expect(MAX_RECORDS).toBe(1000);
+  });
+
+  it('evicts when exceeding MAX_RECORDS: new entry exists, oldest-lowest removed', () => {
+    vi.setSystemTime(1);
+    const initial = Array.from({ length: MAX_RECORDS }, (_, i) => ({
+      text: `entry-${i}`,
+      rawText: `entry-${i}`,
+      count: 1,
+      lastUsed: 1,
+      firstSeen: 1,
+      dismissedAt: null,
+    }));
+    const service = createInputStatsService(initial);
+    vi.setSystemTime(2);
+    service.record('new-entry');
+    const records = service.getRecords();
+    expect(records).toHaveLength(MAX_RECORDS);
+    expect(records.some((r) => r.text === 'new-entry')).toBe(true);
+    expect(records.some((r) => r.text === 'entry-0')).toBe(false);
+  });
+
+  it('evicts by lowest count first (not just oldest)', () => {
+    const initial = Array.from({ length: MAX_RECORDS }, (_, i) => ({
+      text: `entry-${i}`,
+      rawText: `entry-${i}`,
+      count: i === 0 ? 1 : 2,
+      lastUsed: i + 1,
+      firstSeen: 1,
+      dismissedAt: null,
+    }));
+    const service = createInputStatsService(initial);
+    service.record('new-entry');
+    const records = service.getRecords();
+    expect(records.some((r) => r.text === 'entry-0')).toBe(false);
+    expect(records.some((r) => r.text === 'new-entry')).toBe(true);
+  });
+
+  it('evicts by oldest lastUsed when counts are tied', () => {
+    const initial = Array.from({ length: MAX_RECORDS }, (_, i) => ({
+      text: `entry-${i}`,
+      rawText: `entry-${i}`,
+      count: 1,
+      lastUsed: i + 1,
+      firstSeen: 1,
+      dismissedAt: null,
+    }));
+    const service = createInputStatsService(initial);
+    service.record('new-entry');
+    const records = service.getRecords();
+    expect(records.some((r) => r.text === 'entry-0')).toBe(false);
+    expect(records.some((r) => r.text === 'new-entry')).toBe(true);
   });
 });

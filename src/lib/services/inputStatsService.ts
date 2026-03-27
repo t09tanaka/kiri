@@ -1,6 +1,12 @@
 import type { InputRecord } from './persistenceService';
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+export const MAX_RECORDS = 1000;
+
+// ============================================================================
 // normalizeText
 // ============================================================================
 
@@ -48,6 +54,23 @@ export function createInputStatsService(initialRecords?: InputRecord[]): InputSt
           firstSeen: now,
           dismissedAt: null,
         });
+
+        // Evict if over the limit
+        if (records.length > MAX_RECORDS) {
+          // Find the entry with the lowest count; ties broken by oldest lastUsed
+          let evictIndex = 0;
+          for (let i = 1; i < records.length; i++) {
+            const candidate = records[i];
+            const current = records[evictIndex];
+            if (
+              candidate.count < current.count ||
+              (candidate.count === current.count && candidate.lastUsed < current.lastUsed)
+            ) {
+              evictIndex = i;
+            }
+          }
+          records.splice(evictIndex, 1);
+        }
       }
     },
 
