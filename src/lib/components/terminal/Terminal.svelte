@@ -842,6 +842,8 @@
     });
     // Observe the wrapper element which is the direct child of the split pane
     resizeObserver.observe(terminalWrapper);
+    // Also observe the padding element to detect size changes from shortcut bar visibility
+    resizeObserver.observe(terminalPadding);
 
     // Also listen for window resize as a fallback
     window.addEventListener('resize', handleResize);
