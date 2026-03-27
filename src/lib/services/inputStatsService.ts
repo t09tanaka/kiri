@@ -1,3 +1,4 @@
+import type { ShortcutType } from '@/lib/stores/shortcutStore.svelte';
 import type { InputRecord } from './persistenceService';
 
 // ============================================================================
@@ -121,4 +122,16 @@ export function createInputStatsService(initialRecords?: InputRecord[]): InputSt
       records = records.filter((r) => r.text !== normalizedText);
     },
   };
+}
+
+// ============================================================================
+// detectShortcutType (Task 5)
+// ============================================================================
+
+/**
+ * Detects the ShortcutType for a given text.
+ * Commands start with '/', replies are everything else.
+ */
+export function detectShortcutType(text: string): ShortcutType {
+  return text.startsWith('/') ? 'command' : 'reply';
 }

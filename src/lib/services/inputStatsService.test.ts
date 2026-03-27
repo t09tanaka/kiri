@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createInputStatsService, MAX_RECORDS, normalizeText } from './inputStatsService';
+import {
+  createInputStatsService,
+  detectShortcutType,
+  MAX_RECORDS,
+  normalizeText,
+} from './inputStatsService';
 
 // ============================================================================
 // normalizeText
@@ -398,5 +403,27 @@ describe('createInputStatsService - dismiss / removeSuggestion', () => {
     ]);
     service.removeSuggestion('hello');
     expect(service.getRecords()).toHaveLength(0);
+  });
+});
+
+// ============================================================================
+// detectShortcutType (Task 5)
+// ============================================================================
+
+describe('detectShortcutType', () => {
+  it('returns "command" for text starting with /', () => {
+    expect(detectShortcutType('/commit')).toBe('command');
+  });
+
+  it('returns "reply" for text not starting with /', () => {
+    expect(detectShortcutType('continue')).toBe('reply');
+  });
+
+  it('returns "reply" for non-ASCII text', () => {
+    expect(detectShortcutType('テスト実行して')).toBe('reply');
+  });
+
+  it('returns "command" for bare slash', () => {
+    expect(detectShortcutType('/')).toBe('command');
   });
 });
