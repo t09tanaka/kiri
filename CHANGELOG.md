@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-03-27
+
+### Changed
+
+#### Worktree
+- Replace glob-based copy patterns with .gitignore-based file copying
+  - Automatically detects all .gitignore rules (root + nested)
+  - Each rule can be toggled ON/OFF in Settings
+  - Copies all gitignored files (node_modules, dist, .env, etc.) instead of running npm install
+- Remove auto-detected package manager initialization commands
+  - Only user-defined commands are shown and executed
+- Instant panel startup with lazy background data loading
+  - Footer stats show spinner→checkmark as each item loads
+
+### Fixed
+
+#### Terminal
+- Observe terminalPadding to refit on shortcut bar visibility change
+
+### Added
+
+#### Shortcuts
+- Add number row (1, 2, 3) for quick selection in shortcut bar
+
 ## [0.1.0] - 2026-03-22
 
 First feature-complete milestone release.
