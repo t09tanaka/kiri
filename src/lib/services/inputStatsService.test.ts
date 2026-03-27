@@ -231,3 +231,172 @@ describe('createInputStatsService - eviction', () => {
     expect(records.some((r) => r.text === 'new-entry')).toBe(true);
   });
 });
+
+// ============================================================================
+// getSuggestions (Task 4)
+// ============================================================================
+
+describe('createInputStatsService - getSuggestions', () => {
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  const NOW = 1_000_000_000_000;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('suggests entries with count >= 3 within 7 days', () => {
+    const service = createInputStatsService([
+      {
+        text: 'hello',
+        rawText: 'hello',
+        count: 3,
+        lastUsed: NOW,
+        firstSeen: NOW,
+        dismissedAt: null,
+      },
+    ]);
+    const suggestions = service.getSuggestions([]);
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0].text).toBe('hello');
+  });
+
+  it('does NOT suggest entries with count < 3', () => {
+    const service = createInputStatsService([
+      {
+        text: 'hello',
+        rawText: 'hello',
+        count: 2,
+        lastUsed: NOW,
+        firstSeen: NOW,
+        dismissedAt: null,
+      },
+    ]);
+    expect(service.getSuggestions([])).toHaveLength(0);
+  });
+
+  it('does NOT suggest entries older than 7 days', () => {
+    const service = createInputStatsService([
+      {
+        text: 'hello',
+        rawText: 'hello',
+        count: 5,
+        lastUsed: NOW - SEVEN_DAYS_MS - 1,
+        firstSeen: NOW - SEVEN_DAYS_MS - 1,
+        dismissedAt: null,
+      },
+    ]);
+    expect(service.getSuggestions([])).toHaveLength(0);
+  });
+
+  it('does NOT suggest if text matches existing shortcut (case-insensitive)', () => {
+    const service = createInputStatsService([
+      {
+        text: 'continue',
+        rawText: 'continue',
+        count: 5,
+        lastUsed: NOW,
+        firstSeen: NOW,
+        dismissedAt: null,
+      },
+    ]);
+    expect(service.getSuggestions(['Continue'])).toHaveLength(0);
+  });
+
+  it('does NOT suggest during cooldown (dismissed within 7 days)', () => {
+    const service = createInputStatsService([
+      {
+        text: 'hello',
+        rawText: 'hello',
+        count: 5,
+        lastUsed: NOW,
+        firstSeen: NOW,
+        dismissedAt: NOW - SEVEN_DAYS_MS + 1000,
+      },
+    ]);
+    expect(service.getSuggestions([])).toHaveLength(0);
+  });
+
+  it('re-suggests after cooldown expires (dismissed > 7 days ago)', () => {
+    const service = createInputStatsService([
+      {
+        text: 'hello',
+        rawText: 'hello',
+        count: 5,
+        lastUsed: NOW,
+        firstSeen: NOW,
+        dismissedAt: NOW - SEVEN_DAYS_MS - 1,
+      },
+    ]);
+    expect(service.getSuggestions([])).toHaveLength(1);
+  });
+
+  it('returns max 5 suggestions sorted by count desc', () => {
+    const records = Array.from({ length: 8 }, (_, i) => ({
+      text: `entry-${i}`,
+      rawText: `entry-${i}`,
+      count: i + 3,
+      lastUsed: NOW,
+      firstSeen: NOW,
+      dismissedAt: null,
+    }));
+    const service = createInputStatsService(records);
+    const suggestions = service.getSuggestions([]);
+    expect(suggestions).toHaveLength(5);
+    expect(suggestions[0].count).toBeGreaterThanOrEqual(suggestions[1].count);
+    expect(suggestions[1].count).toBeGreaterThanOrEqual(suggestions[2].count);
+    expect(suggestions[2].count).toBeGreaterThanOrEqual(suggestions[3].count);
+    expect(suggestions[3].count).toBeGreaterThanOrEqual(suggestions[4].count);
+  });
+});
+
+// ============================================================================
+// dismiss / removeSuggestion (Task 4)
+// ============================================================================
+
+describe('createInputStatsService - dismiss / removeSuggestion', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('dismiss sets dismissedAt to Date.now()', () => {
+    const now = 9999999;
+    vi.setSystemTime(now);
+    const service = createInputStatsService([
+      {
+        text: 'hello',
+        rawText: 'hello',
+        count: 5,
+        lastUsed: now,
+        firstSeen: now,
+        dismissedAt: null,
+      },
+    ]);
+    service.dismiss('hello');
+    const records = service.getRecords();
+    expect(records[0].dismissedAt).toBe(now);
+  });
+
+  it('removeSuggestion removes the record entirely', () => {
+    const service = createInputStatsService([
+      {
+        text: 'hello',
+        rawText: 'hello',
+        count: 5,
+        lastUsed: 1000,
+        firstSeen: 1000,
+        dismissedAt: null,
+      },
+    ]);
+    service.removeSuggestion('hello');
+    expect(service.getRecords()).toHaveLength(0);
+  });
+});

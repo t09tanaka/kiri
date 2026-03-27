@@ -6,6 +6,11 @@ import type { InputRecord } from './persistenceService';
 
 export const MAX_RECORDS = 1000;
 
+const MIN_COUNT = 3;
+const MAX_SUGGESTIONS = 5;
+const RECENCY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
 // ============================================================================
 // normalizeText
 // ============================================================================
@@ -25,6 +30,9 @@ export interface InputStatsService {
   record(rawInput: string): void;
   getRecords(): InputRecord[];
   setRecords(newRecords: InputRecord[]): void;
+  getSuggestions(existingShortcutTexts: string[]): InputRecord[];
+  dismiss(normalizedText: string): void;
+  removeSuggestion(normalizedText: string): void;
 }
 
 /**
@@ -80,6 +88,37 @@ export function createInputStatsService(initialRecords?: InputRecord[]): InputSt
 
     setRecords(newRecords: InputRecord[]): void {
       records = [...newRecords];
+    },
+
+    getSuggestions(existingShortcutTexts: string[]): InputRecord[] {
+      const now = Date.now();
+      const existingSet = new Set(existingShortcutTexts.map((t) => t.toLowerCase()));
+
+      return records
+        .filter((r) => {
+          // Must have at least MIN_COUNT uses
+          if (r.count < MIN_COUNT) return false;
+          // Must have been used within the recency window
+          if (now - r.lastUsed > RECENCY_WINDOW_MS) return false;
+          // Must not match an existing shortcut
+          if (existingSet.has(r.text)) return false;
+          // Must not be in cooldown
+          if (r.dismissedAt !== null && now - r.dismissedAt < COOLDOWN_MS) return false;
+          return true;
+        })
+        .sort((a, b) => b.count - a.count)
+        .slice(0, MAX_SUGGESTIONS);
+    },
+
+    dismiss(normalizedText: string): void {
+      const record = records.find((r) => r.text === normalizedText);
+      if (record) {
+        record.dismissedAt = Date.now();
+      }
+    },
+
+    removeSuggestion(normalizedText: string): void {
+      records = records.filter((r) => r.text !== normalizedText);
     },
   };
 }
