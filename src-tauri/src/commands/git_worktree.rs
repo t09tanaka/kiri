@@ -1,7 +1,6 @@
 use git2::Repository;
 use glob::glob;
 use serde::Serialize;
-use serde_json;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -40,18 +39,18 @@ pub struct CopyResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct PackageManager {
-    pub name: String,
-    pub lock_file: String,
-    pub command: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
 pub struct CommandOutput {
     pub success: bool,
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GitignoreRule {
+    pub pattern: String,
+    pub source_file: String,
+    pub matched_file_count: usize,
 }
 
 /// Get the default branch name for a repository.
@@ -640,250 +639,6 @@ pub fn copy_files_to_worktree(
     })
 }
 
-/// Directories to exclude when scanning subdirectories for package managers.
-const EXCLUDED_DIRS: &[&str] = &[
-    "node_modules",
-    ".git",
-    "target",
-    "dist",
-    "build",
-    "vendor",
-    "__pycache__",
-    ".venv",
-    "venv",
-    ".tox",
-    ".next",
-    ".nuxt",
-    "out",
-    "coverage",
-];
-
-/// Detect husky git hooks manager in a Node.js project directory.
-/// Returns the appropriate command based on the husky version:
-/// - v9+: `npx husky` (prepare script is `"husky"`)
-/// - v8 and earlier: `npx husky install` (prepare script is `"husky install"`)
-///
-/// Falls back to version detection from devDependencies if prepare script is absent.
-fn detect_husky_command(dir: &Path, command_prefix: &str) -> Option<PackageManager> {
-    let package_json_path = dir.join("package.json");
-    let content = fs::read_to_string(&package_json_path).ok()?;
-    let pkg: serde_json::Value = serde_json::from_str(&content).ok()?;
-
-    // Check if husky is in devDependencies or dependencies
-    let has_husky = pkg
-        .get("devDependencies")
-        .and_then(|d| d.get("husky"))
-        .or_else(|| pkg.get("dependencies").and_then(|d| d.get("husky")));
-
-    let husky_version_str = has_husky?.as_str().unwrap_or("");
-
-    // Determine command from prepare script first, then fall back to version string
-    let prepare_script = pkg
-        .get("scripts")
-        .and_then(|s| s.get("prepare"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    let command = if prepare_script == "husky" {
-        // v9+: prepare script is just "husky"
-        "npx husky"
-    } else if prepare_script == "husky install" || prepare_script.contains("husky install") {
-        // v8 and earlier
-        "npx husky install"
-    } else if is_husky_v9_or_later(husky_version_str) {
-        // No prepare script but version indicates v9+
-        "npx husky"
-    } else {
-        // Default to husky install for older versions
-        "npx husky install"
-    };
-
-    Some(PackageManager {
-        name: "husky".to_string(),
-        lock_file: ".husky".to_string(),
-        command: format!("{}{}", command_prefix, command),
-    })
-}
-
-/// Check if a semver version string indicates husky v9 or later.
-/// Handles formats like "^9.1.7", "~9.0.0", ">=9", "9.0.0", etc.
-fn is_husky_v9_or_later(version: &str) -> bool {
-    // Strip leading non-numeric characters (^, ~, >=, etc.)
-    let numeric_part = version.trim_start_matches(|c: char| !c.is_ascii_digit());
-    // Parse the major version
-    let major: u32 = numeric_part
-        .split('.')
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
-    major >= 9
-}
-
-/// Detect package managers in a single directory and return results.
-/// The `command_prefix` is prepended to commands (e.g., "cd subdir && " for subdirectories).
-fn detect_package_managers_in_dir(dir: &Path, command_prefix: &str) -> Vec<PackageManager> {
-    let mut results = Vec::new();
-
-    // Node.js ecosystem (priority: pnpm > yarn > bun > npm)
-    let nodejs_lock_files = [
-        ("pnpm-lock.yaml", "pnpm", "pnpm install"),
-        ("yarn.lock", "yarn", "yarn install"),
-        ("bun.lockb", "bun", "bun install"),
-        ("package-lock.json", "npm", "npm install"),
-    ];
-
-    let mut nodejs_found = false;
-    for (lock_file, name, command) in nodejs_lock_files {
-        if dir.join(lock_file).exists() {
-            results.push(PackageManager {
-                name: name.to_string(),
-                lock_file: lock_file.to_string(),
-                command: format!("{}{}", command_prefix, command),
-            });
-            nodejs_found = true;
-            break;
-        }
-    }
-
-    if !nodejs_found && dir.join("package.json").exists() {
-        results.push(PackageManager {
-            name: "npm".to_string(),
-            lock_file: "".to_string(),
-            command: format!("{}npm install", command_prefix),
-        });
-        nodejs_found = true;
-    }
-
-    // Husky (git hooks manager) - only when Node.js project is detected
-    if nodejs_found {
-        if let Some(husky_command) = detect_husky_command(dir, command_prefix) {
-            results.push(husky_command);
-        }
-    }
-
-    // Python ecosystem (priority: uv > poetry > pipenv > pip)
-    let python_candidates: &[(&[&str], &str, &str)] = &[
-        (&["uv.lock"], "uv", "uv sync"),
-        (&["poetry.lock"], "poetry", "poetry install"),
-        (&["Pipfile.lock", "Pipfile"], "pipenv", "pipenv install"),
-        (
-            &["requirements.txt"],
-            "pip",
-            "pip install -r requirements.txt",
-        ),
-    ];
-
-    for (files, name, command) in python_candidates {
-        if let Some(found_file) = files.iter().find(|f| dir.join(f).exists()) {
-            results.push(PackageManager {
-                name: name.to_string(),
-                lock_file: found_file.to_string(),
-                command: format!("{}{}", command_prefix, command),
-            });
-            break;
-        }
-    }
-
-    // Rust ecosystem
-    if dir.join("Cargo.toml").exists() {
-        results.push(PackageManager {
-            name: "cargo".to_string(),
-            lock_file: "Cargo.toml".to_string(),
-            command: format!("{}cargo build", command_prefix),
-        });
-    }
-
-    // Go ecosystem
-    if dir.join("go.mod").exists() {
-        results.push(PackageManager {
-            name: "go".to_string(),
-            lock_file: "go.mod".to_string(),
-            command: format!("{}go mod download", command_prefix),
-        });
-    }
-
-    // Ruby ecosystem
-    let ruby_files = ["Gemfile.lock", "Gemfile"];
-    if let Some(found_file) = ruby_files.iter().find(|f| dir.join(f).exists()) {
-        results.push(PackageManager {
-            name: "bundler".to_string(),
-            lock_file: found_file.to_string(),
-            command: format!("{}bundle install", command_prefix),
-        });
-    }
-
-    // PHP ecosystem
-    let php_files = ["composer.lock", "composer.json"];
-    if let Some(found_file) = php_files.iter().find(|f| dir.join(f).exists()) {
-        results.push(PackageManager {
-            name: "composer".to_string(),
-            lock_file: found_file.to_string(),
-            command: format!("{}composer install", command_prefix),
-        });
-    }
-
-    results
-}
-
-/// Detect all package managers by checking for lock files across multiple language ecosystems.
-/// Searches both the root directory and immediate subdirectories (1 level deep).
-/// Returns at most one result per language ecosystem per directory.
-///
-/// Supported ecosystems:
-/// - Node.js: pnpm > yarn > bun > npm
-/// - Python: uv > poetry > pipenv > pip
-/// - Rust: cargo
-/// - Go: go
-/// - Ruby: bundler
-/// - PHP: composer
-pub fn detect_package_managers(project_path: String) -> Result<Vec<PackageManager>, String> {
-    let path = Path::new(&project_path);
-
-    if !path.exists() {
-        return Err(format!("Path does not exist: {}", project_path));
-    }
-
-    // Detect in root directory (no command prefix)
-    let mut results = detect_package_managers_in_dir(path, "");
-
-    // Scan immediate subdirectories (1 level deep)
-    if let Ok(entries) = fs::read_dir(path) {
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            if !entry_path.is_dir() {
-                continue;
-            }
-
-            // Skip excluded directories
-            let dir_name = match entry_path.file_name().and_then(|n| n.to_str()) {
-                Some(name) => name.to_string(),
-                None => continue,
-            };
-
-            if dir_name.starts_with('.') && EXCLUDED_DIRS.contains(&dir_name.as_str()) {
-                continue;
-            }
-            if EXCLUDED_DIRS.contains(&dir_name.as_str()) {
-                continue;
-            }
-
-            let prefix = format!("cd '{}' && ", dir_name.replace('\'', "'\\''"));
-            let subdir_results = detect_package_managers_in_dir(&entry_path, &prefix);
-            results.extend(subdir_results);
-        }
-    }
-
-    Ok(results)
-}
-
-/// Detect package manager by checking for lock files in the project directory.
-/// Returns the first detected package manager (backward compatible wrapper).
-/// Priority order: pnpm > yarn > bun > npm
-pub fn detect_package_manager(project_path: String) -> Result<Option<PackageManager>, String> {
-    let results = detect_package_managers(project_path)?;
-    Ok(results.into_iter().next())
-}
-
 /// Run an initialization command in the specified directory.
 /// Returns the command output including stdout, stderr, and exit code.
 pub fn run_init_command(cwd: String, command: String) -> Result<CommandOutput, String> {
@@ -922,6 +677,221 @@ pub fn run_init_command(cwd: String, command: String) -> Result<CommandOutput, S
         stderr,
         exit_code,
     })
+}
+
+/// Recursively finds all .gitignore files in dir, skipping .git, node_modules, and .svelte-kit.
+/// Paths are collected relative to repo_root for use as source_file.
+fn collect_gitignore_files(dir: &Path, repo_root: &Path, result: &mut Vec<std::path::PathBuf>) {
+    let read_dir = match fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            if path.file_name().and_then(|n| n.to_str()) == Some(".gitignore") {
+                result.push(path);
+            }
+        } else if path.is_dir() {
+            let dir_name = match path.file_name().and_then(|n| n.to_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            // Skip special directories
+            if dir_name == ".git" || dir_name == "node_modules" || dir_name == ".svelte-kit" {
+                continue;
+            }
+            collect_gitignore_files(&path, repo_root, result);
+        }
+    }
+}
+
+/// Matches a single gitignore pattern against a relative file path.
+fn match_gitignore_pattern(pattern: &str, relative_file: &str) -> bool {
+    let pattern = pattern.trim_end_matches('/');
+
+    if pattern.contains('/') {
+        // Pattern with slash: match against the full path
+        glob_match(pattern, relative_file)
+    } else if pattern.contains('*') || pattern.contains('?') || pattern.contains('[') {
+        // Glob pattern: match against the first path component or the filename
+        let first_component = relative_file.split('/').next().unwrap_or(relative_file);
+        let filename = relative_file.rsplit('/').next().unwrap_or(relative_file);
+        glob_match(pattern, first_component) || glob_match(pattern, filename)
+    } else {
+        // Directory/file name match: the pattern matches the first component of the path
+        let first_component = relative_file.split('/').next().unwrap_or(relative_file);
+        first_component == pattern || relative_file == pattern
+    }
+}
+
+/// Simple glob pattern matching supporting * and ? wildcards.
+fn glob_match(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    glob_match_chars(&p, &t)
+}
+
+fn glob_match_chars(pattern: &[char], text: &[char]) -> bool {
+    match (pattern.first(), text.first()) {
+        (None, None) => true,
+        (Some(&'*'), _) => {
+            // * matches zero or more characters (but not /)
+            // Try matching zero chars
+            if glob_match_chars(&pattern[1..], text) {
+                return true;
+            }
+            // Try consuming one non-slash character
+            if let Some(&c) = text.first() {
+                if c != '/' {
+                    return glob_match_chars(pattern, &text[1..]);
+                }
+            }
+            false
+        }
+        (Some(&'?'), Some(&c)) if c != '/' => glob_match_chars(&pattern[1..], &text[1..]),
+        (Some(p), Some(t)) if p == t => glob_match_chars(&pattern[1..], &text[1..]),
+        _ => false,
+    }
+}
+
+/// List all gitignore rules from .gitignore files in the repository.
+/// Returns each rule with its source file and the count of currently ignored files matching it.
+pub fn list_gitignore_rules(repo_path: String) -> Result<Vec<GitignoreRule>, String> {
+    let repo_root = Path::new(&repo_path);
+
+    if !repo_root.exists() {
+        return Err(format!("Path does not exist: {}", repo_path));
+    }
+
+    // Collect all .gitignore files
+    let mut gitignore_files: Vec<std::path::PathBuf> = Vec::new();
+    collect_gitignore_files(repo_root, repo_root, &mut gitignore_files);
+
+    let mut rules: Vec<GitignoreRule> = Vec::new();
+
+    for gitignore_path in &gitignore_files {
+        let content = match fs::read_to_string(gitignore_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // Use a relative path for source_file
+        let source_file = match gitignore_path.strip_prefix(repo_root) {
+            Ok(rel) => rel.to_string_lossy().to_string(),
+            Err(_) => gitignore_path.to_string_lossy().to_string(),
+        };
+
+        for line in content.lines() {
+            let trimmed = line.trim();
+
+            // Skip empty lines, comments, and negation rules
+            if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('!') {
+                continue;
+            }
+
+            rules.push(GitignoreRule {
+                pattern: trimmed.to_string(),
+                source_file: source_file.clone(),
+                matched_file_count: 0,
+            });
+        }
+    }
+
+    Ok(rules)
+}
+
+/// Check if a file path matches a gitignore-style pattern.
+/// Delegates to `match_gitignore_pattern` for the actual matching logic.
+fn file_matches_pattern(file: &str, pattern: &str) -> bool {
+    match_gitignore_pattern(pattern, file)
+}
+
+/// Copy files that are ignored by git (per .gitignore) and match any of the given patterns.
+///
+/// Uses `git ls-files --others --ignored --exclude-standard -z` to enumerate ignored files,
+/// then filters by `enabled_patterns` and copies each matched file to `target_path`,
+/// preserving the directory structure.
+pub fn copy_gitignored_files(
+    repo_path: String,
+    target_path: String,
+    enabled_patterns: Vec<String>,
+) -> Result<CopyResult, String> {
+    let repo_root = Path::new(&repo_path);
+    let target_root = Path::new(&target_path);
+
+    if !repo_root.exists() {
+        return Err(format!("Repo path does not exist: {}", repo_path));
+    }
+
+    if !target_root.exists() {
+        return Err(format!("Target path does not exist: {}", target_path));
+    }
+
+    let mut result = CopyResult {
+        copied_files: Vec::new(),
+        skipped_files: Vec::new(),
+        transformed_files: Vec::new(),
+        errors: Vec::new(),
+    };
+
+    // If no patterns provided, nothing to copy
+    if enabled_patterns.is_empty() {
+        return Ok(result);
+    }
+
+    // Get ignored files via git
+    let output = Command::new("git")
+        .args(["ls-files", "--others", "--ignored", "--exclude-standard", "-z"])
+        .current_dir(repo_root)
+        .output()
+        .map_err(|e| format!("Failed to run git ls-files: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("git ls-files failed: {}", stderr));
+    }
+
+    let ignored_output = String::from_utf8_lossy(&output.stdout);
+    let ignored_files: Vec<&str> = ignored_output
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    for file in ignored_files {
+        // Check if the file matches any enabled pattern
+        let matches = enabled_patterns
+            .iter()
+            .any(|pattern| file_matches_pattern(file, pattern));
+
+        if !matches {
+            result.skipped_files.push(file.to_string());
+            continue;
+        }
+
+        let src = repo_root.join(file);
+        let dst = target_root.join(file);
+
+        // Create parent directories
+        if let Some(parent) = dst.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                result
+                    .errors
+                    .push(format!("Failed to create dir for {}: {}", file, e));
+                continue;
+            }
+        }
+
+        match fs::copy(&src, &dst) {
+            Ok(_) => result.copied_files.push(file.to_string()),
+            Err(e) => result
+                .errors
+                .push(format!("Failed to copy {}: {}", file, e)),
+        }
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -1564,111 +1534,6 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_package_manager_npm() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-        fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
-
-        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pm = result.unwrap().unwrap();
-        assert_eq!(pm.name, "npm");
-        assert_eq!(pm.lock_file, "package-lock.json");
-        assert_eq!(pm.command, "npm install");
-    }
-
-    #[test]
-    fn test_detect_package_manager_pnpm() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-        fs::write(dir.path().join("pnpm-lock.yaml"), "{}").unwrap();
-
-        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pm = result.unwrap().unwrap();
-        assert_eq!(pm.name, "pnpm");
-        assert_eq!(pm.lock_file, "pnpm-lock.yaml");
-        assert_eq!(pm.command, "pnpm install");
-    }
-
-    #[test]
-    fn test_detect_package_manager_yarn() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-        fs::write(dir.path().join("yarn.lock"), "").unwrap();
-
-        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pm = result.unwrap().unwrap();
-        assert_eq!(pm.name, "yarn");
-        assert_eq!(pm.lock_file, "yarn.lock");
-        assert_eq!(pm.command, "yarn install");
-    }
-
-    #[test]
-    fn test_detect_package_manager_bun() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-        fs::write(dir.path().join("bun.lockb"), "").unwrap();
-
-        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pm = result.unwrap().unwrap();
-        assert_eq!(pm.name, "bun");
-        assert_eq!(pm.lock_file, "bun.lockb");
-        assert_eq!(pm.command, "bun install");
-    }
-
-    #[test]
-    fn test_detect_package_manager_priority() {
-        // When multiple lock files exist, pnpm should take priority
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-        fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
-        fs::write(dir.path().join("pnpm-lock.yaml"), "{}").unwrap();
-
-        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pm = result.unwrap().unwrap();
-        assert_eq!(pm.name, "pnpm");
-    }
-
-    #[test]
-    fn test_detect_package_manager_package_json_only() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-
-        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pm = result.unwrap().unwrap();
-        assert_eq!(pm.name, "npm");
-        assert!(pm.lock_file.is_empty());
-    }
-
-    #[test]
-    fn test_detect_package_manager_none() {
-        let dir = tempdir().unwrap();
-        // No package.json or lock files
-
-        let result = detect_package_manager(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-    }
-
-    #[test]
-    fn test_detect_package_manager_invalid_path() {
-        let result = detect_package_manager("/nonexistent/path".to_string());
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("does not exist"));
-    }
-
-    #[test]
     fn test_run_init_command_success() {
         let dir = tempdir().unwrap();
 
@@ -1705,18 +1570,6 @@ mod tests {
     }
 
     #[test]
-    fn test_package_manager_serialization() {
-        let pm = PackageManager {
-            name: "npm".to_string(),
-            lock_file: "package-lock.json".to_string(),
-            command: "npm install".to_string(),
-        };
-        assert_eq!(pm.name, "npm");
-        assert_eq!(pm.lock_file, "package-lock.json");
-        assert_eq!(pm.command, "npm install");
-    }
-
-    #[test]
     fn test_command_output_serialization() {
         let output = CommandOutput {
             success: true,
@@ -1727,270 +1580,6 @@ mod tests {
         assert!(output.success);
         assert_eq!(output.stdout, "output");
         assert_eq!(output.exit_code, 0);
-    }
-
-    #[test]
-    fn test_detect_package_managers_python_uv() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("uv.lock"), "").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "uv");
-        assert_eq!(pms[0].lock_file, "uv.lock");
-        assert_eq!(pms[0].command, "uv sync");
-    }
-
-    #[test]
-    fn test_detect_package_managers_python_poetry() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("poetry.lock"), "").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "poetry");
-        assert_eq!(pms[0].lock_file, "poetry.lock");
-        assert_eq!(pms[0].command, "poetry install");
-    }
-
-    #[test]
-    fn test_detect_package_managers_python_pipenv() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("Pipfile"), "").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "pipenv");
-        assert_eq!(pms[0].lock_file, "Pipfile");
-        assert_eq!(pms[0].command, "pipenv install");
-    }
-
-    #[test]
-    fn test_detect_package_managers_python_pip() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("requirements.txt"), "flask==2.0").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "pip");
-        assert_eq!(pms[0].lock_file, "requirements.txt");
-        assert_eq!(pms[0].command, "pip install -r requirements.txt");
-    }
-
-    #[test]
-    fn test_detect_package_managers_rust() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "cargo");
-        assert_eq!(pms[0].lock_file, "Cargo.toml");
-        assert_eq!(pms[0].command, "cargo build");
-    }
-
-    #[test]
-    fn test_detect_package_managers_go() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("go.mod"), "module example.com/app").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "go");
-        assert_eq!(pms[0].lock_file, "go.mod");
-        assert_eq!(pms[0].command, "go mod download");
-    }
-
-    #[test]
-    fn test_detect_package_managers_ruby() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("Gemfile"), "source 'https://rubygems.org'").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "bundler");
-        assert_eq!(pms[0].lock_file, "Gemfile");
-        assert_eq!(pms[0].command, "bundle install");
-    }
-
-    #[test]
-    fn test_detect_package_managers_php() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("composer.json"), "{}").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "composer");
-        assert_eq!(pms[0].lock_file, "composer.json");
-        assert_eq!(pms[0].command, "composer install");
-    }
-
-    #[test]
-    fn test_detect_package_managers_multi_language() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-        fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
-        fs::write(dir.path().join("requirements.txt"), "flask==2.0").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        assert_eq!(pms.len(), 3);
-
-        let names: Vec<&str> = pms.iter().map(|pm| pm.name.as_str()).collect();
-        assert!(names.contains(&"npm"));
-        assert!(names.contains(&"cargo"));
-        assert!(names.contains(&"pip"));
-    }
-
-    #[test]
-    fn test_detect_package_managers_python_priority() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("uv.lock"), "").unwrap();
-        fs::write(dir.path().join("requirements.txt"), "flask==2.0").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        // Should only return uv, not pip (uv has higher priority)
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "uv");
-    }
-
-    #[test]
-    fn test_detect_package_managers_subdirectory_rust() {
-        let dir = tempdir().unwrap();
-        // Rust project in a subdirectory (like Tauri's src-tauri/)
-        let subdir = dir.path().join("src-tauri");
-        fs::create_dir_all(&subdir).unwrap();
-        fs::write(subdir.join("Cargo.toml"), "[package]").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "cargo");
-        assert_eq!(pms[0].command, "cd 'src-tauri' && cargo build");
-    }
-
-    #[test]
-    fn test_detect_package_managers_root_and_subdirectory() {
-        let dir = tempdir().unwrap();
-        // Node.js at root
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-        fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
-        // Rust in subdirectory
-        let subdir = dir.path().join("src-tauri");
-        fs::create_dir_all(&subdir).unwrap();
-        fs::write(subdir.join("Cargo.toml"), "[package]").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        assert!(pms.len() >= 2, "Expected at least 2 PMs, got {}", pms.len());
-
-        // Root npm
-        let npm = pms.iter().find(|p| p.name == "npm");
-        assert!(npm.is_some());
-        assert_eq!(npm.unwrap().command, "npm install");
-
-        // Subdirectory cargo
-        let cargo = pms.iter().find(|p| p.name == "cargo");
-        assert!(cargo.is_some());
-        assert_eq!(cargo.unwrap().command, "cd 'src-tauri' && cargo build");
-    }
-
-    #[test]
-    fn test_detect_package_managers_excludes_node_modules() {
-        let dir = tempdir().unwrap();
-        // Create node_modules with a package.json (should be ignored)
-        let nm_dir = dir.path().join("node_modules");
-        fs::create_dir_all(&nm_dir).unwrap();
-        fs::write(nm_dir.join("package.json"), "{}").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    #[test]
-    fn test_detect_package_managers_excludes_target() {
-        let dir = tempdir().unwrap();
-        // Create target dir with Cargo.toml (should be ignored)
-        let target_dir = dir.path().join("target");
-        fs::create_dir_all(&target_dir).unwrap();
-        fs::write(target_dir.join("Cargo.toml"), "[package]").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    #[test]
-    fn test_detect_package_managers_subdirectory_python() {
-        let dir = tempdir().unwrap();
-        let subdir = dir.path().join("backend");
-        fs::create_dir_all(&subdir).unwrap();
-        fs::write(subdir.join("requirements.txt"), "flask==2.0").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "pip");
-        assert_eq!(pms[0].command, "cd 'backend' && pip install -r requirements.txt");
-    }
-
-    #[test]
-    fn test_detect_package_managers_same_lang_root_and_subdir() {
-        let dir = tempdir().unwrap();
-        // npm at root
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-        fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
-        // Also npm in a subdirectory
-        let subdir = dir.path().join("frontend");
-        fs::create_dir_all(&subdir).unwrap();
-        fs::write(subdir.join("package.json"), "{}").unwrap();
-        fs::write(subdir.join("yarn.lock"), "").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        // Should return both: root npm + subdirectory yarn
-        let root_npm = pms.iter().find(|p| p.command == "npm install");
-        assert!(root_npm.is_some());
-        let subdir_yarn = pms.iter().find(|p| p.command == "cd 'frontend' && yarn install");
-        assert!(subdir_yarn.is_some());
     }
 
     #[test]
@@ -2150,112 +1739,6 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_package_managers_in_dir_with_prefix() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-        fs::write(dir.path().join("yarn.lock"), "").unwrap();
-
-        let results = detect_package_managers_in_dir(dir.path(), "cd subdir && ");
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].name, "yarn");
-        assert_eq!(results[0].command, "cd subdir && yarn install");
-    }
-
-    #[test]
-    fn test_detect_package_managers_in_dir_nodejs_priority() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-        fs::write(dir.path().join("yarn.lock"), "").unwrap();
-        fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
-
-        // yarn has higher priority than npm
-        let results = detect_package_managers_in_dir(dir.path(), "");
-        let nodejs = results.iter().find(|p| p.name == "yarn" || p.name == "npm");
-        assert!(nodejs.is_some());
-        assert_eq!(nodejs.unwrap().name, "yarn");
-    }
-
-    #[test]
-    fn test_detect_package_managers_in_dir_bun_over_npm() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-        fs::write(dir.path().join("bun.lockb"), "").unwrap();
-        fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
-
-        let results = detect_package_managers_in_dir(dir.path(), "");
-        let nodejs = results.iter().find(|p| p.name == "bun" || p.name == "npm");
-        assert!(nodejs.is_some());
-        assert_eq!(nodejs.unwrap().name, "bun");
-    }
-
-    #[test]
-    fn test_detect_package_managers_in_dir_ruby_with_lock() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("Gemfile.lock"), "").unwrap();
-        fs::write(dir.path().join("Gemfile"), "").unwrap();
-
-        let results = detect_package_managers_in_dir(dir.path(), "");
-        let ruby = results.iter().find(|p| p.name == "bundler");
-        assert!(ruby.is_some());
-        // Gemfile.lock has priority over Gemfile
-        assert_eq!(ruby.unwrap().lock_file, "Gemfile.lock");
-    }
-
-    #[test]
-    fn test_detect_package_managers_in_dir_php_with_lock() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("composer.lock"), "{}").unwrap();
-        fs::write(dir.path().join("composer.json"), "{}").unwrap();
-
-        let results = detect_package_managers_in_dir(dir.path(), "");
-        let php = results.iter().find(|p| p.name == "composer");
-        assert!(php.is_some());
-        // composer.lock has priority over composer.json
-        assert_eq!(php.unwrap().lock_file, "composer.lock");
-    }
-
-    #[test]
-    fn test_detect_package_managers_in_dir_all_ecosystems() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("pnpm-lock.yaml"), "").unwrap();
-        fs::write(dir.path().join("package.json"), "{}").unwrap();
-        fs::write(dir.path().join("poetry.lock"), "").unwrap();
-        fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
-        fs::write(dir.path().join("go.mod"), "module x").unwrap();
-        fs::write(dir.path().join("Gemfile"), "").unwrap();
-        fs::write(dir.path().join("composer.json"), "{}").unwrap();
-
-        let results = detect_package_managers_in_dir(dir.path(), "");
-        assert_eq!(results.len(), 6);
-
-        let names: Vec<&str> = results.iter().map(|p| p.name.as_str()).collect();
-        assert!(names.contains(&"pnpm"));
-        assert!(names.contains(&"poetry"));
-        assert!(names.contains(&"cargo"));
-        assert!(names.contains(&"go"));
-        assert!(names.contains(&"bundler"));
-        assert!(names.contains(&"composer"));
-    }
-
-    #[test]
-    fn test_detect_package_managers_in_dir_empty() {
-        let dir = tempdir().unwrap();
-        let results = detect_package_managers_in_dir(dir.path(), "");
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn test_detect_package_managers_in_dir_pipenv_with_lockfile() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("Pipfile.lock"), "{}").unwrap();
-
-        let results = detect_package_managers_in_dir(dir.path(), "");
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].name, "pipenv");
-        assert_eq!(results[0].lock_file, "Pipfile.lock");
-    }
-
-    #[test]
     fn test_run_init_command_with_stderr() {
         let dir = tempdir().unwrap();
 
@@ -2298,31 +1781,6 @@ mod tests {
         let output = result.unwrap();
         assert!(!output.success);
         assert_eq!(output.exit_code, 42);
-    }
-
-    #[test]
-    fn test_detect_package_managers_excludes_git_dir() {
-        let dir = tempdir().unwrap();
-        // .git is in the excluded list
-        let git_dir = dir.path().join(".git");
-        fs::create_dir_all(&git_dir).unwrap();
-        fs::write(git_dir.join("package.json"), "{}").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    #[test]
-    fn test_detect_package_managers_excludes_dist_dir() {
-        let dir = tempdir().unwrap();
-        let dist_dir = dir.path().join("dist");
-        fs::create_dir_all(&dist_dir).unwrap();
-        fs::write(dist_dir.join("package.json"), "{}").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
     }
 
     #[test]
@@ -2418,64 +1876,6 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[test]
-    fn test_detect_package_managers_quotes_dir_with_spaces() {
-        // Verify that directory names with spaces are properly quoted in commands
-        let dir = tempdir().unwrap();
-
-        // Create a subdirectory with spaces
-        let sub = dir.path().join("my project");
-        fs::create_dir_all(&sub).unwrap();
-        fs::write(sub.join("package.json"), "{}").unwrap();
-        fs::write(sub.join("package-lock.json"), "{}").unwrap();
-
-        let results = detect_package_managers(dir.path().to_string_lossy().to_string()).unwrap();
-
-        // Find the result for the subdirectory
-        let sub_result = results.iter().find(|r| r.command.contains("my project"));
-        assert!(
-            sub_result.is_some(),
-            "Should find package manager for dir with spaces"
-        );
-
-        let cmd = &sub_result.unwrap().command;
-        // Verify the directory name is quoted with single quotes
-        assert!(
-            cmd.contains("cd 'my project'"),
-            "Expected quoted dir name in command, got: {}",
-            cmd
-        );
-    }
-
-    #[test]
-    fn test_detect_package_managers_quotes_dir_with_single_quote() {
-        // Verify that directory names containing single quotes are properly escaped
-        let dir = tempdir().unwrap();
-
-        // Create a subdirectory with a single quote in the name
-        let sub = dir.path().join("it's-a-project");
-        fs::create_dir_all(&sub).unwrap();
-        fs::write(sub.join("package.json"), "{}").unwrap();
-        fs::write(sub.join("package-lock.json"), "{}").unwrap();
-
-        let results = detect_package_managers(dir.path().to_string_lossy().to_string()).unwrap();
-
-        // Find the result for the subdirectory
-        let sub_result = results.iter().find(|r| r.command.contains("it"));
-        assert!(
-            sub_result.is_some(),
-            "Should find package manager for dir with single quote"
-        );
-
-        let cmd = &sub_result.unwrap().command;
-        // Verify the single quote is properly escaped
-        assert!(
-            cmd.contains("cd 'it'\\''s-a-project'"),
-            "Expected escaped single quote in command, got: {}",
-            cmd
-        );
-    }
-
     // === Tests for dangling symlinks (M9) ===
 
     #[cfg(unix)]
@@ -2537,30 +1937,6 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_package_managers_excludes_build_dir() {
-        let dir = tempdir().unwrap();
-        let build_dir = dir.path().join("build");
-        fs::create_dir_all(&build_dir).unwrap();
-        fs::write(build_dir.join("Cargo.toml"), "[package]").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    #[test]
-    fn test_detect_package_managers_excludes_coverage_dir() {
-        let dir = tempdir().unwrap();
-        let cov_dir = dir.path().join("coverage");
-        fs::create_dir_all(&cov_dir).unwrap();
-        fs::write(cov_dir.join("package.json"), "{}").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    #[test]
     fn test_get_worktree_context_linked_worktree_has_name() {
         let dir = tempdir().unwrap();
         create_repo_with_commit(dir.path());
@@ -2615,21 +1991,6 @@ mod tests {
         let copy_result = result.unwrap();
         assert_eq!(copy_result.copied_files.len(), 1);
         assert!(target_dir.path().join("a/b/c/d/.env").exists());
-    }
-
-    #[test]
-    fn test_detect_package_managers_python_uv_priority_over_poetry() {
-        let dir = tempdir().unwrap();
-        fs::write(dir.path().join("uv.lock"), "").unwrap();
-        fs::write(dir.path().join("poetry.lock"), "").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-
-        let pms = result.unwrap();
-        // uv has higher priority, so only uv should appear
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "uv");
     }
 
     #[test]
@@ -3447,30 +2808,6 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    /// Test detect_package_managers when subdirectory file_name returns None.
-    /// Covers L712 (list_branches None continue) and L510 (detect_package_manager
-    /// subdirectory scan where dir_name is None).
-    /// The None case for dir_name is extremely rare in practice (would need
-    /// non-UTF-8 filenames), so we test the normal exclusion paths instead.
-    #[test]
-    fn test_detect_package_managers_skips_hidden_excluded_dirs() {
-        let dir = tempdir().unwrap();
-        // .git is both hidden AND in the excluded list
-        let git_dir = dir.path().join(".git");
-        fs::create_dir_all(&git_dir).unwrap();
-        fs::write(git_dir.join("Cargo.toml"), "[package]").unwrap();
-
-        // .venv is hidden AND in the excluded list
-        let venv_dir = dir.path().join(".venv");
-        fs::create_dir_all(&venv_dir).unwrap();
-        fs::write(venv_dir.join("requirements.txt"), "flask").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        // Both should be excluded
-        assert!(result.unwrap().is_empty());
-    }
-
     /// Test list_worktrees discovers repo from a subdirectory.
     /// Covers the `Repository::discover` path.
     #[test]
@@ -3592,30 +2929,6 @@ mod tests {
             !copy_result.errors.is_empty() || copy_result.copied_files.is_empty(),
             "Should either have errors or no files when directory is unreadable"
         );
-    }
-
-    /// Test detect_package_managers with a non-directory entry in subdirectory scan.
-    /// Covers the `!entry_path.is_dir()` continue at L706.
-    #[test]
-    fn test_detect_package_managers_skips_files_in_subdirectory_scan() {
-        let dir = tempdir().unwrap();
-        // Create a regular file (not directory) at root level
-        fs::write(dir.path().join("somefile.txt"), "content").unwrap();
-
-        // Create a valid subdirectory with a package manager
-        let sub = dir.path().join("app");
-        fs::create_dir_all(&sub).unwrap();
-        fs::write(sub.join("package.json"), "{}").unwrap();
-        fs::write(sub.join("pnpm-lock.yaml"), "").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        let pms = result.unwrap();
-
-        // Should find pnpm in the subdirectory, ignoring the regular file
-        assert_eq!(pms.len(), 1);
-        assert_eq!(pms[0].name, "pnpm");
-        assert_eq!(pms[0].command, "cd 'app' && pnpm install");
     }
 
     /// Test list_worktrees when worktree is invalid (validate fails), ensuring
@@ -3789,205 +3102,397 @@ mod tests {
         assert!(result.is_ok(), "get_default_branch should succeed: {:?}", result.err());
     }
 
-    /// Test detect_package_managers with .next excluded directory.
-    #[test]
-    fn test_detect_package_managers_excludes_next_dir() {
-        let dir = tempdir().unwrap();
-        let next_dir = dir.path().join(".next");
-        fs::create_dir_all(&next_dir).unwrap();
-        fs::write(next_dir.join("package.json"), "{}").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    /// Test detect_package_managers with vendor excluded directory.
-    #[test]
-    fn test_detect_package_managers_excludes_vendor_dir() {
-        let dir = tempdir().unwrap();
-        let vendor_dir = dir.path().join("vendor");
-        fs::create_dir_all(&vendor_dir).unwrap();
-        fs::write(vendor_dir.join("composer.json"), "{}").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    /// Test detect_package_managers with __pycache__ excluded directory.
-    #[test]
-    fn test_detect_package_managers_excludes_pycache_dir() {
-        let dir = tempdir().unwrap();
-        let cache_dir = dir.path().join("__pycache__");
-        fs::create_dir_all(&cache_dir).unwrap();
-        fs::write(cache_dir.join("requirements.txt"), "flask").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    /// Test detect_package_managers with .tox excluded directory.
-    #[test]
-    fn test_detect_package_managers_excludes_tox_dir() {
-        let dir = tempdir().unwrap();
-        let tox_dir = dir.path().join(".tox");
-        fs::create_dir_all(&tox_dir).unwrap();
-        fs::write(tox_dir.join("requirements.txt"), "flask").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
-    }
-
-    /// Test detect_package_managers with out excluded directory.
-    #[test]
-    fn test_detect_package_managers_excludes_out_dir() {
-        let dir = tempdir().unwrap();
-        let out_dir = dir.path().join("out");
-        fs::create_dir_all(&out_dir).unwrap();
-        fs::write(out_dir.join("package.json"), "{}").unwrap();
-
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_empty());
+    // Helper: initialize a git repo with an initial commit in dir
+    fn init_git_repo(dir: &Path) {
+        let repo = Repository::init(dir).unwrap();
+        let sig = git2::Signature::now("test", "test@example.com").unwrap();
+        fs::write(dir.join("README.md"), "# Test").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("README.md")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+            .unwrap();
     }
 
     #[test]
-    fn test_is_husky_v9_or_later() {
-        // v9+
-        assert!(is_husky_v9_or_later("^9.1.7"));
-        assert!(is_husky_v9_or_later("~9.0.0"));
-        assert!(is_husky_v9_or_later("9.0.0"));
-        assert!(is_husky_v9_or_later(">=9"));
-        assert!(is_husky_v9_or_later("^10.0.0"));
+    fn test_list_gitignore_rules_basic() {
+        let dir = tempdir().unwrap();
+        init_git_repo(dir.path());
 
-        // v8 and earlier
-        assert!(!is_husky_v9_or_later("^8.0.0"));
-        assert!(!is_husky_v9_or_later("~7.0.0"));
-        assert!(!is_husky_v9_or_later("4.3.8"));
+        // Write .gitignore with various rule types
+        fs::write(
+            dir.path().join(".gitignore"),
+            "node_modules\ndist\n*.log\n# comment line\n\n!important.log\n",
+        )
+        .unwrap();
 
-        // Edge cases
-        assert!(!is_husky_v9_or_later(""));
-        assert!(!is_husky_v9_or_later("latest"));
+        // Create matching files/dirs so ignored files exist
+        fs::create_dir_all(dir.path().join("node_modules/some-pkg")).unwrap();
+        fs::write(
+            dir.path().join("node_modules/some-pkg/index.js"),
+            "module.exports = {}",
+        )
+        .unwrap();
+        fs::create_dir_all(dir.path().join("dist")).unwrap();
+        fs::write(dir.path().join("dist/bundle.js"), "// bundle").unwrap();
+        fs::write(dir.path().join("debug.log"), "log content").unwrap();
+        fs::write(dir.path().join("error.log"), "error content").unwrap();
+
+        let result = list_gitignore_rules(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+
+        let rules = result.unwrap();
+
+        // Should NOT include comments or negation rules
+        let patterns: Vec<&str> = rules.iter().map(|r| r.pattern.as_str()).collect();
+        assert!(
+            !patterns.contains(&"# comment line"),
+            "Comments should be excluded"
+        );
+        assert!(
+            !patterns.contains(&"!important.log"),
+            "Negation rules should be excluded"
+        );
+        assert!(
+            !patterns.contains(&""),
+            "Empty lines should be excluded"
+        );
+
+        // Should include valid patterns
+        assert!(patterns.contains(&"node_modules"), "node_modules should be present");
+        assert!(patterns.contains(&"dist"), "dist should be present");
+        assert!(patterns.contains(&"*.log"), "*.log should be present");
+
+        // matched_file_count is always 0 (counting removed for performance)
+        let node_modules_rule = rules.iter().find(|r| r.pattern == "node_modules").unwrap();
+        assert_eq!(node_modules_rule.matched_file_count, 0);
+
+        // All rules should reference the correct source file
+        for rule in &rules {
+            assert!(
+                rule.source_file.ends_with(".gitignore"),
+                "source_file should end with .gitignore, got: {}",
+                rule.source_file
+            );
+        }
     }
 
     #[test]
-    fn test_detect_husky_v9() {
+    fn test_list_gitignore_rules_nested() {
         let dir = tempdir().unwrap();
-        let pkg = serde_json::json!({
-            "name": "test-project",
-            "scripts": { "prepare": "husky" },
-            "devDependencies": { "husky": "^9.1.7" }
-        });
-        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+        init_git_repo(dir.path());
 
-        let result = detect_husky_command(dir.path(), "");
-        assert!(result.is_some());
-        let pm = result.unwrap();
-        assert_eq!(pm.name, "husky");
-        assert_eq!(pm.command, "npx husky");
+        // Root .gitignore
+        fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
+
+        // Nested .gitignore in packages/app
+        let nested_dir = dir.path().join("packages").join("app");
+        fs::create_dir_all(&nested_dir).unwrap();
+        fs::write(nested_dir.join(".gitignore"), "dist\n").unwrap();
+
+        // Create files so they appear in git ls-files --ignored
+        fs::write(dir.path().join("debug.log"), "log").unwrap();
+        fs::create_dir_all(nested_dir.join("dist")).unwrap();
+        fs::write(nested_dir.join("dist").join("bundle.js"), "bundle").unwrap();
+
+        let result = list_gitignore_rules(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+
+        let rules = result.unwrap();
+        let patterns: Vec<&str> = rules.iter().map(|r| r.pattern.as_str()).collect();
+
+        // Both root and nested patterns should be found
+        assert!(patterns.contains(&"*.log"), "Root *.log rule should be present");
+        assert!(patterns.contains(&"dist"), "Nested dist rule should be present");
+
+        // Verify different source files
+        let log_rule = rules.iter().find(|r| r.pattern == "*.log").unwrap();
+        let dist_rule = rules.iter().find(|r| r.pattern == "dist").unwrap();
+
+        assert!(
+            log_rule.source_file != dist_rule.source_file,
+            "Rules from different .gitignore files should have different source_files"
+        );
+
+        // Root rule should reference the root .gitignore
+        assert!(
+            !log_rule.source_file.contains("packages"),
+            "Root *.log rule source_file should be from root .gitignore, got: {}",
+            log_rule.source_file
+        );
+
+        // Nested rule should reference the nested .gitignore
+        assert!(
+            dist_rule.source_file.contains("packages"),
+            "Nested dist rule source_file should be from nested .gitignore, got: {}",
+            dist_rule.source_file
+        );
     }
 
     #[test]
-    fn test_detect_husky_v8() {
+    fn test_list_gitignore_rules_empty_gitignore() {
         let dir = tempdir().unwrap();
-        let pkg = serde_json::json!({
-            "name": "test-project",
-            "scripts": { "prepare": "husky install" },
-            "devDependencies": { "husky": "^8.0.0" }
-        });
-        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+        init_git_repo(dir.path());
 
-        let result = detect_husky_command(dir.path(), "");
-        assert!(result.is_some());
-        let pm = result.unwrap();
-        assert_eq!(pm.name, "husky");
-        assert_eq!(pm.command, "npx husky install");
+        // .gitignore with only comments and empty lines
+        fs::write(
+            dir.path().join(".gitignore"),
+            "# This is a comment\n\n# Another comment\n",
+        )
+        .unwrap();
+
+        let result = list_gitignore_rules(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+
+        let rules = result.unwrap();
+        assert!(
+            rules.is_empty(),
+            "Expected empty rules for comment-only .gitignore, got: {:?}",
+            rules
+        );
     }
 
     #[test]
-    fn test_detect_husky_no_prepare_script_v9() {
+    fn test_list_gitignore_rules_deduplication() {
         let dir = tempdir().unwrap();
-        let pkg = serde_json::json!({
-            "name": "test-project",
-            "devDependencies": { "husky": "^9.0.0" }
-        });
-        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+        init_git_repo(dir.path());
 
-        let result = detect_husky_command(dir.path(), "");
-        assert!(result.is_some());
-        let pm = result.unwrap();
-        assert_eq!(pm.command, "npx husky");
+        // Same pattern in root and nested .gitignore
+        fs::write(dir.path().join(".gitignore"), "*.log\n").unwrap();
+
+        let nested_dir = dir.path().join("packages").join("lib");
+        fs::create_dir_all(&nested_dir).unwrap();
+        fs::write(nested_dir.join(".gitignore"), "*.log\n").unwrap();
+
+        // Create matching files
+        fs::write(dir.path().join("debug.log"), "log").unwrap();
+        fs::write(nested_dir.join("error.log"), "error").unwrap();
+
+        let result = list_gitignore_rules(dir.path().to_string_lossy().to_string());
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+
+        let rules = result.unwrap();
+        let log_rules: Vec<&GitignoreRule> =
+            rules.iter().filter(|r| r.pattern == "*.log").collect();
+
+        // Both should appear since they have different source files (different scope)
+        assert_eq!(
+            log_rules.len(),
+            2,
+            "Same pattern in different .gitignore files should both appear, got: {}",
+            log_rules.len()
+        );
+
+        // Verify they have different source files
+        let sources: Vec<&str> = log_rules.iter().map(|r| r.source_file.as_str()).collect();
+        assert_ne!(
+            sources[0], sources[1],
+            "Same pattern from different scopes should have different source_files"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // copy_gitignored_files tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_copy_gitignored_files_basic() {
+        let src_dir = tempdir().unwrap();
+        let dst_dir = tempdir().unwrap();
+        init_git_repo(src_dir.path());
+
+        // Write .gitignore
+        fs::write(
+            src_dir.path().join(".gitignore"),
+            "node_modules\ndist\n*.log\n",
+        )
+        .unwrap();
+
+        // Create ignored files
+        fs::create_dir_all(src_dir.path().join("node_modules")).unwrap();
+        fs::write(
+            src_dir.path().join("node_modules").join("package.json"),
+            "{}",
+        )
+        .unwrap();
+
+        fs::create_dir_all(src_dir.path().join("dist")).unwrap();
+        fs::write(src_dir.path().join("dist").join("bundle.js"), "bundle").unwrap();
+
+        fs::write(src_dir.path().join("app.log"), "log content").unwrap();
+
+        // Create a tracked (non-ignored) file — should NOT be copied
+        fs::write(src_dir.path().join("src.ts"), "export const x = 1;").unwrap();
+
+        let result = copy_gitignored_files(
+            src_dir.path().to_string_lossy().to_string(),
+            dst_dir.path().to_string_lossy().to_string(),
+            vec!["node_modules".to_string(), "dist".to_string()],
+        );
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let res = result.unwrap();
+
+        // node_modules and dist files should be copied
+        assert!(
+            res.copied_files
+                .iter()
+                .any(|f| f.contains("node_modules")),
+            "node_modules should be copied, copied: {:?}",
+            res.copied_files
+        );
+        assert!(
+            res.copied_files.iter().any(|f| f.contains("dist")),
+            "dist should be copied, copied: {:?}",
+            res.copied_files
+        );
+
+        // *.log should NOT be copied (not in enabled_patterns)
+        assert!(
+            !res.copied_files.iter().any(|f| f.ends_with(".log")),
+            "*.log files should not be copied"
+        );
+
+        // tracked file should NOT appear at all
+        assert!(
+            !res.copied_files.iter().any(|f| f.contains("src.ts")),
+            "tracked file should not be copied"
+        );
+
+        // Verify files actually exist on disk
+        assert!(
+            dst_dir
+                .path()
+                .join("node_modules")
+                .join("package.json")
+                .exists(),
+            "node_modules/package.json should exist in target"
+        );
+        assert!(
+            dst_dir.path().join("dist").join("bundle.js").exists(),
+            "dist/bundle.js should exist in target"
+        );
+        assert!(
+            !dst_dir.path().join("app.log").exists(),
+            "app.log should not exist in target"
+        );
     }
 
     #[test]
-    fn test_detect_husky_no_prepare_script_v8() {
-        let dir = tempdir().unwrap();
-        let pkg = serde_json::json!({
-            "name": "test-project",
-            "devDependencies": { "husky": "^8.0.0" }
-        });
-        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+    fn test_copy_gitignored_files_empty_patterns() {
+        let src_dir = tempdir().unwrap();
+        let dst_dir = tempdir().unwrap();
+        init_git_repo(src_dir.path());
 
-        let result = detect_husky_command(dir.path(), "");
-        assert!(result.is_some());
-        let pm = result.unwrap();
-        assert_eq!(pm.command, "npx husky install");
+        fs::write(src_dir.path().join(".gitignore"), "node_modules\n").unwrap();
+        fs::create_dir_all(src_dir.path().join("node_modules")).unwrap();
+        fs::write(
+            src_dir.path().join("node_modules").join("index.js"),
+            "module",
+        )
+        .unwrap();
+
+        let result = copy_gitignored_files(
+            src_dir.path().to_string_lossy().to_string(),
+            dst_dir.path().to_string_lossy().to_string(),
+            vec![], // empty patterns
+        );
+
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let res = result.unwrap();
+
+        assert!(
+            res.copied_files.is_empty(),
+            "Nothing should be copied with empty patterns, but got: {:?}",
+            res.copied_files
+        );
+        assert!(
+            !dst_dir
+                .path()
+                .join("node_modules")
+                .join("index.js")
+                .exists(),
+            "File should not be copied to target"
+        );
     }
 
     #[test]
-    fn test_detect_husky_not_present() {
-        let dir = tempdir().unwrap();
-        let pkg = serde_json::json!({
-            "name": "test-project",
-            "devDependencies": { "eslint": "^8.0.0" }
-        });
-        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+    fn test_copy_gitignored_files_preserves_structure() {
+        let src_dir = tempdir().unwrap();
+        let dst_dir = tempdir().unwrap();
+        init_git_repo(src_dir.path());
 
-        let result = detect_husky_command(dir.path(), "");
-        assert!(result.is_none());
-    }
+        // .env files at various depths
+        fs::write(src_dir.path().join(".gitignore"), ".env*\n").unwrap();
 
-    #[test]
-    fn test_detect_husky_with_subdirectory_prefix() {
-        let dir = tempdir().unwrap();
-        let pkg = serde_json::json!({
-            "name": "test-project",
-            "scripts": { "prepare": "husky" },
-            "devDependencies": { "husky": "^9.1.7" }
-        });
-        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
+        fs::write(src_dir.path().join(".env"), "ROOT=1").unwrap();
+        fs::write(src_dir.path().join(".env.local"), "LOCAL=1").unwrap();
 
-        let result = detect_husky_command(dir.path(), "cd 'frontend' && ");
-        assert!(result.is_some());
-        let pm = result.unwrap();
-        assert_eq!(pm.command, "cd 'frontend' && npx husky");
-    }
+        fs::create_dir_all(src_dir.path().join("packages").join("api")).unwrap();
+        fs::write(
+            src_dir
+                .path()
+                .join("packages")
+                .join("api")
+                .join(".env"),
+            "API=1",
+        )
+        .unwrap();
+        fs::write(
+            src_dir
+                .path()
+                .join("packages")
+                .join("api")
+                .join(".env.local"),
+            "API_LOCAL=1",
+        )
+        .unwrap();
 
-    #[test]
-    fn test_detect_package_managers_includes_husky() {
-        let dir = tempdir().unwrap();
-        let pkg = serde_json::json!({
-            "name": "test-project",
-            "scripts": { "prepare": "husky" },
-            "devDependencies": { "husky": "^9.1.7" }
-        });
-        fs::write(dir.path().join("package.json"), pkg.to_string()).unwrap();
-        fs::write(dir.path().join("package-lock.json"), "{}").unwrap();
+        let result = copy_gitignored_files(
+            src_dir.path().to_string_lossy().to_string(),
+            dst_dir.path().to_string_lossy().to_string(),
+            vec![".env*".to_string()],
+        );
 
-        let result = detect_package_managers(dir.path().to_string_lossy().to_string());
-        assert!(result.is_ok());
-        let managers = result.unwrap();
+        assert!(result.is_ok(), "Expected Ok, got: {:?}", result);
+        let res = result.unwrap();
 
-        let names: Vec<&str> = managers.iter().map(|m| m.name.as_str()).collect();
-        assert!(names.contains(&"npm"), "Should detect npm");
-        assert!(names.contains(&"husky"), "Should detect husky");
+        // All .env* files at all depths should be copied
+        assert_eq!(
+            res.copied_files.len(),
+            4,
+            "Expected 4 .env files copied, got: {:?}",
+            res.copied_files
+        );
 
-        // husky should come after npm
-        let npm_idx = names.iter().position(|n| *n == "npm").unwrap();
-        let husky_idx = names.iter().position(|n| *n == "husky").unwrap();
-        assert!(husky_idx > npm_idx, "husky should be after npm");
+        // Verify directory structure is preserved
+        assert!(
+            dst_dir.path().join(".env").exists(),
+            ".env should exist in target root"
+        );
+        assert!(
+            dst_dir.path().join(".env.local").exists(),
+            ".env.local should exist in target root"
+        );
+        assert!(
+            dst_dir
+                .path()
+                .join("packages")
+                .join("api")
+                .join(".env")
+                .exists(),
+            "packages/api/.env should exist in target"
+        );
+        assert!(
+            dst_dir
+                .path()
+                .join("packages")
+                .join("api")
+                .join(".env.local")
+                .exists(),
+            "packages/api/.env.local should exist in target"
+        );
     }
 }

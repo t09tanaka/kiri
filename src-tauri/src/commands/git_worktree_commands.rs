@@ -1,4 +1,4 @@
-use super::git_worktree::{BranchInfo, CommandOutput, CopyResult, PackageManager, WorktreeContext, WorktreeInfo};
+use super::git_worktree::{BranchInfo, CommandOutput, CopyResult, GitignoreRule, WorktreeContext, WorktreeInfo};
 
 #[tauri::command]
 pub fn list_worktrees(repo_path: String) -> Result<Vec<WorktreeInfo>, String> {
@@ -40,16 +40,20 @@ pub fn copy_files_to_worktree(
 }
 
 #[tauri::command]
-pub fn detect_package_manager(project_path: String) -> Result<Option<PackageManager>, String> {
-    super::git_worktree::detect_package_manager(project_path)
-}
-
-#[tauri::command]
-pub fn detect_package_managers(project_path: String) -> Result<Vec<PackageManager>, String> {
-    super::git_worktree::detect_package_managers(project_path)
-}
-
-#[tauri::command]
 pub fn run_init_command(cwd: String, command: String) -> Result<CommandOutput, String> {
     super::git_worktree::run_init_command(cwd, command)
+}
+
+#[tauri::command]
+pub fn list_gitignore_rules(repo_path: String) -> Result<Vec<GitignoreRule>, String> {
+    super::git_worktree::list_gitignore_rules(repo_path)
+}
+
+#[tauri::command]
+pub fn copy_gitignored_files(
+    repo_path: String,
+    target_path: String,
+    enabled_patterns: Vec<String>,
+) -> Result<CopyResult, String> {
+    super::git_worktree::copy_gitignored_files(repo_path, target_path, enabled_patterns)
 }
