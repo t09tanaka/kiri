@@ -23,7 +23,12 @@
     saveShortcuts,
     loadNumberRowEnabled,
     saveNumberRowEnabled,
+    loadInputStats,
+    saveInputStats,
+    type InputRecord,
   } from '@/lib/services/persistenceService';
+  import { createInputStatsService, detectShortcutType } from '@/lib/services/inputStatsService';
+  import { toastStore } from '@/lib/stores/toastStore';
 
   // Lazy-loaded xterm modules (loaded on first terminal creation)
   let xtermLoaded = false;
@@ -68,6 +73,12 @@
   let shortcutFocusSection = $state<'reply' | 'command' | null>(null);
   let numberRowEnabled = $state(false);
   const isAiRunning = $derived(isAiProcess(processName));
+
+  // Shortcut suggestions state
+  const inputStats = createInputStatsService();
+  let suggestions = $state<InputRecord[]>([]);
+  let inputBuffer = '';
+  let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Reserve 1 row for PTY to prevent Ink full-height flickering issue
   // See: https://github.com/vadimdemedes/ink/issues/450
@@ -601,9 +612,32 @@
       shortcutState.setCustomShortcuts(customShortcuts);
       numberRowEnabled = await loadNumberRowEnabled();
 
+      // Load input stats for shortcut suggestions
+      const savedStats = await loadInputStats();
+      inputStats.setRecords(savedStats);
+      updateSuggestions();
+
       // Send input to PTY
       terminal.onData((data) => {
         if (terminalId !== null) {
+          // Capture input for shortcut suggestions (only when AI is running)
+          if (isAiRunning) {
+            if (data === '\r') {
+              if (inputBuffer.trim().length > 0) {
+                inputStats.record(inputBuffer);
+                updateSuggestions();
+                scheduleSave();
+              }
+              inputBuffer = '';
+            } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+              inputBuffer += data;
+            } else if (data === '\x7f') {
+              inputBuffer = inputBuffer.slice(0, -1);
+            } else if (data.length > 1 && !data.startsWith('\x1b')) {
+              inputBuffer += data;
+            }
+          }
+
           terminalService.writeTerminal(terminalId, data);
         }
       });
@@ -809,6 +843,34 @@
     await saveNumberRowEnabled(enabled);
   }
 
+  function updateSuggestions() {
+    const existingTexts = shortcutState.allShortcuts.map((s) => s.text.trim().toLowerCase());
+    suggestions = inputStats.getSuggestions(existingTexts);
+  }
+
+  function scheduleSave() {
+    if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
+    saveDebounceTimer = setTimeout(async () => {
+      await saveInputStats(inputStats.getRecords());
+      saveDebounceTimer = null;
+    }, 5000);
+  }
+
+  async function handleSuggestionAdd(suggestion: InputRecord) {
+    const type = detectShortcutType(suggestion.rawText);
+    await handleShortcutAdd(suggestion.rawText, suggestion.rawText, type);
+    inputStats.removeSuggestion(suggestion.text);
+    updateSuggestions();
+    scheduleSave();
+    toastStore.success('Added to shortcuts');
+  }
+
+  function handleSuggestionDismiss(suggestion: InputRecord) {
+    inputStats.dismiss(suggestion.text);
+    updateSuggestions();
+    scheduleSave();
+  }
+
   onMount(() => {
     initTerminal();
 
@@ -879,6 +941,11 @@
     if (resizeStabilityTimeout) {
       clearTimeout(resizeStabilityTimeout);
     }
+
+    if (saveDebounceTimer) {
+      clearTimeout(saveDebounceTimer);
+    }
+    saveInputStats(inputStats.getRecords());
 
     window.removeEventListener('resize', handleResize);
 
@@ -995,12 +1062,15 @@
     visible={isAiRunning}
     shortcuts={shortcutState.allShortcuts}
     showNumberRow={numberRowEnabled}
+    {suggestions}
     onSend={handleShortcutSend}
     onSettingsClick={() => {
       shortcutFocusSection = null;
       showShortcutSettings = true;
     }}
     onAddClick={handleShortcutAddClick}
+    onSuggestionAdd={handleSuggestionAdd}
+    onSuggestionDismiss={handleSuggestionDismiss}
   />
   <TerminalShortcutSettings
     open={showShortcutSettings}
