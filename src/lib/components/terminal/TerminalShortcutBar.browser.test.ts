@@ -20,9 +20,12 @@ describe('TerminalShortcutBar', () => {
       },
       { id: 'builtin-lgtm', label: 'LGTM', text: 'LGTM', builtin: true, type: 'reply' as const },
     ],
+    suggestions: [],
     onSend: vi.fn(),
     onSettingsClick: vi.fn(),
     onAddClick: vi.fn(),
+    onSuggestionAdd: vi.fn(),
+    onSuggestionDismiss: vi.fn(),
   };
 
   it('should render shortcut buttons when visible', () => {

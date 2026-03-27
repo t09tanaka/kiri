@@ -1,16 +1,31 @@
 <script lang="ts">
   import type { TerminalShortcut, ShortcutType } from '@/lib/stores/shortcutStore.svelte';
+  import type { InputRecord } from '@/lib/services/persistenceService';
+  import ShortcutSuggestions from './ShortcutSuggestions.svelte';
 
   interface Props {
     visible: boolean;
     shortcuts: TerminalShortcut[];
     showNumberRow: boolean;
+    suggestions: InputRecord[];
     onSend: (text: string, withEnter: boolean) => void;
     onSettingsClick: () => void;
     onAddClick: (type: ShortcutType) => void;
+    onSuggestionAdd: (suggestion: InputRecord) => void;
+    onSuggestionDismiss: (suggestion: InputRecord) => void;
   }
 
-  let { visible, shortcuts, showNumberRow, onSend, onSettingsClick, onAddClick }: Props = $props();
+  let {
+    visible,
+    shortcuts,
+    showNumberRow,
+    suggestions,
+    onSend,
+    onSettingsClick,
+    onAddClick,
+    onSuggestionAdd,
+    onSuggestionDismiss,
+  }: Props = $props();
 
   const numberChoices = [1, 2, 3];
 
@@ -113,27 +128,34 @@
       </div>
     {/if}
 
-    <!-- Settings button -->
-    <button
-      class="settings-btn"
-      onclick={onSettingsClick}
-      title="Shortcut Settings"
-      aria-label="Shortcut Settings"
-    >
-      <svg
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
+    <!-- Bar actions: suggestions badge + settings button -->
+    <div class="bar-actions">
+      <ShortcutSuggestions
+        {suggestions}
+        onAdd={onSuggestionAdd}
+        onDismiss={onSuggestionDismiss}
+      />
+      <button
+        class="settings-btn"
+        onclick={onSettingsClick}
+        title="Shortcut Settings"
+        aria-label="Shortcut Settings"
       >
-        <circle cx="12" cy="12" r="3" />
-        <path
-          d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
-        />
-      </svg>
-    </button>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <circle cx="12" cy="12" r="3" />
+          <path
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
+          />
+        </svg>
+      </button>
+    </div>
   </div>
 {/if}
 
@@ -324,11 +346,18 @@
     transform: scale(0.92);
   }
 
-  /* Settings button */
-  .settings-btn {
+  /* Bar actions wrapper (suggestions badge + settings button) */
+  .bar-actions {
     position: absolute;
     top: 8px;
     right: 8px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  /* Settings button */
+  .settings-btn {
     display: flex;
     align-items: center;
     justify-content: center;
