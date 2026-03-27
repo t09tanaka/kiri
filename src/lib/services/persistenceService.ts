@@ -348,6 +348,47 @@ export async function saveShortcuts(shortcuts: TerminalShortcut[]): Promise<void
 }
 
 // ============================================================================
+// Input Stats (for shortcut suggestions)
+// ============================================================================
+
+export interface InputRecord {
+  text: string; // Normalized text (trim + lowercase)
+  rawText: string; // Original text (for shortcut label)
+  count: number; // Total usage count
+  lastUsed: number; // Last used timestamp (Unix ms)
+  firstSeen: number; // First seen timestamp
+  dismissedAt: number | null; // Dismissal timestamp (for cooldown)
+}
+
+/**
+ * Load input stats from settings
+ */
+export async function loadInputStats(): Promise<InputRecord[]> {
+  try {
+    const s = await getStore();
+    await s.reload();
+    const stats = await s.get<InputRecord[]>('inputStats');
+    return stats ?? [];
+  } catch (error) {
+    console.error('Failed to load input stats:', error);
+    return [];
+  }
+}
+
+/**
+ * Save input stats to settings
+ */
+export async function saveInputStats(stats: InputRecord[]): Promise<void> {
+  try {
+    const s = await getStore();
+    await s.set('inputStats', stats);
+    await s.save();
+  } catch (error) {
+    console.error('Failed to save input stats:', error);
+  }
+}
+
+// ============================================================================
 // Number Row Setting
 // ============================================================================
 
