@@ -80,6 +80,13 @@
   let inputBuffer = '';
   let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Clear input buffer when AI process ends
+  $effect(() => {
+    if (!isAiRunning) {
+      inputBuffer = '';
+    }
+  });
+
   // Reserve 1 row for PTY to prevent Ink full-height flickering issue
   // See: https://github.com/vadimdemedes/ink/issues/450
   // When Ink renders at exactly terminal height, unintended scrolling occurs

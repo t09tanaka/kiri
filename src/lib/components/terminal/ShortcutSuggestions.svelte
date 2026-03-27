@@ -10,14 +10,24 @@
   let { suggestions, onAdd, onDismiss }: Props = $props();
 
   let open = $state(false);
+  let wrapperEl = $state<HTMLDivElement | undefined>(undefined);
 
-  function togglePopover() {
+  function togglePopover(event: MouseEvent) {
+    event.stopPropagation();
     open = !open;
+  }
+
+  function handleWindowClick(event: MouseEvent) {
+    if (open && wrapperEl && !wrapperEl.contains(event.target as Node)) {
+      open = false;
+    }
   }
 </script>
 
+<svelte:window onclick={handleWindowClick} />
+
 {#if suggestions.length > 0}
-  <div class="suggestion-wrapper">
+  <div class="suggestion-wrapper" bind:this={wrapperEl}>
     <button class="suggestion-badge" onclick={togglePopover} title="Shortcut suggestions">
       +{suggestions.length}
     </button>

@@ -86,4 +86,19 @@ describe('ShortcutSuggestions', () => {
     await fireEvent.click(dismissBtn);
     expect(onDismiss).toHaveBeenCalledWith(suggestions[0]);
   });
+
+  it('should close popover on outside click', async () => {
+    const suggestions = [makeSuggestion('deploy', 5)];
+    const { container } = render(ShortcutSuggestions, {
+      props: { suggestions, onAdd: vi.fn(), onDismiss: vi.fn() },
+    });
+
+    // Open popover
+    await fireEvent.click(container.querySelector('.suggestion-badge')!);
+    expect(container.querySelector('.suggestion-popover')).toBeTruthy();
+
+    // Click outside (on document.body)
+    await fireEvent.click(document.body);
+    expect(container.querySelector('.suggestion-popover')).toBeNull();
+  });
 });
