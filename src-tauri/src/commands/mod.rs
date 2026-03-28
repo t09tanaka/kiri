@@ -7,6 +7,7 @@ pub mod fs_gitignore;
 pub mod fs_io;
 pub mod git;
 pub mod git_diff;
+pub mod github_pr;
 pub mod git_history;
 pub mod git_history_commands;
 pub mod git_status_map;
