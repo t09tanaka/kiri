@@ -380,29 +380,6 @@
                 </div>
               </div>
             {/if}
-
-            <div class="detail-actions">
-              <button
-                class="btn btn-primary"
-                onclick={handleOpenLocally}
-                disabled={isOpeningLocally}
-              >
-                {#if isOpeningLocally}
-                  <Spinner size="sm" />
-                  Creating worktree...
-                {:else}
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-                    <path
-                      d="M2 8h12M8 2v12"
-                      stroke="currentColor"
-                      stroke-width="1.5"
-                      stroke-linecap="round"
-                    />
-                  </svg>
-                  Open locally
-                {/if}
-              </button>
-            </div>
           </div>
         {:else if view === 'detail' && !prState.selectedPr}
           <!-- Loading detail -->
@@ -416,10 +393,32 @@
       <!-- Footer -->
       <div class="panel-footer">
         {#if view === 'detail'}
-          <span class="footer-item">
-            <kbd>Esc</kbd>
-            <span>back</span>
-          </span>
+          <div class="footer-left">
+            <span class="footer-item">
+              <kbd>Esc</kbd>
+              <span>back</span>
+            </span>
+          </div>
+          <button
+            class="footer-open-locally"
+            onclick={handleOpenLocally}
+            disabled={isOpeningLocally || !prState.selectedPr}
+          >
+            {#if isOpeningLocally}
+              <Spinner size="sm" />
+              <span>Creating...</span>
+            {:else}
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+                <path
+                  d="M2 8h12M8 2v12"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <span>Open locally</span>
+            {/if}
+          </button>
         {:else}
           <span class="footer-item">
             <kbd>↵</kbd>
@@ -986,59 +985,55 @@
     color: var(--git-deleted);
   }
 
-  /* Actions */
-  .detail-actions {
-    display: flex;
-    gap: var(--space-2);
-    padding-top: var(--space-2);
-  }
-
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    font-size: 12px;
-    font-weight: 500;
-    font-family: var(--font-sans);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    background: var(--bg-elevated);
-    color: var(--text-secondary);
-  }
-
-  .btn:hover {
-    background: var(--bg-glass-hover);
-    color: var(--text-primary);
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn-primary {
-    background: rgba(125, 211, 252, 0.15);
-    border-color: rgba(125, 211, 252, 0.3);
-    color: var(--accent-color);
-  }
-
-  .btn-primary:hover {
-    background: rgba(125, 211, 252, 0.25);
-    color: var(--accent-color);
-  }
-
   /* Footer */
   .panel-footer {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
     gap: var(--space-5);
     padding: var(--space-3) var(--space-4);
     background: rgba(0, 0, 0, 0.2);
     border-top: 1px solid var(--border-subtle);
     border-radius: 0 0 var(--radius-xl) var(--radius-xl);
+  }
+
+  .footer-left {
+    display: flex;
+    align-items: center;
+    gap: var(--space-5);
+    margin-right: auto;
+  }
+
+  .footer-open-locally {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 4px 12px;
+    background: var(--accent-color);
+    color: var(--bg-primary);
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+  }
+
+  .footer-open-locally:hover {
+    filter: brightness(1.15);
+    transform: translateY(-1px);
+  }
+
+  .footer-open-locally:active {
+    transform: translateY(0) scale(0.98);
+  }
+
+  .footer-open-locally:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    filter: none;
   }
 
   .footer-item {
