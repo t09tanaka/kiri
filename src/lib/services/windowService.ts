@@ -22,6 +22,27 @@ export const windowService = {
     invoke('focus_or_create_window', { projectPath }),
 
   /**
+   * Focus an existing window for the project path, or create a new one with PR metadata.
+   * When creating a new window, PR info is passed as URL params so the worktree window
+   * can display a compact PR header bar.
+   * Returns true if an existing window was focused, false if a new window was created.
+   */
+  focusOrCreateWindowWithPr: (
+    projectPath: string,
+    prNumber: number,
+    prTitle: string,
+    prBranch: string,
+    prCiStatus: string
+  ): Promise<boolean> =>
+    invoke('focus_or_create_window_with_pr', {
+      projectPath,
+      prNumber,
+      prTitle,
+      prBranch,
+      prCiStatus,
+    }),
+
+  /**
    * Register a window with a project path (for windows not created via createWindow)
    */
   registerWindow: (label: string, projectPath: string, isWorktree?: boolean): Promise<void> =>

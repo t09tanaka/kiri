@@ -3,6 +3,7 @@
   import { Spinner } from '@/lib/components/ui';
   import { prStore } from '@/lib/stores/prStore';
   import { worktreeService } from '@/lib/services/worktreeService';
+  import { windowService } from '@/lib/services/windowService';
   import { toastStore } from '@/lib/stores/toastStore';
   import type { PullRequest } from '@/lib/services/prService';
   import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
@@ -39,6 +40,21 @@
     prStore.refresh(projectPath);
   }
 
+  /**
+   * Compute a simple CI status string for URL param passing.
+   */
+  function getPrCiStatus(pr: PullRequest): string {
+    const checks = pr.status_check_rollup;
+    if (!checks || checks.length === 0) return 'unknown';
+    const hasFailure = checks.some((c) => c.conclusion === 'FAILURE' || c.conclusion === 'failure');
+    if (hasFailure) return 'failure';
+    const hasPending = checks.some(
+      (c) => c.status === 'IN_PROGRESS' || c.status === 'QUEUED' || c.conclusion === null
+    );
+    if (hasPending) return 'pending';
+    return 'success';
+  }
+
   async function handleOpenLocally() {
     const pr = $prStore.selectedPr;
     if (!pr) return;
@@ -46,7 +62,20 @@
     isOpeningLocally = true;
     try {
       const worktreeName = branchToWorktreeName(pr.head_ref_name);
-      await worktreeService.create(projectPath, worktreeName, pr.head_ref_name, false);
+      const worktreeInfo = await worktreeService.create(
+        projectPath,
+        worktreeName,
+        pr.head_ref_name,
+        false
+      );
+      // Open the worktree window with PR metadata so it can show a PR header bar
+      await windowService.focusOrCreateWindowWithPr(
+        worktreeInfo.path,
+        pr.number,
+        pr.title,
+        pr.head_ref_name,
+        getPrCiStatus(pr)
+      );
       toastStore.success(`Worktree created for PR #${pr.number}`);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
