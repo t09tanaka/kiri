@@ -12,6 +12,9 @@
   import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
   import CommitHistoryModal from '@/lib/components/git/CommitHistoryModal.svelte';
   import WorktreePanel from '@/lib/components/git/WorktreePanel.svelte';
+  import PrPanel from '@/lib/components/pr/PrPanel.svelte';
+  import { prViewStore } from '@/lib/stores/prViewStore';
+  import { prStore } from '@/lib/stores/prStore';
   import RemoteAccessSettings from '@/lib/components/settings/RemoteAccessSettings.svelte';
   import QrCodeModal from '@/lib/components/remote/QrCodeModal.svelte';
   import EditorModal from '@/lib/components/editor/EditorModal.svelte';
@@ -187,6 +190,24 @@
       return;
     }
 
+    // Cmd+Shift+P: Toggle PR panel (only when project is open and not in worktree)
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'p' && $isProjectOpen && !$isWorktree) {
+      e.preventDefault();
+      const path = projectStore.getCurrentPath();
+      if (path) {
+        if ($isSubdirectoryOfRepo) {
+          toastStore.warning('PRs can only be viewed from the repository root.', 4000);
+          return;
+        }
+        if ($prViewStore.isOpen) {
+          prViewStore.close();
+        } else {
+          prViewStore.open(path);
+        }
+      }
+      return;
+    }
+
     // Cmd+Shift+R: Toggle Remote Access Settings
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'r') {
       e.preventDefault();
@@ -350,6 +371,7 @@
     const unsubscribeProjectStore = projectStore.subscribe((state) => {
       if (state.currentPath) {
         worktreeStore.refresh(state.currentPath);
+        prStore.refresh(state.currentPath);
         const projectName = state.currentPath.split('/').pop() || 'kiri';
         windowService.setTitle(`${projectName} — kiri`);
       } else {
@@ -610,6 +632,10 @@
       projectPath={$worktreeViewStore.projectPath}
       onClose={() => worktreeViewStore.close()}
     />
+  {/if}
+
+  {#if $prViewStore.isOpen && $prViewStore.projectPath}
+    <PrPanel projectPath={$prViewStore.projectPath} onClose={() => prViewStore.close()} />
   {/if}
 
   {#if $isContentSearchOpen && projectStore.getCurrentPath()}
