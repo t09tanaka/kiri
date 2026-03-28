@@ -1,7 +1,7 @@
 pub mod commands;
 
 use commands::{
-    allocate_worktree_ports, apply_compose_isolation, clear_performance_timings, close_terminal,
+    allocate_worktree_ports, apply_compose_isolation, check_gh_cli, clear_performance_timings, close_terminal,
     get_foreground_process_name, get_terminal_cwd, get_terminal_process_info,
     copy_files_to_worktree, copy_files_with_ports, copy_gitignored_files, copy_paths_to_directory, create_directory, move_path,
     create_terminal, create_window, create_worktree, delete_path, detect_compose_files,
@@ -9,10 +9,10 @@ use commands::{
     focus_or_create_window, generate_remote_qr_code, get_all_git_diffs, get_behind_ahead_count,
     get_branch_ahead_count, get_commit_diff, get_commit_log, get_git_diff, get_git_file_status,
     get_git_status, get_home_directory, get_memory_metrics, get_performance_report,
-    get_worktree_context, is_terminal_alive, list_branches, list_gitignore_rules, list_worktrees, pull_commits,
+    get_worktree_context, is_terminal_alive, list_branches, list_gitignore_rules, list_pull_requests, list_worktrees, pull_commits,
     push_commits, read_directory, read_file, read_file_as_base64, record_command_timing,
     regenerate_remote_token, register_window, resize_terminal, remove_worktree, reveal_in_finder,
-    run_init_command, search_content, search_files, setup_menu, start_watching, stop_all_watching,
+    get_pull_request_detail, run_init_command, search_content, search_files, setup_menu, start_watching, stop_all_watching,
     is_cloudflared_available, start_cloudflare_tunnel, start_remote_server,
     stop_cloudflare_tunnel, stop_remote_server, is_remote_server_running,
     stop_watching, unregister_window, write_terminal, RemoteServerState, RemoteServerStateType,
@@ -118,6 +118,10 @@ pub fn run() {
             is_cloudflared_available,
             start_cloudflare_tunnel,
             stop_cloudflare_tunnel,
+            // GitHub PR
+            check_gh_cli,
+            list_pull_requests,
+            get_pull_request_detail,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
