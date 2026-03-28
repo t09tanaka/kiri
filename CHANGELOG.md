@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-03-28
+
+### Added
+
+#### Terminal
+- Add shortcut suggestions feature that learns from user input patterns
+  - `InputRecord` type and persistence for tracking command frequency
+  - `inputStatsService` with recording logic and 1000-entry eviction limit
+  - Suggestion filtering and dismiss logic
+  - `detectShortcutType` for auto-detecting command vs reply shortcuts
+  - `ShortcutSuggestions` component with badge and popover UI
+  - Integrated into `TerminalShortcutBar` and `Terminal`
+
+### Fixed
+
+#### Terminal
+- Close suggestion popover on outside click and clear input buffer on AI exit
+
 ## [0.2.1] - 2026-03-27
 
 ### Changed
