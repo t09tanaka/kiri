@@ -32,6 +32,8 @@
   import type { ComposeIsolationConfig } from '@/lib/services/persistenceService';
   import { branchToWorktreeName, validateBranchName } from '@/lib/utils/gitWorktree';
   import { formatRelativeTime } from '@/lib/utils/dateFormat';
+  import { prStore } from '@/lib/stores/prStore';
+  import type { PullRequest } from '@/lib/services/prService';
 
   interface Props {
     projectPath: string;
@@ -141,6 +143,12 @@
 
   // Get linked worktrees
   const linkedWorktrees = $derived.by(() => worktrees.filter((w) => !w.is_main && w.is_valid));
+
+  // Get PR info for a worktree by matching branch name
+  function getPrForWorktree(worktree: WorktreeInfo): PullRequest | null {
+    if (!worktree.branch) return null;
+    return $prStore.prs.find((pr) => pr.head_ref_name === worktree.branch) ?? null;
+  }
 
   // Get current branch name (HEAD)
   const currentBranch = $derived.by(() => {
@@ -1356,6 +1364,7 @@
           <!-- Linked worktrees (children) -->
           {#each linkedWorktrees as wt, i (wt.path)}
             {@const isLast = i === linkedWorktrees.length - 1}
+            {@const pr = getPrForWorktree(wt)}
             <button
               type="button"
               class="tree-item tree-child"
@@ -1365,6 +1374,9 @@
               <span class="tree-connector" class:is-last={isLast}></span>
               <span class="tree-indicator"></span>
               <span class="tree-branch">{wt.branch ?? 'detached'}</span>
+              {#if pr}
+                <span class="pr-badge">PR #{pr.number}</span>
+              {/if}
               {#if wt.is_locked}
                 <span class="tree-locked" title="Locked">🔒</span>
               {/if}
@@ -2534,6 +2546,16 @@
   .tree-child {
     padding-left: calc(var(--space-3) + 24px);
     cursor: pointer;
+  }
+
+  .pr-badge {
+    font-size: 9px;
+    font-weight: 600;
+    background: rgba(125, 211, 252, 0.15);
+    color: var(--accent-color);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
   }
 
   .tree-child:hover {
