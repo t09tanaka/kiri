@@ -62,19 +62,10 @@ struct GhCheckContext {
 }
 
 #[derive(Debug, Deserialize)]
-struct GhStatusCheckRollup {
-    contexts: Option<Vec<GhCheckContext>>,
-}
-
-#[derive(Debug, Deserialize)]
 struct GhLabelNode {
     name: String,
+    #[serde(default)]
     color: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct GhLabels {
-    nodes: Option<Vec<GhLabelNode>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,11 +73,6 @@ struct GhFileNode {
     path: String,
     additions: u32,
     deletions: u32,
-}
-
-#[derive(Debug, Deserialize)]
-struct GhFiles {
-    nodes: Option<Vec<GhFileNode>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,16 +93,15 @@ struct GhPullRequest {
     #[serde(rename = "reviewDecision")]
     review_decision: Option<String>,
     #[serde(rename = "statusCheckRollup")]
-    status_check_rollup: Option<GhStatusCheckRollup>,
-    labels: Option<GhLabels>,
-    files: Option<GhFiles>,
+    status_check_rollup: Option<Vec<GhCheckContext>>,
+    labels: Option<Vec<GhLabelNode>>,
+    files: Option<Vec<GhFileNode>>,
 }
 
 impl From<GhPullRequest> for PullRequest {
     fn from(gh: GhPullRequest) -> Self {
         let status_check_rollup = gh
             .status_check_rollup
-            .and_then(|s| s.contexts)
             .unwrap_or_default()
             .into_iter()
             .map(|c| CheckStatus {
@@ -128,7 +113,6 @@ impl From<GhPullRequest> for PullRequest {
 
         let labels = gh
             .labels
-            .and_then(|l| l.nodes)
             .unwrap_or_default()
             .into_iter()
             .map(|l| PrLabel {
@@ -139,7 +123,6 @@ impl From<GhPullRequest> for PullRequest {
 
         let files = gh
             .files
-            .and_then(|f| f.nodes)
             .unwrap_or_default()
             .into_iter()
             .map(|f| PrFile {
@@ -286,32 +269,26 @@ mod tests {
                 "changedFiles": 5,
                 "body": "This PR adds a new feature.",
                 "reviewDecision": "APPROVED",
-                "statusCheckRollup": {
-                    "contexts": [
-                        {
-                            "name": "CI / Build",
-                            "status": "COMPLETED",
-                            "conclusion": "SUCCESS"
-                        },
-                        {
-                            "name": "CI / Lint",
-                            "status": "COMPLETED",
-                            "conclusion": "FAILURE"
-                        }
-                    ]
-                },
-                "labels": {
-                    "nodes": [
-                        {"name": "enhancement", "color": "a2eeef"},
-                        {"name": "priority:high", "color": "ff0000"}
-                    ]
-                },
-                "files": {
-                    "nodes": [
-                        {"path": "src/main.rs", "additions": 100, "deletions": 20},
-                        {"path": "src/lib.rs", "additions": 50, "deletions": 10}
-                    ]
-                }
+                "statusCheckRollup": [
+                    {
+                        "name": "CI / Build",
+                        "status": "COMPLETED",
+                        "conclusion": "SUCCESS"
+                    },
+                    {
+                        "name": "CI / Lint",
+                        "status": "COMPLETED",
+                        "conclusion": "FAILURE"
+                    }
+                ],
+                "labels": [
+                    {"name": "enhancement", "color": "a2eeef"},
+                    {"name": "priority:high", "color": "ff0000"}
+                ],
+                "files": [
+                    {"path": "src/main.rs", "additions": 100, "deletions": 20},
+                    {"path": "src/lib.rs", "additions": 50, "deletions": 10}
+                ]
             }
         ]"#;
 
@@ -387,7 +364,7 @@ mod tests {
                 "body": null,
                 "reviewDecision": null,
                 "statusCheckRollup": null,
-                "labels": {"nodes": []},
+                "labels": [],
                 "files": null
             }
         ]"#;
