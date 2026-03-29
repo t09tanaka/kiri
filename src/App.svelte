@@ -638,8 +638,6 @@
         {:else}
           <span class="pr-header-ci pr-ci-unknown">○ No CI</span>
         {/if}
-        <span class="pr-header-sep">·</span>
-        <code class="pr-header-branch">{prHeaderBranch}</code>
       </div>
     {/if}
     <AppLayout />
@@ -815,19 +813,5 @@
 
   .pr-ci-unknown {
     color: var(--text-muted);
-  }
-
-  .pr-header-branch {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    padding: 1px 5px;
-    background: rgba(125, 211, 252, 0.1);
-    color: var(--accent-color);
-    border-radius: var(--radius-sm);
-    white-space: nowrap;
-    flex-shrink: 0;
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
 </style>
