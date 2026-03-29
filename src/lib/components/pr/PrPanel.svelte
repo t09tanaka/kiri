@@ -61,25 +61,40 @@
 
     isOpeningLocally = true;
     try {
-      const worktreeName = branchToWorktreeName(pr.head_ref_name);
-      const worktreeInfo = await worktreeService.create(
-        projectPath,
-        worktreeName,
-        pr.head_ref_name,
-        false
-      );
-      // Open the worktree window with PR metadata so it can show a PR header bar
-      await windowService.focusOrCreateWindowWithPr(
-        worktreeInfo.path,
-        pr.number,
-        pr.title,
-        pr.head_ref_name,
-        getPrCiStatus(pr)
-      );
-      toastStore.success(`Worktree created for PR #${pr.number}`);
+      // Check if a worktree already exists for this branch
+      const worktrees = await worktreeService.list(projectPath);
+      const existing = worktrees.find((wt) => wt.branch === pr.head_ref_name && !wt.is_main);
+
+      if (existing) {
+        // Open existing worktree window
+        await windowService.focusOrCreateWindowWithPr(
+          existing.path,
+          pr.number,
+          pr.title,
+          pr.head_ref_name,
+          getPrCiStatus(pr)
+        );
+        toastStore.success(`Opened existing worktree for PR #${pr.number}`);
+      } else {
+        const worktreeName = branchToWorktreeName(pr.head_ref_name);
+        const worktreeInfo = await worktreeService.create(
+          projectPath,
+          worktreeName,
+          pr.head_ref_name,
+          false
+        );
+        await windowService.focusOrCreateWindowWithPr(
+          worktreeInfo.path,
+          pr.number,
+          pr.title,
+          pr.head_ref_name,
+          getPrCiStatus(pr)
+        );
+        toastStore.success(`Worktree created for PR #${pr.number}`);
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      toastStore.error(`Failed to create worktree: ${message}`);
+      toastStore.error(`Failed to open worktree: ${message}`);
     } finally {
       isOpeningLocally = false;
     }
