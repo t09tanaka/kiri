@@ -393,12 +393,6 @@
       <!-- Footer -->
       <div class="panel-footer">
         {#if view === 'detail'}
-          <div class="footer-left">
-            <span class="footer-item">
-              <kbd>Esc</kbd>
-              <span>back</span>
-            </span>
-          </div>
           <button
             class="footer-open-locally"
             onclick={handleOpenLocally}
@@ -419,6 +413,10 @@
               <span>Open locally</span>
             {/if}
           </button>
+          <span class="footer-item">
+            <kbd>Esc</kbd>
+            <span>back</span>
+          </span>
         {:else}
           <span class="footer-item">
             <kbd>↵</kbd>
@@ -997,43 +995,35 @@
     border-radius: 0 0 var(--radius-xl) var(--radius-xl);
   }
 
-  .footer-left {
-    display: flex;
-    align-items: center;
-    gap: var(--space-5);
-    margin-right: auto;
-  }
-
   .footer-open-locally {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: var(--space-2);
-    padding: 4px 12px;
-    background: var(--accent-color);
-    color: var(--bg-primary);
-    border: none;
-    border-radius: var(--radius-md);
-    font-size: 11px;
-    font-weight: 600;
+    padding: var(--space-2) var(--space-3);
+    background: rgba(125, 211, 252, 0.15);
+    border: 1px solid rgba(125, 211, 252, 0.3);
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 500;
+    font-family: var(--font-sans);
+    color: var(--accent-color);
     cursor: pointer;
     transition: all var(--transition-fast);
     white-space: nowrap;
+    margin-right: auto;
   }
 
   .footer-open-locally:hover {
-    filter: brightness(1.15);
-    transform: translateY(-1px);
+    background: rgba(125, 211, 252, 0.25);
   }
 
   .footer-open-locally:active {
-    transform: translateY(0) scale(0.98);
+    transform: scale(0.98);
   }
 
   .footer-open-locally:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-    transform: none;
-    filter: none;
   }
 
   .footer-item {
