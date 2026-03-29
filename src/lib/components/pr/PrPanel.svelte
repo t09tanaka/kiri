@@ -7,6 +7,7 @@
   import { toastStore } from '@/lib/stores/toastStore';
   import type { PullRequest } from '@/lib/services/prService';
   import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
+  import { loadProjectSettings } from '@/lib/services/persistenceService';
 
   interface Props {
     projectPath: string;
@@ -76,6 +77,7 @@
         );
         toastStore.success(`Opened existing worktree for PR #${pr.number}`);
       } else {
+        // Create new worktree
         const worktreeName = branchToWorktreeName(pr.head_ref_name);
         const worktreeInfo = await worktreeService.create(
           projectPath,
@@ -83,6 +85,38 @@
           pr.head_ref_name,
           false
         );
+
+        // Copy gitignored files (same as WorktreePanel)
+        try {
+          const settings = await loadProjectSettings(projectPath);
+          const disabledRules = settings.worktreeDisabledCopyRules ?? [];
+          const rules = await worktreeService.listGitignoreRules(projectPath);
+          const enabledPatterns = rules
+            .filter((r) => !disabledRules.includes(r.pattern))
+            .map((r) => r.pattern);
+          if (enabledPatterns.length > 0) {
+            await worktreeService.copyGitignoredFiles(
+              projectPath,
+              worktreeInfo.path,
+              enabledPatterns
+            );
+          }
+        } catch (copyErr) {
+          console.error('Failed to copy gitignored files:', copyErr);
+        }
+
+        // Run init commands (same as WorktreePanel)
+        try {
+          const settings = await loadProjectSettings(projectPath);
+          const commands = (settings.worktreeInitCommands ?? []).filter((c) => c.enabled);
+          for (const cmd of commands) {
+            await worktreeService.runInitCommand(worktreeInfo.path, cmd.command);
+          }
+        } catch (initErr) {
+          console.error('Failed to run init commands:', initErr);
+        }
+
+        // Open window
         await windowService.focusOrCreateWindowWithPr(
           worktreeInfo.path,
           pr.number,
