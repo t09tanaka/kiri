@@ -89,6 +89,15 @@
 
     try {
       const worktrees = await worktreeService.list(projectPath);
+
+      // Check if this branch is already checked out in the main worktree
+      const mainWorktree = worktrees.find((wt) => wt.is_main && wt.branch === pr.head_ref_name);
+      if (mainWorktree) {
+        toastStore.success(`Already on branch '${pr.head_ref_name}' in this window`);
+        isOpeningLocally = false;
+        return;
+      }
+
       const existing = worktrees.find((wt) => wt.branch === pr.head_ref_name && !wt.is_main);
 
       if (existing) {
