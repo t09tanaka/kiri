@@ -3,6 +3,10 @@ import type { PortAssignment } from './portIsolationService';
 import type { ComposeNameReplacement } from './composeIsolationService';
 export type { WorktreeInfo } from './worktreeService';
 import type { WorktreeInfo } from './worktreeService';
+import { worktreeService } from './worktreeService';
+import { portIsolationService } from './portIsolationService';
+import { composeIsolationService } from './composeIsolationService';
+import { branchToWorktreeName } from '../utils/gitWorktree';
 
 // ============================================================================
 // Types
@@ -83,4 +87,161 @@ export function buildOpenTaskList(initCommands: WorktreeInitCommand[]): Progress
   tasks.push({ id: 'open-window', name: 'Open worktree window', status: 'pending' });
 
   return tasks;
+}
+
+// ============================================================================
+// Flow executors
+// ============================================================================
+
+/**
+ * Execute the full create worktree flow.
+ * Returns when all steps complete or a cancel is requested.
+ */
+export async function executeCreateFlow(
+  repoPath: string,
+  branchName: string,
+  isExistingBranch: boolean,
+  options: CreateFlowOptions,
+  callbacks: FlowCallbacks
+): Promise<CreateFlowResult> {
+  const { gitignorePatterns, portAssignments, portConfig, composeReplacements, initCommands } =
+    options;
+  const { onTaskUpdate, onCancelCheck } = callbacks;
+
+  // Step 1: Create worktree
+  onTaskUpdate('worktree', 'running');
+  const wtName = branchToWorktreeName(branchName);
+  const worktreeInfo = await worktreeService.create(
+    repoPath,
+    wtName,
+    branchName,
+    !isExistingBranch
+  );
+  onTaskUpdate('worktree', 'completed');
+
+  // Check cancel
+  if (onCancelCheck()) {
+    return { worktreeInfo };
+  }
+
+  // Step 2: Copy files
+  let copyFailed = false;
+  onTaskUpdate('copy', 'running');
+  if (gitignorePatterns.length > 0) {
+    try {
+      let copyResult;
+      if (portAssignments.length > 0) {
+        copyResult = await portIsolationService.copyFilesWithPorts(
+          repoPath,
+          worktreeInfo.path,
+          gitignorePatterns,
+          portAssignments
+        );
+      } else {
+        copyResult = await worktreeService.copyGitignoredFiles(
+          repoPath,
+          worktreeInfo.path,
+          gitignorePatterns
+        );
+      }
+      const parts: string[] = [`${copyResult.copied_files.length} files copied`];
+      if (copyResult.transformed_files.length > 0) {
+        parts.push(`${copyResult.transformed_files.length} transformed`);
+      }
+      onTaskUpdate('copy', 'completed', parts.join(', '));
+    } catch (err) {
+      copyFailed = true;
+      onTaskUpdate('copy', 'failed', String(err));
+    }
+  } else {
+    onTaskUpdate('copy', 'completed', 'No copy rules enabled');
+  }
+
+  // Check cancel
+  if (onCancelCheck()) {
+    return { worktreeInfo };
+  }
+
+  // Step 3: Remap ports
+  let portConfigUpdated: PortConfig | undefined;
+  if (portAssignments.length > 0) {
+    onTaskUpdate('port-remap', 'running');
+    if (!copyFailed) {
+      const updated = portIsolationService.registerWorktreeAssignments(
+        portConfig!,
+        wtName,
+        portAssignments
+      );
+      portConfigUpdated = updated;
+      onTaskUpdate('port-remap', 'completed');
+    } else {
+      onTaskUpdate('port-remap', 'failed', 'Skipped due to copy failure');
+    }
+  }
+
+  // Check cancel
+  if (onCancelCheck()) {
+    return { worktreeInfo, portConfigUpdated };
+  }
+
+  // Step 4: Compose isolation
+  if (composeReplacements.length > 0) {
+    onTaskUpdate('compose-name', 'running');
+    await composeIsolationService.applyComposeIsolation(worktreeInfo.path, composeReplacements);
+    onTaskUpdate('compose-name', 'completed');
+  }
+
+  // Check cancel
+  if (onCancelCheck()) {
+    return { worktreeInfo, portConfigUpdated };
+  }
+
+  // Step 5: Init commands
+  for (let i = 0; i < initCommands.length; i++) {
+    if (onCancelCheck()) {
+      return { worktreeInfo, portConfigUpdated };
+    }
+    const cmd = initCommands[i];
+    const taskId = `init-${i}`;
+    onTaskUpdate(taskId, 'running');
+    const result = await worktreeService.runInitCommand(worktreeInfo.path, cmd.command);
+    if (result.success) {
+      onTaskUpdate(taskId, 'completed');
+    } else {
+      const lines = result.stderr.trim().split('\n');
+      const detail = lines[lines.length - 1] || result.stderr;
+      onTaskUpdate(taskId, 'failed', detail);
+    }
+  }
+
+  return { worktreeInfo, portConfigUpdated };
+}
+
+/**
+ * Execute the open (existing) worktree flow.
+ * Runs init commands in order, respecting cancel.
+ */
+export async function executeOpenFlow(
+  worktreePath: string,
+  initCommands: WorktreeInitCommand[],
+  callbacks: FlowCallbacks
+): Promise<void> {
+  const { onTaskUpdate, onCancelCheck } = callbacks;
+
+  for (let i = 0; i < initCommands.length; i++) {
+    if (onCancelCheck()) {
+      return;
+    }
+    const cmd = initCommands[i];
+    const taskId = `init-${i}`;
+    onTaskUpdate(taskId, 'running');
+    const result = await worktreeService.runInitCommand(worktreePath, cmd.command);
+    if (result.success) {
+      onTaskUpdate(taskId, 'completed');
+    } else {
+      const lines = result.stderr.trim().split('\n');
+      const detail = lines[lines.length - 1] || result.stderr;
+      onTaskUpdate(taskId, 'failed', detail);
+    }
+  }
 }
