@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Spinner } from '@/lib/components/ui';
   import { prStore } from '@/lib/stores/prStore';
   import { worktreeService } from '@/lib/services/worktreeService';
@@ -42,6 +42,13 @@
     progressTasks = progressTasks.map((task) =>
       task.id === taskId ? { ...task, status, ...(detail !== undefined ? { detail } : {}) } : task
     );
+    // tick() is not awaited here since this is a sync callback;
+    // Svelte reactivity handles the update via $state reassignment.
+  }
+
+  async function forceUIUpdate() {
+    await tick();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
   }
 
   onMount(() => {
@@ -107,6 +114,7 @@
 
         progressTasks = buildOpenTaskList(initCommands);
         isProgressActive = true;
+        await forceUIUpdate();
 
         await executeOpenFlow(existing.path, initCommands, {
           onTaskUpdate: updateTask,
@@ -115,6 +123,7 @@
 
         if (!creationCancelled) {
           updateTask('open-window', 'running');
+          await forceUIUpdate();
           await windowService.focusOrCreateWindowWithPr(
             existing.path,
             pr.number,
@@ -185,6 +194,7 @@
         const wtName = branchToWorktreeName(pr.head_ref_name);
         progressTasks = buildCreateTaskList(wtName, flowOptions);
         isProgressActive = true;
+        await forceUIUpdate();
 
         const result = await executeCreateFlow(
           projectPath,
@@ -218,6 +228,7 @@
 
         // Open window
         updateTask('open-window', 'running');
+        await forceUIUpdate();
         await windowService.focusOrCreateWindowWithPr(
           result.worktreeInfo.path,
           pr.number,
@@ -473,73 +484,13 @@
             </div>
           {/if}
         {:else if view === 'detail' && prState.selectedPr}
-          <!-- PR Detail -->
-          {@const pr = prState.selectedPr}
-          {@const ciStatus = getCiStatusIcon(pr)}
-          {@const reviewDecision = getReviewDecisionLabel(pr.review_decision)}
-          <div class="pr-detail">
-            <div class="detail-header">
-              <h2 class="detail-title">
-                <span class="detail-number">#{pr.number}</span>
-                {pr.title}
-              </h2>
-              <div class="detail-meta">
-                <code class="detail-branch">{pr.head_ref_name}</code>
-                <span class="detail-ci" style="color: {ciStatus.color}">{ciStatus.icon}</span>
-                <span class="detail-author">{pr.author_login}</span>
-                <span class="detail-time">{getRelativeTime(pr.updated_at)}</span>
-              </div>
-              <div class="detail-review" style="color: {reviewDecision.color}">
-                {reviewDecision.text}
-              </div>
-              {#if pr.labels.length > 0}
-                <div class="detail-labels">
-                  {#each pr.labels as label (label.name)}
-                    <span
-                      class="label-badge"
-                      style="background: #{label.color}33; color: #{label.color}; border-color: #{label.color}55"
-                    >
-                      {label.name}
-                    </span>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-
-            {#if pr.body}
-              <div class="detail-body">
-                <p class="detail-description">{pr.body}</p>
-              </div>
-            {/if}
-
-            <div class="detail-stats">
-              <span class="stat-additions">+{pr.additions}</span>
-              <span class="stat-deletions">-{pr.deletions}</span>
-              <span class="stat-files">{pr.changed_files} files</span>
-            </div>
-
-            {#if pr.files.length > 0}
-              <div class="detail-files">
-                <h3 class="files-heading">Changed files</h3>
-                <div class="files-list">
-                  {#each pr.files as file (file.path)}
-                    <div class="file-row">
-                      <span class="file-path">{file.path}</span>
-                      <span class="file-changes">
-                        {#if file.additions > 0}
-                          <span class="file-additions">+{file.additions}</span>
-                        {/if}
-                        {#if file.deletions > 0}
-                          <span class="file-deletions">-{file.deletions}</span>
-                        {/if}
-                      </span>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-          </div>
           {#if showProgress}
+            <!-- Progress View (replaces PR detail during worktree creation) -->
+            {@const pr = prState.selectedPr}
+            <div class="progress-header">
+              <span class="progress-title">Opening PR #{pr.number} locally</span>
+              <code class="progress-branch">{pr.head_ref_name}</code>
+            </div>
             <div class="progress-task-list">
               {#each progressTasks as task (task.id)}
                 <div
@@ -600,6 +551,73 @@
                   </div>
                 </div>
               {/each}
+            </div>
+          {:else}
+            <!-- PR Detail -->
+            {@const pr = prState.selectedPr}
+            {@const ciStatus = getCiStatusIcon(pr)}
+            {@const reviewDecision = getReviewDecisionLabel(pr.review_decision)}
+            <div class="pr-detail">
+              <div class="detail-header">
+                <h2 class="detail-title">
+                  <span class="detail-number">#{pr.number}</span>
+                  {pr.title}
+                </h2>
+                <div class="detail-meta">
+                  <code class="detail-branch">{pr.head_ref_name}</code>
+                  <span class="detail-ci" style="color: {ciStatus.color}">{ciStatus.icon}</span>
+                  <span class="detail-author">{pr.author_login}</span>
+                  <span class="detail-time">{getRelativeTime(pr.updated_at)}</span>
+                </div>
+                <div class="detail-review" style="color: {reviewDecision.color}">
+                  {reviewDecision.text}
+                </div>
+                {#if pr.labels.length > 0}
+                  <div class="detail-labels">
+                    {#each pr.labels as label (label.name)}
+                      <span
+                        class="label-badge"
+                        style="background: #{label.color}33; color: #{label.color}; border-color: #{label.color}55"
+                      >
+                        {label.name}
+                      </span>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+
+              {#if pr.body}
+                <div class="detail-body">
+                  <p class="detail-description">{pr.body}</p>
+                </div>
+              {/if}
+
+              <div class="detail-stats">
+                <span class="stat-additions">+{pr.additions}</span>
+                <span class="stat-deletions">-{pr.deletions}</span>
+                <span class="stat-files">{pr.changed_files} files</span>
+              </div>
+
+              {#if pr.files.length > 0}
+                <div class="detail-files">
+                  <h3 class="files-heading">Changed files</h3>
+                  <div class="files-list">
+                    {#each pr.files as file (file.path)}
+                      <div class="file-row">
+                        <span class="file-path">{file.path}</span>
+                        <span class="file-changes">
+                          {#if file.additions > 0}
+                            <span class="file-additions">+{file.additions}</span>
+                          {/if}
+                          {#if file.deletions > 0}
+                            <span class="file-deletions">-{file.deletions}</span>
+                          {/if}
+                        </span>
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
             </div>
           {/if}
         {:else if view === 'detail' && !prState.selectedPr}
@@ -1289,6 +1307,24 @@
   }
 
   /* Progress Task List */
+  .progress-header {
+    padding: var(--space-3);
+    border-bottom: 1px solid var(--border-primary);
+  }
+
+  .progress-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .progress-branch {
+    display: block;
+    margin-top: var(--space-1);
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
   .progress-task-list {
     display: flex;
     flex-direction: column;
