@@ -159,8 +159,8 @@
             const detected = await portIsolationService.detectPorts(projectPath);
             const uniquePorts = portIsolationService.getUniqueEnvPorts(detected);
             if (uniquePorts.length > 0) {
-              const allocation = await portIsolationService.allocatePorts(uniquePorts, portConfig);
-              portAssignments = allocation.assignments;
+              const result = portIsolationService.allocatePortsWithOffset(uniquePorts, portConfig);
+              portAssignments = result.assignments;
             }
           } catch (e) {
             console.error('Failed to detect/allocate ports:', e);
