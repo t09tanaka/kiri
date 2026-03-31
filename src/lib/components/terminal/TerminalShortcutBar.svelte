@@ -130,11 +130,7 @@
 
     <!-- Bar actions: suggestions badge + settings button -->
     <div class="bar-actions">
-      <ShortcutSuggestions
-        {suggestions}
-        onAdd={onSuggestionAdd}
-        onDismiss={onSuggestionDismiss}
-      />
+      <ShortcutSuggestions {suggestions} onAdd={onSuggestionAdd} onDismiss={onSuggestionDismiss} />
       <button
         class="settings-btn"
         onclick={onSettingsClick}

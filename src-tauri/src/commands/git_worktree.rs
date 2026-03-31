@@ -681,7 +681,7 @@ pub fn run_init_command(cwd: String, command: String) -> Result<CommandOutput, S
 
 /// Recursively finds all .gitignore files in dir, skipping .git, node_modules, and .svelte-kit.
 /// Paths are collected relative to repo_root for use as source_file.
-fn collect_gitignore_files(dir: &Path, repo_root: &Path, result: &mut Vec<std::path::PathBuf>) {
+fn collect_gitignore_files(dir: &Path, _repo_root: &Path, result: &mut Vec<std::path::PathBuf>) {
     let read_dir = match fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(_) => return,
@@ -702,7 +702,7 @@ fn collect_gitignore_files(dir: &Path, repo_root: &Path, result: &mut Vec<std::p
             if dir_name == ".git" || dir_name == "node_modules" || dir_name == ".svelte-kit" {
                 continue;
             }
-            collect_gitignore_files(&path, repo_root, result);
+            collect_gitignore_files(&path, _repo_root, result);
         }
     }
 }

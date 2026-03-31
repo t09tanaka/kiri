@@ -83,6 +83,7 @@ fn window_title(project_path: Option<&str>) -> String {
 }
 
 /// Internal implementation of window creation (used by both command and menu)
+#[allow(clippy::too_many_arguments)]
 pub fn create_window_impl(
     app: &AppHandle,
     registry: Option<&WindowRegistryState>,
