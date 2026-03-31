@@ -796,10 +796,12 @@
     return initCommands.filter((c) => c.enabled);
   }
 
-  function updateTask(taskId: string, status: TaskStatus, detail?: string) {
+  async function updateTask(taskId: string, status: TaskStatus, detail?: string) {
     progressTasks = progressTasks.map((task) =>
       task.id === taskId ? { ...task, status, ...(detail !== undefined ? { detail } : {}) } : task
     );
+    await tick();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
   }
 
   onDestroy(() => {

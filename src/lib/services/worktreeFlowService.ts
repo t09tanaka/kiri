@@ -22,7 +22,7 @@ export interface ProgressTask {
 }
 
 export interface FlowCallbacks {
-  onTaskUpdate: (taskId: string, status: TaskStatus, detail?: string) => void;
+  onTaskUpdate: (taskId: string, status: TaskStatus, detail?: string) => void | Promise<void>;
   onCancelCheck: () => boolean;
 }
 
@@ -109,7 +109,7 @@ export async function executeCreateFlow(
   const { onTaskUpdate, onCancelCheck } = callbacks;
 
   // Step 1: Create worktree
-  onTaskUpdate('worktree', 'running');
+  await onTaskUpdate('worktree', 'running');
   const wtName = branchToWorktreeName(branchName);
   const worktreeInfo = await worktreeService.create(
     repoPath,
@@ -117,7 +117,7 @@ export async function executeCreateFlow(
     branchName,
     !isExistingBranch
   );
-  onTaskUpdate('worktree', 'completed');
+  await onTaskUpdate('worktree', 'completed');
 
   // Check cancel
   if (onCancelCheck()) {
@@ -126,7 +126,7 @@ export async function executeCreateFlow(
 
   // Step 2: Copy files
   let copyFailed = false;
-  onTaskUpdate('copy', 'running');
+  await onTaskUpdate('copy', 'running');
   if (gitignorePatterns.length > 0) {
     try {
       let copyResult;
@@ -148,13 +148,13 @@ export async function executeCreateFlow(
       if (copyResult.transformed_files.length > 0) {
         parts.push(`${copyResult.transformed_files.length} transformed`);
       }
-      onTaskUpdate('copy', 'completed', parts.join(', '));
+      await onTaskUpdate('copy', 'completed', parts.join(', '));
     } catch (err) {
       copyFailed = true;
-      onTaskUpdate('copy', 'failed', String(err));
+      await onTaskUpdate('copy', 'failed', String(err));
     }
   } else {
-    onTaskUpdate('copy', 'completed', 'No copy rules enabled');
+    await onTaskUpdate('copy', 'completed', 'No copy rules enabled');
   }
 
   // Check cancel
@@ -165,7 +165,7 @@ export async function executeCreateFlow(
   // Step 3: Remap ports
   let portConfigUpdated: PortConfig | undefined;
   if (portAssignments.length > 0) {
-    onTaskUpdate('port-remap', 'running');
+    await onTaskUpdate('port-remap', 'running');
     if (!copyFailed) {
       const updated = portIsolationService.registerWorktreeAssignments(
         portConfig!,
@@ -173,9 +173,9 @@ export async function executeCreateFlow(
         portAssignments
       );
       portConfigUpdated = updated;
-      onTaskUpdate('port-remap', 'completed');
+      await onTaskUpdate('port-remap', 'completed');
     } else {
-      onTaskUpdate('port-remap', 'failed', 'Skipped due to copy failure');
+      await onTaskUpdate('port-remap', 'failed', 'Skipped due to copy failure');
     }
   }
 
@@ -186,9 +186,9 @@ export async function executeCreateFlow(
 
   // Step 4: Compose isolation
   if (composeReplacements.length > 0) {
-    onTaskUpdate('compose-name', 'running');
+    await onTaskUpdate('compose-name', 'running');
     await composeIsolationService.applyComposeIsolation(worktreeInfo.path, composeReplacements);
-    onTaskUpdate('compose-name', 'completed');
+    await onTaskUpdate('compose-name', 'completed');
   }
 
   // Check cancel
@@ -203,14 +203,14 @@ export async function executeCreateFlow(
     }
     const cmd = initCommands[i];
     const taskId = `init-${i}`;
-    onTaskUpdate(taskId, 'running');
+    await onTaskUpdate(taskId, 'running');
     const result = await worktreeService.runInitCommand(worktreeInfo.path, cmd.command);
     if (result.success) {
-      onTaskUpdate(taskId, 'completed');
+      await onTaskUpdate(taskId, 'completed');
     } else {
       const lines = result.stderr.trim().split('\n');
       const detail = lines[lines.length - 1] || result.stderr;
-      onTaskUpdate(taskId, 'failed', detail);
+      await onTaskUpdate(taskId, 'failed', detail);
     }
   }
 
@@ -234,14 +234,14 @@ export async function executeOpenFlow(
     }
     const cmd = initCommands[i];
     const taskId = `init-${i}`;
-    onTaskUpdate(taskId, 'running');
+    await onTaskUpdate(taskId, 'running');
     const result = await worktreeService.runInitCommand(worktreePath, cmd.command);
     if (result.success) {
-      onTaskUpdate(taskId, 'completed');
+      await onTaskUpdate(taskId, 'completed');
     } else {
       const lines = result.stderr.trim().split('\n');
       const detail = lines[lines.length - 1] || result.stderr;
-      onTaskUpdate(taskId, 'failed', detail);
+      await onTaskUpdate(taskId, 'failed', detail);
     }
   }
 }

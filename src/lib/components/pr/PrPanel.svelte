@@ -38,12 +38,12 @@
   let creationCancelled = $state(false);
   const showProgress = $derived(isProgressActive && progressTasks.length > 0);
 
-  function updateTask(taskId: string, status: TaskStatus, detail?: string) {
+  async function updateTask(taskId: string, status: TaskStatus, detail?: string) {
     progressTasks = progressTasks.map((task) =>
       task.id === taskId ? { ...task, status, ...(detail !== undefined ? { detail } : {}) } : task
     );
-    // tick() is not awaited here since this is a sync callback;
-    // Svelte reactivity handles the update via $state reassignment.
+    await tick();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
   }
 
   async function forceUIUpdate() {
