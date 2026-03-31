@@ -1,52 +1,40 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount } from 'svelte';
   import { Spinner } from '@/lib/components/ui';
   import { prStore } from '@/lib/stores/prStore';
   import { worktreeService } from '@/lib/services/worktreeService';
   import { windowService } from '@/lib/services/windowService';
   import { toastStore } from '@/lib/stores/toastStore';
   import type { PullRequest } from '@/lib/services/prService';
-  import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
-  import { loadProjectSettings, saveProjectSettings } from '@/lib/services/persistenceService';
   import {
-    buildCreateTaskList,
     buildOpenTaskList,
-    executeCreateFlow,
     executeOpenFlow,
     type ProgressTask,
     type TaskStatus,
-    type CreateFlowOptions,
   } from '@/lib/services/worktreeFlowService';
-  import { portIsolationService, type PortAssignment } from '@/lib/services/portIsolationService';
-  import {
-    composeIsolationService,
-    type ComposeNameReplacement,
-  } from '@/lib/services/composeIsolationService';
+  import { loadProjectSettings } from '@/lib/services/persistenceService';
+  import { tick } from 'svelte';
 
   interface Props {
     projectPath: string;
     onClose: () => void;
+    onCreateWorktree: (branchName: string) => void;
   }
 
-  let { projectPath, onClose }: Props = $props();
+  let { projectPath, onClose, onCreateWorktree }: Props = $props();
 
   let mounted = $state(false);
   let view = $state<'list' | 'detail'>('list');
   let isOpeningLocally = $state(false);
   let progressTasks = $state<ProgressTask[]>([]);
   let isProgressActive = $state(false);
-  let creationCancelled = $state(false);
+  let openCancelled = $state(false);
   const showProgress = $derived(isProgressActive && progressTasks.length > 0);
 
   async function updateTask(taskId: string, status: TaskStatus, detail?: string) {
     progressTasks = progressTasks.map((task) =>
       task.id === taskId ? { ...task, status, ...(detail !== undefined ? { detail } : {}) } : task
     );
-    await tick();
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-  }
-
-  async function forceUIUpdate() {
     await tick();
     await new Promise((resolve) => requestAnimationFrame(resolve));
   }
@@ -92,7 +80,7 @@
     if (!pr) return;
 
     isOpeningLocally = true;
-    creationCancelled = false;
+    openCancelled = false;
 
     try {
       const worktrees = await worktreeService.list(projectPath);
@@ -101,7 +89,6 @@
       const mainWorktree = worktrees.find((wt) => wt.is_main && wt.branch === pr.head_ref_name);
       if (mainWorktree) {
         toastStore.success(`Already on branch '${pr.head_ref_name}' in this window`);
-        isOpeningLocally = false;
         return;
       }
 
@@ -114,16 +101,14 @@
 
         progressTasks = buildOpenTaskList(initCommands);
         isProgressActive = true;
-        await forceUIUpdate();
 
         await executeOpenFlow(existing.path, initCommands, {
           onTaskUpdate: updateTask,
-          onCancelCheck: () => creationCancelled,
+          onCancelCheck: () => openCancelled,
         });
 
-        if (!creationCancelled) {
-          updateTask('open-window', 'running');
-          await forceUIUpdate();
+        if (!openCancelled) {
+          await updateTask('open-window', 'running');
           await windowService.focusOrCreateWindowWithPr(
             existing.path,
             pr.number,
@@ -131,117 +116,16 @@
             pr.head_ref_name,
             getPrCiStatus(pr)
           );
-          updateTask('open-window', 'completed');
+          await updateTask('open-window', 'completed');
           toastStore.success(`Opened existing worktree for PR #${pr.number}`);
         }
 
         await new Promise((resolve) => setTimeout(resolve, 800));
         isProgressActive = false;
         progressTasks = [];
-        creationCancelled = false;
       } else {
-        // Create new worktree — full flow
-        const settings = await loadProjectSettings(projectPath);
-        const disabledRules = settings.worktreeDisabledCopyRules ?? [];
-        const rules = await worktreeService.listGitignoreRules(projectPath);
-        const enabledPatterns = rules
-          .filter((r) => !disabledRules.includes(r.pattern))
-          .map((r) => r.pattern);
-
-        const initCommands = (settings.worktreeInitCommands ?? []).filter((c) => c.enabled);
-        const portConfig = settings.portConfig ?? null;
-        const composeConfig = settings.composeIsolationConfig ?? null;
-
-        // Detect and allocate ports if enabled
-        let portAssignments: PortAssignment[] = [];
-        if (portConfig?.enabled) {
-          try {
-            const detected = await portIsolationService.detectPorts(projectPath);
-            const uniquePorts = portIsolationService.getUniqueEnvPorts(detected);
-            if (uniquePorts.length > 0) {
-              const result = portIsolationService.allocatePortsWithOffset(uniquePorts, portConfig);
-              portAssignments = result.assignments;
-            }
-          } catch (e) {
-            console.error('Failed to detect/allocate ports:', e);
-          }
-        }
-
-        // Build compose replacements if enabled
-        let composeReplacements: ComposeNameReplacement[] = [];
-        if (composeConfig?.enabled) {
-          try {
-            const detected = await composeIsolationService.detectComposeFiles(projectPath);
-            const wtName = branchToWorktreeName(pr.head_ref_name);
-            composeReplacements = composeIsolationService.buildReplacements(
-              detected,
-              wtName,
-              composeConfig.disabledFiles ?? []
-            );
-          } catch (e) {
-            console.error('Failed to detect compose files:', e);
-          }
-        }
-
-        const flowOptions: CreateFlowOptions = {
-          gitignorePatterns: enabledPatterns,
-          portAssignments,
-          portConfig,
-          composeReplacements,
-          initCommands,
-        };
-
-        const wtName = branchToWorktreeName(pr.head_ref_name);
-        progressTasks = buildCreateTaskList(wtName, flowOptions);
-        isProgressActive = true;
-        await forceUIUpdate();
-
-        const result = await executeCreateFlow(
-          projectPath,
-          pr.head_ref_name,
-          true, // PR branch always exists on remote
-          flowOptions,
-          {
-            onTaskUpdate: updateTask,
-            onCancelCheck: () => creationCancelled,
-          }
-        );
-
-        if (creationCancelled) {
-          try {
-            await worktreeService.remove(projectPath, wtName);
-          } catch (e) {
-            console.error('Cleanup failed:', e);
-          }
-          isProgressActive = false;
-          progressTasks = [];
-          creationCancelled = false;
-          return;
-        }
-
-        // Persist updated port config
-        if (result.portConfigUpdated) {
-          const currentSettings = await loadProjectSettings(projectPath);
-          currentSettings.portConfig = result.portConfigUpdated;
-          await saveProjectSettings(projectPath, currentSettings);
-        }
-
-        // Open window
-        updateTask('open-window', 'running');
-        await forceUIUpdate();
-        await windowService.focusOrCreateWindowWithPr(
-          result.worktreeInfo.path,
-          pr.number,
-          pr.title,
-          pr.head_ref_name,
-          getPrCiStatus(pr)
-        );
-        updateTask('open-window', 'completed');
-        toastStore.success(`Worktree created for PR #${pr.number}`);
-
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        isProgressActive = false;
-        progressTasks = [];
+        // Delegate to WorktreePanel for full creation flow
+        onCreateWorktree(pr.head_ref_name);
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -250,7 +134,7 @@
       progressTasks = [];
     } finally {
       isOpeningLocally = false;
-      creationCancelled = false;
+      openCancelled = false;
     }
   }
 
@@ -485,10 +369,10 @@
           {/if}
         {:else if view === 'detail' && prState.selectedPr}
           {#if showProgress}
-            <!-- Progress View (replaces PR detail during worktree creation) -->
+            <!-- Progress View (shown when opening existing worktree with init commands) -->
             {@const pr = prState.selectedPr}
             <div class="progress-header">
-              <span class="progress-title">Opening PR #{pr.number} locally</span>
+              <span class="progress-title">Opening worktree for PR #{pr.number}</span>
               <code class="progress-branch">{pr.head_ref_name}</code>
             </div>
             <div class="progress-task-list">
@@ -636,7 +520,7 @@
             <button
               class="footer-open-locally cancel-btn"
               onclick={() => {
-                creationCancelled = true;
+                openCancelled = true;
               }}
             >
               <span>Cancel</span>

@@ -673,12 +673,21 @@
   {#if $worktreeViewStore.isOpen && $worktreeViewStore.projectPath}
     <WorktreePanel
       projectPath={$worktreeViewStore.projectPath}
+      autoCreateBranch={$worktreeViewStore.autoCreateBranch}
       onClose={() => worktreeViewStore.close()}
     />
   {/if}
 
   {#if $prViewStore.isOpen && $prViewStore.projectPath}
-    <PrPanel projectPath={$prViewStore.projectPath} onClose={() => prViewStore.close()} />
+    <PrPanel
+      projectPath={$prViewStore.projectPath}
+      onClose={() => prViewStore.close()}
+      onCreateWorktree={(branchName) => {
+        const path = $prViewStore.projectPath!;
+        prViewStore.close();
+        worktreeViewStore.openAndCreate(path, branchName);
+      }}
+    />
   {/if}
 
   {#if $isContentSearchOpen && projectStore.getCurrentPath()}

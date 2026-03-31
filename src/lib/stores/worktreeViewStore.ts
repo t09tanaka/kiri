@@ -3,11 +3,13 @@ import { writable, derived } from 'svelte/store';
 export interface WorktreeViewState {
   isOpen: boolean;
   projectPath: string | null;
+  autoCreateBranch: string | null;
 }
 
 const initialState: WorktreeViewState = {
   isOpen: false,
   projectPath: null,
+  autoCreateBranch: null,
 };
 
 function createWorktreeViewStore() {
@@ -23,6 +25,18 @@ function createWorktreeViewStore() {
       set({
         isOpen: true,
         projectPath,
+        autoCreateBranch: null,
+      });
+    },
+
+    /**
+     * Open the worktree panel and auto-create a worktree for the given branch
+     */
+    openAndCreate: (projectPath: string, branchName: string) => {
+      set({
+        isOpen: true,
+        projectPath,
+        autoCreateBranch: branchName,
       });
     },
 

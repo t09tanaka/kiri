@@ -47,9 +47,10 @@
   interface Props {
     projectPath: string;
     onClose: () => void;
+    autoCreateBranch?: string | null;
   }
 
-  let { projectPath, onClose }: Props = $props();
+  let { projectPath, onClose, autoCreateBranch = null }: Props = $props();
 
   let mounted = $state(false);
 
@@ -238,12 +239,21 @@
     loadInitCommands().catch(console.error);
     loadGitignoreRules().catch(console.error);
     // Detection depends on config being loaded first
-    loadPortConfig()
+    const portReady = loadPortConfig()
       .then(() => detectPortsForWorktree())
       .catch(console.error);
-    loadComposeConfig()
+    const composeReady = loadComposeConfig()
       .then(() => detectComposeFilesForWorktree())
       .catch(console.error);
+
+    // Auto-create worktree if requested (e.g. from PrPanel)
+    if (autoCreateBranch) {
+      Promise.all([portReady, composeReady]).then(() => {
+        createName = autoCreateBranch;
+        isExistingBranch = true;
+        handleCreate();
+      });
+    }
   });
 
   async function loadContext() {
