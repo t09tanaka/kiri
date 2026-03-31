@@ -7,7 +7,21 @@
   import { toastStore } from '@/lib/stores/toastStore';
   import type { PullRequest } from '@/lib/services/prService';
   import { branchToWorktreeName } from '@/lib/utils/gitWorktree';
-  import { loadProjectSettings } from '@/lib/services/persistenceService';
+  import { loadProjectSettings, saveProjectSettings } from '@/lib/services/persistenceService';
+  import {
+    buildCreateTaskList,
+    buildOpenTaskList,
+    executeCreateFlow,
+    executeOpenFlow,
+    type ProgressTask,
+    type TaskStatus,
+    type CreateFlowOptions,
+  } from '@/lib/services/worktreeFlowService';
+  import { portIsolationService, type PortAssignment } from '@/lib/services/portIsolationService';
+  import {
+    composeIsolationService,
+    type ComposeNameReplacement,
+  } from '@/lib/services/composeIsolationService';
 
   interface Props {
     projectPath: string;
@@ -19,6 +33,16 @@
   let mounted = $state(false);
   let view = $state<'list' | 'detail'>('list');
   let isOpeningLocally = $state(false);
+  let progressTasks = $state<ProgressTask[]>([]);
+  let isProgressActive = $state(false);
+  let creationCancelled = $state(false);
+  const showProgress = $derived(isProgressActive && progressTasks.length > 0);
+
+  function updateTask(taskId: string, status: TaskStatus, detail?: string) {
+    progressTasks = progressTasks.map((task) =>
+      task.id === taskId ? { ...task, status, ...(detail !== undefined ? { detail } : {}) } : task
+    );
+  }
 
   onMount(() => {
     requestAnimationFrame(() => {
@@ -61,76 +85,152 @@
     if (!pr) return;
 
     isOpeningLocally = true;
+    creationCancelled = false;
+
     try {
-      // Check if a worktree already exists for this branch
       const worktrees = await worktreeService.list(projectPath);
       const existing = worktrees.find((wt) => wt.branch === pr.head_ref_name && !wt.is_main);
 
       if (existing) {
-        // Open existing worktree window
-        await windowService.focusOrCreateWindowWithPr(
-          existing.path,
-          pr.number,
-          pr.title,
-          pr.head_ref_name,
-          getPrCiStatus(pr)
-        );
-        toastStore.success(`Opened existing worktree for PR #${pr.number}`);
-      } else {
-        // Create new worktree
-        const worktreeName = branchToWorktreeName(pr.head_ref_name);
-        const worktreeInfo = await worktreeService.create(
-          projectPath,
-          worktreeName,
-          pr.head_ref_name,
-          false
-        );
+        // Open existing worktree — run init commands first
+        const settings = await loadProjectSettings(projectPath);
+        const initCommands = (settings.worktreeInitCommands ?? []).filter((c) => c.enabled);
 
-        // Copy gitignored files (same as WorktreePanel)
-        try {
-          const settings = await loadProjectSettings(projectPath);
-          const disabledRules = settings.worktreeDisabledCopyRules ?? [];
-          const rules = await worktreeService.listGitignoreRules(projectPath);
-          const enabledPatterns = rules
-            .filter((r) => !disabledRules.includes(r.pattern))
-            .map((r) => r.pattern);
-          if (enabledPatterns.length > 0) {
-            await worktreeService.copyGitignoredFiles(
-              projectPath,
-              worktreeInfo.path,
-              enabledPatterns
-            );
-          }
-        } catch (copyErr) {
-          console.error('Failed to copy gitignored files:', copyErr);
+        progressTasks = buildOpenTaskList(initCommands);
+        isProgressActive = true;
+
+        await executeOpenFlow(existing.path, initCommands, {
+          onTaskUpdate: updateTask,
+          onCancelCheck: () => creationCancelled,
+        });
+
+        if (!creationCancelled) {
+          updateTask('open-window', 'running');
+          await windowService.focusOrCreateWindowWithPr(
+            existing.path,
+            pr.number,
+            pr.title,
+            pr.head_ref_name,
+            getPrCiStatus(pr)
+          );
+          updateTask('open-window', 'completed');
+          toastStore.success(`Opened existing worktree for PR #${pr.number}`);
         }
 
-        // Run init commands (same as WorktreePanel)
-        try {
-          const settings = await loadProjectSettings(projectPath);
-          const commands = (settings.worktreeInitCommands ?? []).filter((c) => c.enabled);
-          for (const cmd of commands) {
-            await worktreeService.runInitCommand(worktreeInfo.path, cmd.command);
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        isProgressActive = false;
+        progressTasks = [];
+        creationCancelled = false;
+      } else {
+        // Create new worktree — full flow
+        const settings = await loadProjectSettings(projectPath);
+        const disabledRules = settings.worktreeDisabledCopyRules ?? [];
+        const rules = await worktreeService.listGitignoreRules(projectPath);
+        const enabledPatterns = rules
+          .filter((r) => !disabledRules.includes(r.pattern))
+          .map((r) => r.pattern);
+
+        const initCommands = (settings.worktreeInitCommands ?? []).filter((c) => c.enabled);
+        const portConfig = settings.portConfig ?? null;
+        const composeConfig = settings.composeIsolationConfig ?? null;
+
+        // Detect and allocate ports if enabled
+        let portAssignments: PortAssignment[] = [];
+        if (portConfig?.enabled) {
+          try {
+            const detected = await portIsolationService.detectPorts(projectPath);
+            const uniquePorts = portIsolationService.getUniqueEnvPorts(detected);
+            if (uniquePorts.length > 0) {
+              const allocation = await portIsolationService.allocatePorts(uniquePorts, portConfig);
+              portAssignments = allocation.assignments;
+            }
+          } catch (e) {
+            console.error('Failed to detect/allocate ports:', e);
           }
-        } catch (initErr) {
-          console.error('Failed to run init commands:', initErr);
+        }
+
+        // Build compose replacements if enabled
+        let composeReplacements: ComposeNameReplacement[] = [];
+        if (composeConfig?.enabled) {
+          try {
+            const detected = await composeIsolationService.detectComposeFiles(projectPath);
+            const wtName = branchToWorktreeName(pr.head_ref_name);
+            composeReplacements = composeIsolationService.buildReplacements(
+              detected,
+              wtName,
+              composeConfig.disabledFiles ?? []
+            );
+          } catch (e) {
+            console.error('Failed to detect compose files:', e);
+          }
+        }
+
+        const flowOptions: CreateFlowOptions = {
+          gitignorePatterns: enabledPatterns,
+          portAssignments,
+          portConfig,
+          composeReplacements,
+          initCommands,
+        };
+
+        const wtName = branchToWorktreeName(pr.head_ref_name);
+        progressTasks = buildCreateTaskList(wtName, flowOptions);
+        isProgressActive = true;
+
+        const result = await executeCreateFlow(
+          projectPath,
+          pr.head_ref_name,
+          true, // PR branch always exists on remote
+          flowOptions,
+          {
+            onTaskUpdate: updateTask,
+            onCancelCheck: () => creationCancelled,
+          }
+        );
+
+        if (creationCancelled) {
+          try {
+            await worktreeService.remove(projectPath, wtName);
+          } catch (e) {
+            console.error('Cleanup failed:', e);
+          }
+          isProgressActive = false;
+          progressTasks = [];
+          creationCancelled = false;
+          return;
+        }
+
+        // Persist updated port config
+        if (result.portConfigUpdated) {
+          const currentSettings = await loadProjectSettings(projectPath);
+          currentSettings.portConfig = result.portConfigUpdated;
+          await saveProjectSettings(projectPath, currentSettings);
         }
 
         // Open window
+        updateTask('open-window', 'running');
         await windowService.focusOrCreateWindowWithPr(
-          worktreeInfo.path,
+          result.worktreeInfo.path,
           pr.number,
           pr.title,
           pr.head_ref_name,
           getPrCiStatus(pr)
         );
+        updateTask('open-window', 'completed');
         toastStore.success(`Worktree created for PR #${pr.number}`);
+
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        isProgressActive = false;
+        progressTasks = [];
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       toastStore.error(`Failed to open worktree: ${message}`);
+      isProgressActive = false;
+      progressTasks = [];
     } finally {
       isOpeningLocally = false;
+      creationCancelled = false;
     }
   }
 
@@ -430,6 +530,69 @@
               </div>
             {/if}
           </div>
+          {#if showProgress}
+            <div class="progress-task-list">
+              {#each progressTasks as task (task.id)}
+                <div
+                  class="progress-task-item"
+                  class:is-pending={task.status === 'pending'}
+                  class:is-running={task.status === 'running'}
+                  class:is-completed={task.status === 'completed'}
+                  class:is-failed={task.status === 'failed'}
+                >
+                  <div class="task-status-icon">
+                    {#if task.status === 'pending'}
+                      <span class="task-icon-dot"></span>
+                    {:else if task.status === 'running'}
+                      <Spinner size="sm" />
+                    {:else if task.status === 'completed'}
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        class="task-icon-completed"
+                      >
+                        <path
+                          d="M4 8.5L6.5 11L12 5"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    {:else if task.status === 'failed'}
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        class="task-icon-failed"
+                      >
+                        <circle cx="8" cy="8" r="7.5" fill="currentColor" opacity="0.15" />
+                        <line
+                          x1="8"
+                          y1="5"
+                          x2="8"
+                          y2="9"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                        />
+                        <circle cx="8" cy="11.5" r="0.8" fill="currentColor" />
+                      </svg>
+                    {/if}
+                  </div>
+                  <div class="task-content">
+                    <span class="task-name">{task.name}</span>
+                    {#if task.detail}
+                      <span class="task-detail">({task.detail})</span>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
         {:else if view === 'detail' && !prState.selectedPr}
           <!-- Loading detail -->
           <div class="loading-state">
@@ -442,15 +605,21 @@
       <!-- Footer -->
       <div class="panel-footer">
         {#if view === 'detail'}
-          <button
-            class="footer-open-locally"
-            onclick={handleOpenLocally}
-            disabled={isOpeningLocally || !prState.selectedPr}
-          >
-            {#if isOpeningLocally}
-              <Spinner size="sm" />
-              <span>Creating...</span>
-            {:else}
+          {#if showProgress}
+            <button
+              class="footer-open-locally cancel-btn"
+              onclick={() => {
+                creationCancelled = true;
+              }}
+            >
+              <span>Cancel</span>
+            </button>
+          {:else}
+            <button
+              class="footer-open-locally"
+              onclick={handleOpenLocally}
+              disabled={isOpeningLocally || !prState.selectedPr}
+            >
               <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
                 <path
                   d="M2 8h12M8 2v12"
@@ -460,8 +629,8 @@
                 />
               </svg>
               <span>Open locally</span>
-            {/if}
-          </button>
+            </button>
+          {/if}
           <span class="footer-item">
             <kbd>Esc</kbd>
             <span>back</span>
@@ -1108,5 +1277,156 @@
 
   .retry-btn {
     margin-top: var(--space-1);
+  }
+
+  /* Progress Task List */
+  .progress-task-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .progress-task-item {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    transition: all var(--transition-normal);
+    animation: taskFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .progress-task-item:nth-child(1) {
+    animation-delay: 0ms;
+  }
+  .progress-task-item:nth-child(2) {
+    animation-delay: 50ms;
+  }
+  .progress-task-item:nth-child(3) {
+    animation-delay: 100ms;
+  }
+  .progress-task-item:nth-child(4) {
+    animation-delay: 150ms;
+  }
+  .progress-task-item:nth-child(5) {
+    animation-delay: 200ms;
+  }
+  .progress-task-item:nth-child(6) {
+    animation-delay: 250ms;
+  }
+  .progress-task-item:nth-child(7) {
+    animation-delay: 300ms;
+  }
+  .progress-task-item:nth-child(8) {
+    animation-delay: 350ms;
+  }
+
+  @keyframes taskFadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .progress-task-item.is-pending {
+    opacity: 0.35;
+  }
+  .progress-task-item.is-running {
+    opacity: 1;
+    background: rgba(125, 211, 252, 0.05);
+    border: 1px solid rgba(125, 211, 252, 0.08);
+  }
+  .progress-task-item.is-completed {
+    opacity: 0.85;
+  }
+  .progress-task-item.is-completed .task-status-icon {
+    color: var(--git-added);
+    filter: drop-shadow(0 0 4px rgba(74, 222, 128, 0.3));
+  }
+  .progress-task-item.is-failed {
+    opacity: 0.9;
+  }
+  .progress-task-item.is-failed .task-status-icon {
+    color: var(--git-modified);
+    filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.3));
+  }
+
+  .task-status-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 20px;
+    flex-shrink: 0;
+    transition: all var(--transition-normal);
+  }
+
+  .task-icon-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    opacity: 0.5;
+  }
+
+  .task-icon-completed {
+    animation: taskCheckIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes taskCheckIn {
+    from {
+      opacity: 0;
+      transform: scale(0.5);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  .task-icon-failed {
+    animation: taskCheckIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .task-content {
+    display: flex;
+    flex-direction: row;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    line-height: 20px;
+    overflow: hidden;
+  }
+
+  .task-name {
+    font-size: 12px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  .progress-task-item.is-running .task-name {
+    color: var(--text-primary);
+  }
+
+  .task-detail {
+    font-size: 10px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .progress-task-item.is-failed .task-detail {
+    color: var(--git-modified);
+  }
+
+  .cancel-btn {
+    border-color: var(--git-modified) !important;
+    color: var(--git-modified) !important;
   }
 </style>
