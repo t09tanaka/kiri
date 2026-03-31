@@ -344,6 +344,7 @@ async fn handle_client_action(state: &AppState, action: ClientAction) {
                 None,
                 None,
                 Some(canonical),
+                None,
             );
         }
         ClientAction::CloseProject { path } => {

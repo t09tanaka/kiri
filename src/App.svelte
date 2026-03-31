@@ -12,6 +12,9 @@
   import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
   import CommitHistoryModal from '@/lib/components/git/CommitHistoryModal.svelte';
   import WorktreePanel from '@/lib/components/git/WorktreePanel.svelte';
+  import PrPanel from '@/lib/components/pr/PrPanel.svelte';
+  import { prViewStore } from '@/lib/stores/prViewStore';
+  import { prStore } from '@/lib/stores/prStore';
   import RemoteAccessSettings from '@/lib/components/settings/RemoteAccessSettings.svelte';
   import QrCodeModal from '@/lib/components/remote/QrCodeModal.svelte';
   import EditorModal from '@/lib/components/editor/EditorModal.svelte';
@@ -54,6 +57,16 @@
   let showShortcuts = $state(false);
   let windowLabel = $state('');
   let isAppQuitting = $state(false);
+
+  // PR header state (populated from URL params when opened via "Open locally" in PrPanel)
+  let prHeaderNumber = $state<number | null>(null);
+  let prHeaderTitle = $state<string | null>(null);
+  let prHeaderBranch = $state<string | null>(null);
+  let prHeaderCiStatus = $state<string | null>(null);
+
+  let hasPrHeader = $derived(
+    prHeaderNumber !== null && prHeaderTitle !== null && prHeaderBranch !== null
+  );
 
   // Sync tools state to macOS menu bar
   $effect(() => {
@@ -182,6 +195,24 @@
           worktreeViewStore.close();
         } else {
           worktreeViewStore.open(path);
+        }
+      }
+      return;
+    }
+
+    // Cmd+Shift+P: Toggle PR panel (only when project is open and not in worktree)
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'p' && $isProjectOpen && !$isWorktree) {
+      e.preventDefault();
+      const path = projectStore.getCurrentPath();
+      if (path) {
+        if ($isSubdirectoryOfRepo) {
+          toastStore.warning('PRs can only be viewed from the repository root.', 4000);
+          return;
+        }
+        if ($prViewStore.isOpen) {
+          prViewStore.close();
+        } else {
+          prViewStore.open(path);
         }
       }
       return;
@@ -323,6 +354,22 @@
       }
     }
 
+    // Handle ?pr_number=, ?pr_title=, ?pr_branch=, ?pr_ci_status= URL params
+    // These are set when a worktree window is opened via PrPanel's "Open locally" button
+    const prNumberParam = params.get('pr_number');
+    const prTitleParam = params.get('pr_title');
+    const prBranchParam = params.get('pr_branch');
+    const prCiStatusParam = params.get('pr_ci_status');
+    if (prNumberParam && prTitleParam && prBranchParam) {
+      const parsedNumber = parseInt(prNumberParam, 10);
+      if (!isNaN(parsedNumber)) {
+        prHeaderNumber = parsedNumber;
+        prHeaderTitle = decodeURIComponent(prTitleParam);
+        prHeaderBranch = decodeURIComponent(prBranchParam);
+        prHeaderCiStatus = prCiStatusParam ? decodeURIComponent(prCiStatusParam) : 'unknown';
+      }
+    }
+
     // Listen for worktree-removed event (close window if its worktree was removed)
     const unlistenWorktreeRemoved = await listen<{ path: string }>('worktree-removed', (event) => {
       const currentPath = projectStore.getCurrentPath();
@@ -350,6 +397,7 @@
     const unsubscribeProjectStore = projectStore.subscribe((state) => {
       if (state.currentPath) {
         worktreeStore.refresh(state.currentPath);
+        prStore.refresh(state.currentPath);
         const projectName = state.currentPath.split('/').pop() || 'kiri';
         windowService.setTitle(`${projectName} — kiri`);
       } else {
@@ -575,6 +623,23 @@
         {/if}
       </div>
     {/if}
+    {#if hasPrHeader && prHeaderNumber !== null && prHeaderTitle !== null && prHeaderBranch !== null}
+      <div class="pr-header-bar">
+        <span class="pr-header-number">PR #{prHeaderNumber}</span>
+        <span class="pr-header-sep">·</span>
+        <span class="pr-header-title">{prHeaderTitle}</span>
+        <span class="pr-header-sep">·</span>
+        {#if prHeaderCiStatus === 'success'}
+          <span class="pr-header-ci pr-ci-success">✓ CI passed</span>
+        {:else if prHeaderCiStatus === 'failure'}
+          <span class="pr-header-ci pr-ci-failure">✕ CI failed</span>
+        {:else if prHeaderCiStatus === 'pending'}
+          <span class="pr-header-ci pr-ci-pending">◔ CI running</span>
+        {:else}
+          <span class="pr-header-ci pr-ci-unknown">○ No CI</span>
+        {/if}
+      </div>
+    {/if}
     <AppLayout />
   </div>
 
@@ -608,7 +673,21 @@
   {#if $worktreeViewStore.isOpen && $worktreeViewStore.projectPath}
     <WorktreePanel
       projectPath={$worktreeViewStore.projectPath}
+      autoCreateBranch={$worktreeViewStore.autoCreateBranch}
+      prMetadata={$worktreeViewStore.prMetadata}
       onClose={() => worktreeViewStore.close()}
+    />
+  {/if}
+
+  {#if $prViewStore.isOpen && $prViewStore.projectPath}
+    <PrPanel
+      projectPath={$prViewStore.projectPath}
+      onClose={() => prViewStore.close()}
+      onCreateWorktree={(branchName, prMetadata) => {
+        const path = $prViewStore.projectPath!;
+        prViewStore.close();
+        worktreeViewStore.openAndCreate(path, branchName, prMetadata);
+      }}
     />
   {/if}
 
@@ -678,5 +757,71 @@
     font-family: var(--font-mono);
     font-weight: 600;
     text-transform: none;
+  }
+
+  /* PR Header Bar — shown in worktree windows opened via "Open locally" */
+  .pr-header-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    height: 26px;
+    padding: 0 var(--space-4);
+    background: linear-gradient(
+      90deg,
+      rgba(125, 211, 252, 0.12) 0%,
+      rgba(196, 181, 253, 0.06) 50%,
+      rgba(125, 211, 252, 0.12) 100%
+    );
+    border-bottom: 1px solid rgba(125, 211, 252, 0.25);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+
+  .pr-header-number {
+    color: var(--accent-color);
+    font-family: var(--font-mono);
+    font-weight: 600;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .pr-header-sep {
+    color: var(--text-muted);
+    opacity: 0.5;
+    flex-shrink: 0;
+  }
+
+  .pr-header-title {
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+
+  .pr-header-ci {
+    white-space: nowrap;
+    flex-shrink: 0;
+    font-size: 11px;
+  }
+
+  .pr-ci-success {
+    color: var(--git-added);
+  }
+
+  .pr-ci-failure {
+    color: var(--git-deleted);
+  }
+
+  .pr-ci-pending {
+    color: var(--accent3-color);
+  }
+
+  .pr-ci-unknown {
+    color: var(--text-muted);
   }
 </style>

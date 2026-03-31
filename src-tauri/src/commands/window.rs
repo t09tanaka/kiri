@@ -83,6 +83,7 @@ fn window_title(project_path: Option<&str>) -> String {
 }
 
 /// Internal implementation of window creation (used by both command and menu)
+#[allow(clippy::too_many_arguments)]
 pub fn create_window_impl(
     app: &AppHandle,
     registry: Option<&WindowRegistryState>,
@@ -91,6 +92,7 @@ pub fn create_window_impl(
     width: Option<f64>,
     height: Option<f64>,
     project_path: Option<String>,
+    extra_params: Option<Vec<(String, String)>>,
 ) -> Result<(), String> {
     let id = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("window-{}", id);
@@ -111,6 +113,11 @@ pub fn create_window_impl(
     let mut params = Vec::new();
     if let Some(path) = &project_path {
         params.push(format!("project={}", urlencoding::encode(path)));
+    }
+    if let Some(extra) = extra_params {
+        for (key, value) in extra {
+            params.push(format!("{}={}", key, urlencoding::encode(&value)));
+        }
     }
     let url = if params.is_empty() {
         WebviewUrl::default()
@@ -154,7 +161,7 @@ pub fn create_window(
     height: Option<f64>,
     project_path: Option<String>,
 ) -> Result<(), String> {
-    create_window_impl(&app, Some(&registry), x, y, width, height, project_path)
+    create_window_impl(&app, Some(&registry), x, y, width, height, project_path, None)
 }
 
 /// Focus an existing window for the given project path, or create a new one if not found
@@ -185,7 +192,59 @@ pub fn focus_or_create_window(
     }
 
     // No existing window, create a new one
-    create_window(app, registry, None, None, None, None, Some(project_path))?;
+    create_window_impl(&app, Some(&registry), None, None, None, None, Some(project_path), None)?;
+    Ok(false) // Indicates new window was created
+}
+
+/// Focus an existing window for the given project path (with PR metadata), or create a new one.
+/// PR metadata is passed as URL params so the worktree window can display a PR header.
+#[tauri::command]
+pub fn focus_or_create_window_with_pr(
+    app: AppHandle,
+    registry: tauri::State<WindowRegistryState>,
+    project_path: String,
+    pr_number: i64,
+    pr_title: String,
+    pr_branch: String,
+    pr_ci_status: String,
+) -> Result<bool, String> {
+    // Check if a window already exists for this path
+    let existing_label = {
+        let reg = registry.lock().map_err(|e| format!("Lock error: {}", e))?;
+        reg.get_label_for_path(&project_path).cloned()
+    };
+
+    if let Some(label) = existing_label {
+        // Check if the window still exists
+        if let Some(window) = app.get_webview_window(&label) {
+            // Window exists, focus it (PR header already set from initial creation)
+            window.set_focus().map_err(|e| format!("Failed to focus window: {}", e))?;
+            return Ok(true); // Indicates existing window was focused
+        } else {
+            // Window no longer exists, clean up registry
+            if let Ok(mut reg) = registry.lock() {
+                reg.unregister_by_label(&label);
+            }
+        }
+    }
+
+    // No existing window, create a new one with PR metadata as URL params
+    let extra_params = vec![
+        ("pr_number".to_string(), pr_number.to_string()),
+        ("pr_title".to_string(), pr_title),
+        ("pr_branch".to_string(), pr_branch),
+        ("pr_ci_status".to_string(), pr_ci_status),
+    ];
+    create_window_impl(
+        &app,
+        Some(&registry),
+        None,
+        None,
+        None,
+        None,
+        Some(project_path),
+        Some(extra_params),
+    )?;
     Ok(false) // Indicates new window was created
 }
 

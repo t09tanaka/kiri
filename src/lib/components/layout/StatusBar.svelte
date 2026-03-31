@@ -6,6 +6,8 @@
   import { commitHistoryStore } from '@/lib/stores/commitHistoryStore';
   import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
   import { isWorktree, worktreeCount, isSubdirectoryOfRepo } from '@/lib/stores/worktreeStore';
+  import { prViewStore } from '@/lib/stores/prViewStore';
+  import { prCount, hasPrs } from '@/lib/stores/prStore';
   import { toastStore } from '@/lib/stores/toastStore';
   import { appStore } from '@/lib/stores/appStore';
 
@@ -55,6 +57,15 @@
       return;
     }
     worktreeViewStore.open($currentProjectPath);
+  }
+
+  function handlePrClick() {
+    if (!$currentProjectPath) return;
+    if ($isSubdirectoryOfRepo) {
+      toastStore.warning('PRs can only be viewed from the repository root.', 4000);
+      return;
+    }
+    prViewStore.open($currentProjectPath);
   }
 </script>
 
@@ -233,6 +244,38 @@
           <span class="worktrees-count">{$worktreeCount}</span>
         {/if}
         <span class="shortcut-key">⌘G</span>
+      </button>
+    {/if}
+    {#if gitInfo?.branch && !$isWorktree}
+      <button
+        class="status-item pr-btn"
+        class:has-prs={$hasPrs}
+        class:disabled={$isSubdirectoryOfRepo}
+        onclick={handlePrClick}
+        title={$isSubdirectoryOfRepo
+          ? 'PRs unavailable (open from repo root)'
+          : `Pull Requests (${$prCount}) - ⌘⇧P`}
+      >
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <circle cx="18" cy="18" r="3"></circle>
+          <circle cx="6" cy="6" r="3"></circle>
+          <path d="M13 6h3a2 2 0 0 1 2 2v7"></path>
+          <line x1="6" y1="9" x2="6" y2="21"></line>
+        </svg>
+        <span>PRs</span>
+        {#if $prCount > 0}
+          <span class="pr-count">{$prCount}</span>
+        {/if}
+        <span class="shortcut-key">⌘⇧P</span>
       </button>
     {/if}
     {#if gitInfo?.branch}
@@ -470,6 +513,55 @@
 
   .worktrees-count {
     font-weight: 700;
+  }
+
+  .pr-btn {
+    padding: 3px var(--space-2);
+    background: rgba(125, 211, 252, 0.1);
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 10px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+
+  .pr-btn.has-prs {
+    color: var(--accent-color);
+  }
+
+  .pr-btn:hover {
+    background: rgba(125, 211, 252, 0.2);
+    transform: translateY(-1px);
+  }
+
+  .pr-btn:active {
+    transform: translateY(0) scale(0.97);
+  }
+
+  .pr-btn.disabled {
+    background: rgba(128, 128, 128, 0.1);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
+  .pr-btn.disabled:hover {
+    background: rgba(128, 128, 128, 0.15);
+    transform: none;
+  }
+
+  .pr-count {
+    font-size: 9px;
+    font-weight: 600;
+    background: var(--accent-color);
+    color: var(--bg-primary);
+    border-radius: 8px;
+    padding: 0 4px;
+    min-width: 14px;
+    text-align: center;
+    line-height: 14px;
   }
 
   .branch-ahead-count {

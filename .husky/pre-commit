@@ -3,7 +3,9 @@ npx lint-staged
 
 # Run fast unit tests (frontend + backend)
 npm run test
-npm run test:rust
+# Run Rust tests in a clean environment to prevent Husky's git env vars
+# from leaking into tests that spawn git processes (e.g., git_history tests)
+(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_PREFIX; npm run test:rust)
 
 # Check bundle size if dist exists (skip if not built)
 if [ -d "dist" ]; then
