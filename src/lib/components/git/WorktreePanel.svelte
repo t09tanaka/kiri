@@ -30,6 +30,15 @@
     type ComposeNameReplacement,
   } from '@/lib/services/composeIsolationService';
   import type { ComposeIsolationConfig } from '@/lib/services/persistenceService';
+  import {
+    buildCreateTaskList,
+    buildOpenTaskList,
+    executeCreateFlow,
+    executeOpenFlow,
+    type ProgressTask,
+    type TaskStatus,
+    type CreateFlowOptions,
+  } from '@/lib/services/worktreeFlowService';
   import { branchToWorktreeName, validateBranchName } from '@/lib/utils/gitWorktree';
   import { formatRelativeTime } from '@/lib/utils/dateFormat';
   import { prStore } from '@/lib/stores/prStore';
@@ -71,15 +80,6 @@
   let newInitCommandValue = $state('');
 
   // Progress task list state
-  type TaskStatus = 'pending' | 'running' | 'completed' | 'failed';
-
-  interface ProgressTask {
-    id: string;
-    name: string;
-    status: TaskStatus;
-    detail?: string;
-  }
-
   let progressTasks = $state<ProgressTask[]>([]);
   let isProgressActive = $state(false);
   let creationCancelled = $state(false);
@@ -122,12 +122,6 @@
   async function forceUIUpdate(delayMs = 50): Promise<void> {
     await tick();
     await new Promise((resolve) => setTimeout(resolve, delayMs));
-  }
-
-  // Pause between task completions so the user can see each checkmark
-  const TASK_STEP_PAUSE_MS = 300;
-  async function pauseBetweenTasks(): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, TASK_STEP_PAUSE_MS));
   }
 
   // Event listener cleanup
@@ -802,78 +796,6 @@
     return initCommands.filter((c) => c.enabled);
   }
 
-  function buildCreationTaskList(
-    branchName: string,
-    effectiveCommands: WorktreeInitCommand[],
-    hasPortAssignments: boolean,
-    hasComposeReplacements: boolean
-  ): ProgressTask[] {
-    const tasks: ProgressTask[] = [
-      {
-        id: 'worktree',
-        name: `Create worktree '${branchToWorktreeName(branchName)}'`,
-        status: 'pending',
-      },
-      {
-        id: 'copy',
-        name: 'Copy files',
-        status: 'pending',
-      },
-    ];
-
-    if (hasPortAssignments) {
-      tasks.push({
-        id: 'port-remap',
-        name: 'Remap ports',
-        status: 'pending',
-      });
-    }
-
-    if (hasComposeReplacements) {
-      tasks.push({
-        id: 'compose-name',
-        name: 'Isolate compose names',
-        status: 'pending',
-      });
-    }
-
-    effectiveCommands.forEach((cmd, index) => {
-      tasks.push({
-        id: `init-${index}`,
-        name: cmd.name,
-        status: 'pending',
-      });
-    });
-
-    tasks.push({
-      id: 'open-window',
-      name: 'Open worktree window',
-      status: 'pending',
-    });
-
-    return tasks;
-  }
-
-  function buildOpenTaskList(effectiveCommands: WorktreeInitCommand[]): ProgressTask[] {
-    const tasks: ProgressTask[] = [];
-
-    effectiveCommands.forEach((cmd, index) => {
-      tasks.push({
-        id: `init-${index}`,
-        name: cmd.name,
-        status: 'pending',
-      });
-    });
-
-    tasks.push({
-      id: 'open-window',
-      name: 'Open worktree window',
-      status: 'pending',
-    });
-
-    return tasks;
-  }
-
   function updateTask(taskId: string, status: TaskStatus, detail?: string) {
     progressTasks = progressTasks.map((task) =>
       task.id === taskId ? { ...task, status, ...(detail !== undefined ? { detail } : {}) } : task
@@ -951,17 +873,23 @@
       await loadGitignoreRules();
     }
 
-    // Build and display the full task list immediately
+    const enabledGitignorePatterns = gitignoreRules
+      .filter((r) => !disabledCopyRules.includes(r.pattern))
+      .map((r) => r.pattern);
+
     const currentPortAssignments = portConfig?.enabled ? portAssignments : [];
-    const hasPortAssignments = currentPortAssignments.length > 0;
     const currentComposeReplacements = composeConfig?.enabled ? composeReplacements : [];
-    const hasComposeReplacements = currentComposeReplacements.length > 0;
-    progressTasks = buildCreationTaskList(
-      branchName,
-      effectiveCommands,
-      hasPortAssignments,
-      hasComposeReplacements
-    );
+
+    const flowOptions: CreateFlowOptions = {
+      gitignorePatterns: enabledGitignorePatterns,
+      portAssignments: currentPortAssignments,
+      portConfig: portConfig,
+      composeReplacements: currentComposeReplacements,
+      initCommands: effectiveCommands,
+    };
+
+    // Build and display the full task list immediately
+    progressTasks = buildCreateTaskList(branchToWorktreeName(branchName), flowOptions);
     isProgressActive = true;
     await forceUIUpdate();
 
@@ -969,175 +897,33 @@
     const currentProjectPath = projectPath;
 
     try {
-      const wtName = branchToWorktreeName(branchName);
-
-      // Step 1: Create worktree
-      updateTask('worktree', 'running');
-      await forceUIUpdate();
-      const wt = await worktreeService.create(
+      const result = await executeCreateFlow(
         currentProjectPath,
-        wtName,
         branchName,
-        !isExistingBranch
+        isExistingBranch,
+        flowOptions,
+        {
+          onTaskUpdate: updateTask,
+          onCancelCheck: () => creationCancelled,
+        }
       );
 
       if (creationCancelled) {
-        await cleanupCancelledCreation(currentProjectPath, wtName);
+        await cleanupCancelledCreation(currentProjectPath, branchToWorktreeName(branchName));
         return;
       }
 
-      updateTask('worktree', 'completed');
-      await forceUIUpdate();
-      await pauseBetweenTasks();
-
-      // Step 2: Copy files (gitignore-based)
-      updateTask('copy', 'running');
-      await forceUIUpdate();
-      let copyFailed = false;
-      const enabledGitignorePatterns = gitignoreRules
-        .filter((r) => !disabledCopyRules.includes(r.pattern))
-        .map((r) => r.pattern);
-      if (enabledGitignorePatterns.length > 0) {
-        try {
-          let copyResult;
-          if (hasPortAssignments) {
-            // Copy with port transformation
-            copyResult = await portIsolationService.copyFilesWithPorts(
-              currentProjectPath,
-              wt.path,
-              enabledGitignorePatterns,
-              currentPortAssignments
-            );
-          } else {
-            copyResult = await worktreeService.copyGitignoredFiles(
-              currentProjectPath,
-              wt.path,
-              enabledGitignorePatterns
-            );
-          }
-          const copiedCount = copyResult.copied_files.length;
-          const transformedCount = copyResult.transformed_files?.length ?? 0;
-          const parts: string[] = [];
-          if (copiedCount > 0) parts.push(`${copiedCount} files copied`);
-          if (transformedCount > 0) parts.push(`${transformedCount} files transformed`);
-          const detail = parts.length > 0 ? parts.join(', ') : 'No files to copy';
-          updateTask('copy', 'completed', detail);
-          if (copyResult.errors.length > 0) {
-            console.error('Copy errors:', copyResult.errors);
-          }
-        } catch (copyError) {
-          console.error('Failed to copy files:', copyError);
-          updateTask('copy', 'failed', 'Copy failed');
-          copyFailed = true;
-        }
-      } else {
-        updateTask('copy', 'completed', 'No copy rules enabled');
-      }
-      await forceUIUpdate();
-      await pauseBetweenTasks();
-
-      // Step 2.5: Remap ports (register assignments)
-      if (hasPortAssignments && !copyFailed) {
-        updateTask('port-remap', 'running');
-        await forceUIUpdate();
-        try {
-          if (portConfig) {
-            portConfig = portIsolationService.registerWorktreeAssignments(
-              portConfig,
-              wtName,
-              currentPortAssignments
-            );
-            await savePortConfig();
-          }
-          updateTask(
-            'port-remap',
-            'completed',
-            `${currentPortAssignments.length} variables remapped`
-          );
-        } catch (portError) {
-          console.error('Failed to register port assignments:', portError);
-          updateTask('port-remap', 'failed', String(portError));
-        }
-        await forceUIUpdate();
-        await pauseBetweenTasks();
-      } else if (hasPortAssignments && copyFailed) {
-        updateTask('port-remap', 'failed', 'Skipped due to copy failure');
-        await forceUIUpdate();
-        await pauseBetweenTasks();
+      // Persist updated port config if returned
+      if (result.portConfigUpdated) {
+        portConfig = result.portConfigUpdated;
+        await savePortConfig();
       }
 
-      // Step 2.7: Compose name isolation
-      if (hasComposeReplacements) {
-        updateTask('compose-name', 'running');
-        await forceUIUpdate();
-        try {
-          const composeResult = await composeIsolationService.applyComposeIsolation(
-            wt.path,
-            currentComposeReplacements
-          );
-          updateTask(
-            'compose-name',
-            'completed',
-            `${composeResult.transformed_files.length} files updated`
-          );
-          if (composeResult.errors.length > 0) {
-            console.error('Compose isolation errors:', composeResult.errors);
-          }
-        } catch (composeError) {
-          console.error('Failed to isolate compose names:', composeError);
-          updateTask('compose-name', 'failed', String(composeError));
-        }
-        await forceUIUpdate();
-        await pauseBetweenTasks();
-      }
-
-      if (creationCancelled) {
-        await cleanupCancelledCreation(currentProjectPath, wtName);
-        return;
-      }
-
-      // Step 3: Run initialization commands
-      // TODO: Cancel currently does not interrupt a running init command process.
-      // This requires backend changes to support process termination (e.g. tracking
-      // child process PIDs in Rust and sending SIGTERM on cancel). For now, cancel
-      // only takes effect between commands, not during a running command.
-      for (let i = 0; i < effectiveCommands.length; i++) {
-        const cmd = effectiveCommands[i];
-        if (creationCancelled) {
-          await worktreeService.remove(currentProjectPath, wtName);
-          resetCreation();
-          return;
-        }
-
-        updateTask(`init-${i}`, 'running');
-        await forceUIUpdate();
-        try {
-          const result = await worktreeService.runInitCommand(wt.path, cmd.command);
-          if (result.success) {
-            updateTask(`init-${i}`, 'completed');
-          } else {
-            const errorDetail = result.stderr
-              ? result.stderr.trim().split('\n').slice(-1)[0]
-              : `exit code: ${result.exit_code}`;
-            updateTask(`init-${i}`, 'failed', errorDetail);
-          }
-        } catch (cmdError) {
-          updateTask(`init-${i}`, 'failed', String(cmdError));
-        }
-        await forceUIUpdate();
-        await pauseBetweenTasks();
-      }
-
-      if (creationCancelled) {
-        await cleanupCancelledCreation(currentProjectPath, wtName);
-        return;
-      }
-
-      // Step 4: Done - open window
+      // Open window
       updateTask('open-window', 'running');
       await forceUIUpdate();
 
-      await openWorktreeWindow(wt, true);
+      await openWorktreeWindow(result.worktreeInfo, true);
       loadWorktrees(currentProjectPath).catch(console.error);
 
       updateTask('open-window', 'completed');
@@ -1206,31 +992,10 @@
     await forceUIUpdate();
 
     try {
-      for (let i = 0; i < effectiveCommands.length; i++) {
-        const cmd = effectiveCommands[i];
-        if (openCancelled) {
-          resetOpen();
-          return;
-        }
-
-        updateTask(`init-${i}`, 'running');
-        await forceUIUpdate();
-        try {
-          const result = await worktreeService.runInitCommand(wt.path, cmd.command);
-          if (result.success) {
-            updateTask(`init-${i}`, 'completed');
-          } else {
-            const errorDetail = result.stderr
-              ? result.stderr.trim().split('\n').slice(-1)[0]
-              : `exit code: ${result.exit_code}`;
-            updateTask(`init-${i}`, 'failed', errorDetail);
-          }
-        } catch (cmdError) {
-          updateTask(`init-${i}`, 'failed', String(cmdError));
-        }
-        await forceUIUpdate();
-        await pauseBetweenTasks();
-      }
+      await executeOpenFlow(wt.path, effectiveCommands, {
+        onTaskUpdate: updateTask,
+        onCancelCheck: () => openCancelled,
+      });
 
       if (openCancelled) {
         resetOpen();
