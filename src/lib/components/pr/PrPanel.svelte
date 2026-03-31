@@ -13,12 +13,13 @@
     type TaskStatus,
   } from '@/lib/services/worktreeFlowService';
   import { loadProjectSettings } from '@/lib/services/persistenceService';
+  import type { PrMetadata } from '@/lib/stores/worktreeViewStore';
   import { tick } from 'svelte';
 
   interface Props {
     projectPath: string;
     onClose: () => void;
-    onCreateWorktree: (branchName: string) => void;
+    onCreateWorktree: (branchName: string, prMetadata: PrMetadata) => void;
   }
 
   let { projectPath, onClose, onCreateWorktree }: Props = $props();
@@ -125,7 +126,12 @@
         progressTasks = [];
       } else {
         // Delegate to WorktreePanel for full creation flow
-        onCreateWorktree(pr.head_ref_name);
+        onCreateWorktree(pr.head_ref_name, {
+          number: pr.number,
+          title: pr.title,
+          branch: pr.head_ref_name,
+          ciStatus: getPrCiStatus(pr),
+        });
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);

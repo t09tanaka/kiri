@@ -674,6 +674,7 @@
     <WorktreePanel
       projectPath={$worktreeViewStore.projectPath}
       autoCreateBranch={$worktreeViewStore.autoCreateBranch}
+      prMetadata={$worktreeViewStore.prMetadata}
       onClose={() => worktreeViewStore.close()}
     />
   {/if}
@@ -682,10 +683,10 @@
     <PrPanel
       projectPath={$prViewStore.projectPath}
       onClose={() => prViewStore.close()}
-      onCreateWorktree={(branchName) => {
+      onCreateWorktree={(branchName, prMetadata) => {
         const path = $prViewStore.projectPath!;
         prViewStore.close();
-        worktreeViewStore.openAndCreate(path, branchName);
+        worktreeViewStore.openAndCreate(path, branchName, prMetadata);
       }}
     />
   {/if}

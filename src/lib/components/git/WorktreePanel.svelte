@@ -44,13 +44,16 @@
   import { prStore } from '@/lib/stores/prStore';
   import type { PullRequest } from '@/lib/services/prService';
 
+  import type { PrMetadata } from '@/lib/stores/worktreeViewStore';
+
   interface Props {
     projectPath: string;
     onClose: () => void;
     autoCreateBranch?: string | null;
+    prMetadata?: PrMetadata | null;
   }
 
-  let { projectPath, onClose, autoCreateBranch = null }: Props = $props();
+  let { projectPath, onClose, autoCreateBranch = null, prMetadata = null }: Props = $props();
 
   let mounted = $state(false);
 
@@ -235,9 +238,9 @@
     isInitializing = false;
 
     // Load remaining data in background (needed for footer stats, settings, and creation)
-    loadCopySettings().catch(console.error);
-    loadInitCommands().catch(console.error);
-    loadGitignoreRules().catch(console.error);
+    const copyReady = loadCopySettings().catch(console.error);
+    const initReady = loadInitCommands().catch(console.error);
+    const gitignoreReady = loadGitignoreRules().catch(console.error);
     // Detection depends on config being loaded first
     const portReady = loadPortConfig()
       .then(() => detectPortsForWorktree())
@@ -248,7 +251,7 @@
 
     // Auto-create worktree if requested (e.g. from PrPanel)
     if (autoCreateBranch) {
-      Promise.all([portReady, composeReady]).then(() => {
+      Promise.all([copyReady, initReady, gitignoreReady, portReady, composeReady]).then(() => {
         createName = autoCreateBranch;
         isExistingBranch = true;
         handleCreate();
@@ -988,7 +991,17 @@
     // If called from handleCreate (skipInit=true), just open the window
     if (skipInit) {
       try {
-        await windowService.focusOrCreateWindow(wt.path);
+        if (prMetadata) {
+          await windowService.focusOrCreateWindowWithPr(
+            wt.path,
+            prMetadata.number,
+            prMetadata.title,
+            prMetadata.branch,
+            prMetadata.ciStatus
+          );
+        } else {
+          await windowService.focusOrCreateWindow(wt.path);
+        }
       } catch (e) {
         console.error('Failed to open worktree window:', e);
       }
