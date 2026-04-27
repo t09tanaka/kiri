@@ -578,16 +578,6 @@
         }
       }
 
-      // Load custom shortcuts and settings
-      const customShortcuts = await loadShortcuts();
-      shortcutState.setCustomShortcuts(customShortcuts);
-      numberRowEnabled = await loadNumberRowEnabled();
-
-      // Load input stats for shortcut suggestions
-      const savedStats = await loadInputStats();
-      inputStats.setRecords(savedStats);
-      updateSuggestions();
-
       // Send input to PTY
       terminal.onData((data) => {
         if (terminalId !== null) {
@@ -818,6 +808,21 @@
     suggestions = inputStats.getSuggestions(existingTexts);
   }
 
+  /**
+   * Load per-pane shortcut/settings/stats state. Runs on every mount so that
+   * panes reattached after a split get their state populated too (the
+   * registry-reuse path of initTerminal short-circuits before reaching here).
+   */
+  async function loadPaneState() {
+    const customShortcuts = await loadShortcuts();
+    shortcutState.setCustomShortcuts(customShortcuts);
+    numberRowEnabled = await loadNumberRowEnabled();
+
+    const savedStats = await loadInputStats();
+    inputStats.setRecords(savedStats);
+    updateSuggestions();
+  }
+
   function scheduleSave() {
     if (saveDebounceTimer) clearTimeout(saveDebounceTimer);
     saveDebounceTimer = setTimeout(async () => {
@@ -843,6 +848,7 @@
 
   onMount(() => {
     initTerminal();
+    loadPaneState();
 
     // Initialize notification service for OSC 9/777 notifications
     notificationService.init();
