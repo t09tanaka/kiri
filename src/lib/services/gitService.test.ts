@@ -44,4 +44,20 @@ describe('gitService.getWorktreeInfo', () => {
       root: '/tmp/wt/feat-foo',
     });
   });
+
+  it('returns WorktreeInfo with is_linked_worktree false when in main worktree', async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      is_linked_worktree: false,
+      name: 'kiri',
+      root: '/Users/tanakatakuto/Documents/GitHub/kiri',
+    });
+
+    const result = await gitService.getWorktreeInfo('/Users/tanakatakuto/Documents/GitHub/kiri');
+
+    expect(result).toEqual({
+      is_linked_worktree: false,
+      name: 'kiri',
+      root: '/Users/tanakatakuto/Documents/GitHub/kiri',
+    });
+  });
 });
