@@ -72,8 +72,6 @@ fn find_repo_root(path: &Path) -> Option<String> {
 /// the path lies inside a linked worktree (the worktree's `.git` is a
 /// gitlink file pointing to `<common-dir>/worktrees/<name>`), or
 /// `is_linked_worktree = false` when inside the main worktree.
-// Consumed by `get_worktree_info` Tauri command added in the next commit.
-#[allow(dead_code)]
 fn detect_worktree_info(path: &Path) -> Option<WorktreeInfo> {
     // Repository::discover walks up from `path` looking for a .git, and
     // canonicalizes symlinks. Returns Err for non-git or nonexistent paths.
@@ -96,6 +94,11 @@ fn detect_worktree_info(path: &Path) -> Option<WorktreeInfo> {
         name,
         root,
     })
+}
+
+#[tauri::command]
+pub fn get_worktree_info(path: String) -> Option<WorktreeInfo> {
+    detect_worktree_info(Path::new(&path))
 }
 
 /// Calculate total additions and deletions for the repository
@@ -1667,5 +1670,12 @@ mod tests {
             result.name,
             dir.path().file_name().unwrap().to_string_lossy()
         );
+    }
+
+    #[test]
+    fn test_get_worktree_info_command_returns_none_for_non_git() {
+        let dir = tempdir().unwrap();
+        let result = get_worktree_info(dir.path().to_string_lossy().to_string());
+        assert!(result.is_none());
     }
 }
