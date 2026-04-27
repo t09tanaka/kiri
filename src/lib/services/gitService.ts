@@ -50,6 +50,12 @@ export interface PullResult {
   message: string;
 }
 
+export interface WorktreeInfo {
+  is_linked_worktree: boolean;
+  name: string;
+  root: string;
+}
+
 /**
  * Git operations service
  * Wraps Tauri git commands for testability
@@ -119,4 +125,11 @@ export const gitService = {
    */
   pullCommits: (repoPath: string, remote?: string, branch?: string): Promise<PullResult> =>
     invoke('pull_commits', { repoPath, remote: remote ?? null, branch: branch ?? null }),
+
+  /**
+   * Get worktree info for a path.
+   * Returns null if the path is not inside a git working tree.
+   */
+  getWorktreeInfo: (path: string): Promise<WorktreeInfo | null> =>
+    invoke('get_worktree_info', { path }),
 };

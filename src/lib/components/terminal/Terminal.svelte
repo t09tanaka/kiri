@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { terminalService } from '@/lib/services/terminalService';
+  import { gitService, type WorktreeInfo } from '@/lib/services/gitService';
   import { eventService, type UnlistenFn } from '@/lib/services/eventService';
   import type { Terminal as TerminalType } from '@xterm/xterm';
   import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
@@ -68,6 +69,10 @@
   let showShortcutSettings = $state(false);
   let shortcutFocusSection = $state<'reply' | 'command' | null>(null);
   let numberRowEnabled = $state(false);
+  let worktreeInfo = $state<WorktreeInfo | null>(null);
+  // Plain (non-reactive) cache: only used to decide whether to refetch.
+  // Updating this should NOT trigger re-renders.
+  let lastCwd: string | null = null;
   const isAiRunning = $derived(isAiProcess(processName));
 
   // Shortcut suggestions state
@@ -762,6 +767,12 @@
     try {
       const info = await terminalService.getProcessInfo(terminalId);
       processName = info.name;
+
+      const cwd = await terminalService.getCwd(terminalId);
+      if (cwd !== lastCwd) {
+        lastCwd = cwd;
+        worktreeInfo = cwd ? await gitService.getWorktreeInfo(cwd) : null;
+      }
     } catch {
       // Terminal may have been closed
     }
@@ -1006,6 +1017,30 @@
           <line x1="3" y1="12" x2="21" y2="12" />
         </svg>
       </button>
+      {#if worktreeInfo?.is_linked_worktree}
+        <span
+          class="worktree-tag"
+          title={worktreeInfo.root}
+          aria-label={`Worktree: ${worktreeInfo.name}`}
+        >
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            aria-hidden="true"
+          >
+            <circle cx="6" cy="6" r="2" />
+            <circle cx="6" cy="18" r="2" />
+            <circle cx="18" cy="9" r="2" />
+            <path d="M6 8v8" />
+            <path d="M18 11c0 4-6 4-6 7" />
+          </svg>
+          <span class="worktree-tag-name">{worktreeInfo.name}</span>
+        </span>
+      {/if}
       {#if onClose}
         <button
           class="control-btn close-btn"
@@ -1126,6 +1161,41 @@
   .control-btn.close-btn:hover {
     background: rgba(248, 113, 113, 0.1);
     color: #f87171;
+  }
+
+  .worktree-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    padding: 2px 8px;
+    background: rgba(125, 211, 252, 0.08);
+    border: 1px solid rgba(125, 211, 252, 0.2);
+    border-radius: var(--radius-sm);
+    color: var(--accent-color);
+    font-family: 'IBM Plex Mono', 'SF Mono', monospace;
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: nowrap;
+    max-width: 240px;
+    overflow: hidden;
+    transition: background var(--transition-fast);
+  }
+
+  .worktree-tag:hover {
+    background: rgba(125, 211, 252, 0.14);
+  }
+
+  .worktree-tag-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* When the worktree tag is rendered (always immediately before close-btn),
+     the tag claims the auto margin; close-btn just needs a small gap. */
+  .worktree-tag + .control-btn.close-btn {
+    margin-left: 4px;
   }
 
   /* Ambient corner glow */
