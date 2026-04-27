@@ -72,6 +72,8 @@ fn find_repo_root(path: &Path) -> Option<String> {
 /// the path lies inside a linked worktree (the worktree's `.git` is a
 /// gitlink file pointing to `<common-dir>/worktrees/<name>`), or
 /// `is_linked_worktree = false` when inside the main worktree.
+// Consumed by `get_worktree_info` Tauri command added in the next commit.
+#[allow(dead_code)]
 fn detect_worktree_info(path: &Path) -> Option<WorktreeInfo> {
     // Repository::discover walks up from `path` looking for a .git, and
     // canonicalizes symlinks. Returns Err for non-git or nonexistent paths.
@@ -1609,7 +1611,11 @@ mod tests {
         let result = detect_worktree_info(&wt_path).expect("must detect linked worktree");
         assert!(result.is_linked_worktree, "must be flagged linked");
         assert_eq!(result.name, "feat-foo");
-        assert!(result.root.contains("feat-foo"));
+        let expected = wt_path.canonicalize().unwrap();
+        assert_eq!(
+            result.root.trim_end_matches('/'),
+            expected.to_str().unwrap()
+        );
     }
 
     #[test]
@@ -1638,6 +1644,14 @@ mod tests {
         let result = detect_worktree_info(&sub).expect("must detect via subdirectory");
         assert!(result.is_linked_worktree);
         assert_eq!(result.name, "feat-bar");
+    }
+
+    #[test]
+    fn test_detect_worktree_info_bare_repo() {
+        let dir = tempdir().unwrap();
+        run_git(dir.path(), &["init", "--bare", "-q"]);
+        let result = detect_worktree_info(dir.path());
+        assert!(result.is_none(), "bare repo has no workdir, must return None");
     }
 
     #[test]
