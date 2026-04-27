@@ -77,8 +77,6 @@ describe('getDefaultProjectSettings', () => {
     const settings = getDefaultProjectSettings();
 
     expect(settings.searchExcludePatterns).toEqual(DEFAULT_EXCLUDE_PATTERNS);
-    expect(settings.worktreeDisabledCopyRules).toEqual([]);
-    expect(settings.worktreeInitCommands).toEqual([]);
   });
 
   it('should return a new object each time (no shared references)', () => {
@@ -218,8 +216,6 @@ describe('GlobalSettings (with Store mock)', () => {
       const result = await loadProjectSettings('/path/to/project');
 
       expect(result.searchExcludePatterns).toEqual(DEFAULT_EXCLUDE_PATTERNS);
-      expect(result.worktreeDisabledCopyRules).toEqual([]);
-      expect(result.worktreeInitCommands).toEqual([]);
     });
 
     it('should normalize project path for store key', async () => {
@@ -235,65 +231,23 @@ describe('GlobalSettings (with Store mock)', () => {
       const { loadProjectSettings } = await importModule();
       const storedSettings = {
         searchExcludePatterns: ['*.log'],
-        worktreeDisabledCopyRules: ['**/.env*', 'config.json'],
-        worktreeInitCommands: [{ name: 'Install', command: 'npm install', enabled: true }],
       };
       mockStore.get.mockResolvedValue(storedSettings);
 
       const result = await loadProjectSettings('/path/to/project');
 
       expect(result.searchExcludePatterns).toEqual(['*.log']);
-      expect(result.worktreeDisabledCopyRules).toEqual(['**/.env*', 'config.json']);
-      expect(result.worktreeInitCommands).toHaveLength(1);
-    });
-
-    it('should fill missing fields with defaults for partial settings', async () => {
-      const { loadProjectSettings } = await importModule();
-      mockStore.get.mockResolvedValue({ searchExcludePatterns: ['*.tmp'] });
-
-      const result = await loadProjectSettings('/path/to/project');
-
-      expect(result.searchExcludePatterns).toEqual(['*.tmp']);
-      expect(result.worktreeDisabledCopyRules).toEqual([]);
-      expect(result.worktreeInitCommands).toEqual([]);
     });
 
     it('should use default when searchExcludePatterns is undefined', async () => {
       const { loadProjectSettings } = await importModule();
       mockStore.get.mockResolvedValue({
         searchExcludePatterns: undefined,
-        worktreeDisabledCopyRules: ['**/.env*'],
-        worktreeInitCommands: [],
       });
 
       const result = await loadProjectSettings('/path/to/project');
 
       expect(result.searchExcludePatterns).toEqual(DEFAULT_EXCLUDE_PATTERNS);
-      expect(result.worktreeDisabledCopyRules).toEqual(['**/.env*']);
-    });
-
-    it('should preserve portConfig and composeIsolationConfig if present', async () => {
-      const { loadProjectSettings } = await importModule();
-      const storedSettings = {
-        searchExcludePatterns: [],
-        worktreeDisabledCopyRules: [],
-        worktreeInitCommands: [],
-        portConfig: {
-          enabled: true,
-          worktreeAssignments: {},
-          targetFiles: ['.env*'],
-        },
-        composeIsolationConfig: {
-          enabled: true,
-          disabledFiles: [],
-        },
-      };
-      mockStore.get.mockResolvedValue(storedSettings);
-
-      const result = await loadProjectSettings('/path/to/project');
-
-      expect(result.portConfig).toEqual(storedSettings.portConfig);
-      expect(result.composeIsolationConfig).toEqual(storedSettings.composeIsolationConfig);
     });
 
     it('should return default settings when store throws an error', async () => {
@@ -313,8 +267,6 @@ describe('GlobalSettings (with Store mock)', () => {
       const { saveProjectSettings } = await importModule();
       const settings = {
         searchExcludePatterns: ['*.log'],
-        worktreeDisabledCopyRules: [],
-        worktreeInitCommands: [],
       };
 
       await saveProjectSettings('/Users/test/project', settings);
@@ -331,8 +283,6 @@ describe('GlobalSettings (with Store mock)', () => {
       await expect(
         saveProjectSettings('/path', {
           searchExcludePatterns: [],
-          worktreeDisabledCopyRules: [],
-          worktreeInitCommands: [],
         })
       ).resolves.not.toThrow();
       errorSpy.mockRestore();

@@ -176,58 +176,10 @@ export async function saveRemoteAccessSettings(settings: RemoteAccessSettings): 
 // ============================================================================
 
 /**
- * Worktree initialization command configuration
- */
-export interface WorktreeInitCommand {
-  name: string; // Display name (e.g., "Install dependencies")
-  command: string; // Shell command (e.g., "npm install")
-  enabled: boolean; // Whether to run this command
-}
-
-/**
- * Port assignment for a single variable
- */
-export interface PortAssignment {
-  variableName: string;
-  originalValue: number;
-  assignedValue: number;
-}
-
-/**
- * Port assignments for a worktree
- */
-export interface WorktreePortAssignment {
-  worktreeName: string;
-  assignments: PortAssignment[];
-}
-
-/**
- * Port isolation configuration
- */
-export interface PortConfig {
-  enabled: boolean;
-  worktreeAssignments: Record<string, WorktreePortAssignment>;
-  targetFiles: string[]; // File patterns to process (default: ['.env*', 'docker-compose.yml'])
-  disabledTargetFiles?: string[]; // Target files that are disabled (not processed)
-}
-
-/**
- * Compose isolation configuration
- */
-export interface ComposeIsolationConfig {
-  enabled: boolean;
-  disabledFiles: string[];
-}
-
-/**
  * Project-specific settings (stored per project path)
  */
 export interface ProjectSettings {
   searchExcludePatterns: string[];
-  worktreeDisabledCopyRules: string[];
-  worktreeInitCommands: WorktreeInitCommand[];
-  portConfig?: PortConfig;
-  composeIsolationConfig?: ComposeIsolationConfig;
 }
 
 /**
@@ -248,8 +200,6 @@ export const DEFAULT_EXCLUDE_PATTERNS: string[] = [
 
 const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
   searchExcludePatterns: [...DEFAULT_EXCLUDE_PATTERNS],
-  worktreeDisabledCopyRules: [],
-  worktreeInitCommands: [],
 };
 
 /**
@@ -278,12 +228,6 @@ export async function loadProjectSettings(projectPath: string): Promise<ProjectS
     return {
       searchExcludePatterns:
         settings.searchExcludePatterns ?? DEFAULT_PROJECT_SETTINGS.searchExcludePatterns,
-      worktreeDisabledCopyRules:
-        settings.worktreeDisabledCopyRules ?? DEFAULT_PROJECT_SETTINGS.worktreeDisabledCopyRules,
-      worktreeInitCommands:
-        settings.worktreeInitCommands ?? DEFAULT_PROJECT_SETTINGS.worktreeInitCommands,
-      portConfig: settings.portConfig,
-      composeIsolationConfig: settings.composeIsolationConfig,
     };
   } catch (error) {
     console.error('Failed to load project settings:', error);

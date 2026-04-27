@@ -54,7 +54,6 @@ pub struct OpenProject {
     pub path: String,
     pub name: String,
     pub branch: Option<String>,
-    pub is_worktree: bool,
 }
 
 /// A recently opened project from the settings store.
@@ -344,7 +343,6 @@ async fn handle_client_action(state: &AppState, action: ClientAction) {
                 None,
                 None,
                 Some(canonical),
-                None,
             );
         }
         ClientAction::CloseProject { path } => {
@@ -392,22 +390,14 @@ fn collect_full_status(state: &AppState) -> Option<StatusUpdate> {
         reg.get_all_paths()
     };
 
-    let open_projects: Vec<OpenProject> = {
-        let reg = registry.lock().ok()?;
-        open_paths
-            .iter()
-            .map(|path| {
-                let name = extract_project_name(path);
-                let is_worktree = reg.is_worktree_path(path);
-                OpenProject {
-                    path: path.clone(),
-                    name,
-                    branch: None,
-                    is_worktree,
-                }
-            })
-            .collect()
-    };
+    let open_projects: Vec<OpenProject> = open_paths
+        .iter()
+        .map(|path| OpenProject {
+            path: path.clone(),
+            name: extract_project_name(path),
+            branch: None,
+        })
+        .collect();
 
     // -- Recent projects --
     let recent_projects = load_recent_projects(app, &open_paths);
@@ -777,7 +767,6 @@ mod tests {
                 path: "/projects/kiri".to_string(),
                 name: "kiri".to_string(),
                 branch: Some("main".to_string()),
-                is_worktree: false,
             }],
             recent_projects: vec![],
             terminals: vec![TerminalStatus {
@@ -1229,7 +1218,6 @@ mod tests {
             path: "/projects/kiri".to_string(),
             name: "kiri".to_string(),
             branch: None,
-            is_worktree: false,
         };
         let json = serde_json::to_value(&project).unwrap();
         assert_eq!(json["path"], "/projects/kiri");
@@ -1243,13 +1231,11 @@ mod tests {
             path: "/test".to_string(),
             name: "test".to_string(),
             branch: Some("feature/test".to_string()),
-            is_worktree: true,
         };
         let json = serde_json::to_value(&project).unwrap();
         assert!(json.get("path").is_some());
         assert!(json.get("name").is_some());
         assert!(json.get("branch").is_some());
-        assert_eq!(json["isWorktree"], true);
     }
 
     #[test]
@@ -1258,7 +1244,6 @@ mod tests {
             path: "/test".to_string(),
             name: "test".to_string(),
             branch: Some("main".to_string()),
-            is_worktree: false,
         };
         let debug = format!("{:?}", project);
         assert!(debug.contains("OpenProject"));
@@ -1271,7 +1256,6 @@ mod tests {
             path: "/test".to_string(),
             name: "test".to_string(),
             branch: Some("dev".to_string()),
-            is_worktree: false,
         };
         let cloned = project.clone();
         assert_eq!(cloned.path, "/test");
@@ -1411,7 +1395,6 @@ mod tests {
                 path: "/p".to_string(),
                 name: "p".to_string(),
                 branch: None,
-                is_worktree: false,
             }],
             recent_projects: vec![],
             terminals: vec![],
@@ -2089,13 +2072,11 @@ mod tests {
                     path: "/projects/a".to_string(),
                     name: "a".to_string(),
                     branch: Some("main".to_string()),
-                    is_worktree: false,
-                },
+                    },
                 OpenProject {
                     path: "/projects/b".to_string(),
                     name: "b".to_string(),
                     branch: None,
-                    is_worktree: true,
                 },
             ],
             recent_projects: vec![RecentProject {
@@ -2568,8 +2549,7 @@ mod tests {
                     path: "/a".to_string(),
                     name: "a".to_string(),
                     branch: Some("main".to_string()),
-                    is_worktree: false,
-                },
+                    },
             ],
             recent_projects: vec![
                 RecentProject {

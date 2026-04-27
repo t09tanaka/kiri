@@ -147,7 +147,6 @@ function buildProjectCard(p, terminals) {
     '<span class="project-name">' +
     escapeHtml(p.name) +
     '</span>' +
-    (p.isWorktree ? '<span class="wt-badge">WT</span>' : '') +
     (p.branch ? '<span class="branch-badge">' + escapeHtml(p.branch) + '</span>' : '') +
     '<button class="btn-close" data-close-path="' +
     escapeHtml(p.path) +
@@ -310,7 +309,6 @@ function openProject(path) {
         path: project.path,
         name: project.name,
         branch: project.gitBranch || null,
-        isWorktree: false,
       });
       lastStatus.openProjects = openList;
       lastStatus.recentProjects = newRecent;

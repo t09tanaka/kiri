@@ -4,15 +4,14 @@
 
 **A terminal-first development environment built for AI Coding Agents.**
 
-Designed for developers who work with Claude Code, Aider, and other AI coding assistants. Seamlessly manage multiple projects with Git Worktree integration and multi-window support.
+Designed for developers who work with Claude Code, Aider, and other AI coding assistants. Seamlessly manage multiple projects with multi-window support.
 
 ## Why kiri?
 
 Modern AI coding agents like Claude Code run in the terminal, generating rapid output with spinners and progress bars. Traditional terminal emulators struggle with this, causing flickering and rendering glitches. kiri solves these problems while providing essential features for agent-assisted development:
 
 - **Flicker-free terminal** — Optimized for Ink-based CLI tools
-- **Multi-window workflow** — Work on multiple branches simultaneously
-- **Git Worktree integration** — One-click branch isolation with automatic port isolation
+- **Multi-window workflow** — Work on multiple projects simultaneously
 - **Remote Access** — Monitor and control projects from your phone via QR code
 - **Clickable file paths** — Jump to files mentioned in agent output
 - **Peek preview** — Quick file inspection without leaving terminal
@@ -37,22 +36,14 @@ Built from the ground up for AI coding assistants:
 | **Peek Editor** | Quick preview popup without disrupting your terminal flow |
 | **Startup Command** | Auto-launch `claude` or `codex` when opening a project |
 
-### 🪟 Multi-Window & Git Worktree
+### 🪟 Multi-Window
 
 Parallel development made simple:
 
 | Feature | Description |
 |---------|-------------|
 | **Multiple Windows** | `Cmd+Shift+N` opens a new window |
-| **Git Worktree Panel** | `Cmd+G` to create/manage worktrees |
-| **Auto Window Creation** | New worktree → new window automatically |
-| **Branch Isolation** | Work on features without stashing or switching |
-| **File Copy** | Copies `.env*` and configured files to new worktrees |
-| **Port Isolation** | Automatically assigns unique ports to each worktree |
-| **Auto Initialization** | Runs `npm install` (or detected package manager) on creation |
 | **Recent Projects** | Quick access to your project history |
-
-See [Git Worktree Support](#git-worktree-support) for details.
 
 ### 📱 Remote Access
 
@@ -118,7 +109,6 @@ See [Remote Access](#remote-access) for details.
 | `Cmd+B` | Toggle Sidebar |
 | `Cmd+D` | Diff View |
 | `Cmd+H` | Commit History |
-| `Cmd+G` | Git Worktrees |
 | `Cmd+Shift+N` | New Window |
 | `Cmd+Shift+W` | Close Project |
 | `Cmd+Shift+R` | Remote Access Settings |
@@ -126,61 +116,6 @@ See [Remote Access](#remote-access) for details.
 | `Cmd+1-9` | Switch Terminal Tab |
 | `Cmd+W` | Close Tab |
 | `Cmd+/` | Show All Shortcuts |
-
-## Git Worktree Support
-
-Git Worktree lets you work on multiple branches simultaneously, each in its own isolated directory and window. This is essential for AI-assisted development where you might have one agent working on a feature while reviewing another branch.
-
-### How It Works
-
-1. Press `Cmd+G` to open the Worktree Panel
-2. Enter or select a branch name
-3. kiri creates a worktree directory alongside your repo (e.g., `kiri-feature-auth/`)
-4. Files are copied, dependencies are installed, and a new window opens automatically
-
-```
-~/projects/
-├── kiri/                     ← Main repository (main branch)
-├── kiri-feature-auth/        ← Worktree (feature/auth branch)
-└── kiri-fix-login/           ← Worktree (fix-login branch)
-```
-
-### Automatic Setup
-
-When creating a worktree, kiri handles the tedious setup automatically:
-
-- **File Copy** — Copies `.env*` files and other configured patterns to the new worktree
-- **Package Manager Detection** — Detects npm/yarn/pnpm/bun from lock files and runs the appropriate install command
-- **Custom Init Commands** — Add your own setup commands (e.g., `docker compose up -d`, `cargo build`)
-
-### Port Isolation (Incremental Replace)
-
-Running multiple worktrees means running multiple dev servers, which causes port conflicts. kiri solves this with automatic port isolation:
-
-| Source | Detection | Example |
-|--------|-----------|---------|
-| `.env*` files | `PORT=3000`, `DB_PORT=5432` | Transformed |
-| `docker-compose.yml` | Host ports in `ports:` section | Transformed (container ports preserved) |
-| `package.json` | `--port`, `-p` flags in scripts | Transformed |
-| `Dockerfile` | `EXPOSE` directives | Reference only |
-
-Each worktree gets unique ports from the 20000-39999 range. You can enable/disable individual variables and add custom regex rules for project-specific files.
-
-### Worktree Lifecycle
-
-| Action | Behavior |
-|--------|----------|
-| **Create** | Branch is created if it doesn't exist, worktree + new window opens |
-| **Open** | Existing worktree runs init commands and opens in a new window |
-| **Close** | Confirmation dialog → worktree directory is cleaned up |
-
-### Settings
-
-Configure worktree behavior from the Settings modal in the Worktree Panel:
-
-- **Copy Patterns** — Glob patterns for files to copy (default: `**/.env*`)
-- **Init Commands** — Commands to run after creation (auto-detected + custom)
-- **Port Isolation** — Toggle and configure port assignment per variable
 
 ## Remote Access
 
@@ -195,7 +130,7 @@ Remote Access lets you monitor and control your kiri projects from any device �
 
 ### What You Can Do Remotely
 
-- **View open projects** — See project names, branches, and worktree status
+- **View open projects** — See project names and branches
 - **Monitor terminals** — See which processes are running (e.g., `claude`, `node`)
 - **Open projects** — Launch projects from your recent history
 - **Close projects** — Close project windows remotely

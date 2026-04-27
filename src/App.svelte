@@ -11,7 +11,6 @@
   import ToastContainer from '@/lib/components/ui/ToastContainer.svelte';
   import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
   import CommitHistoryModal from '@/lib/components/git/CommitHistoryModal.svelte';
-  import WorktreePanel from '@/lib/components/git/WorktreePanel.svelte';
   import PrPanel from '@/lib/components/pr/PrPanel.svelte';
   import { prViewStore } from '@/lib/stores/prViewStore';
   import { prStore } from '@/lib/stores/prStore';
@@ -25,29 +24,18 @@
   import { peekStore } from '@/lib/stores/peekStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
   import { commitHistoryStore } from '@/lib/stores/commitHistoryStore';
-  import { worktreeViewStore } from '@/lib/stores/worktreeViewStore';
   import { remoteAccessViewStore } from '@/lib/stores/remoteAccessViewStore';
-  import { worktreeStore, isWorktree, isSubdirectoryOfRepo } from '@/lib/stores/worktreeStore';
-  import { toastStore } from '@/lib/stores/toastStore';
-  import { worktreeService } from '@/lib/services/worktreeService';
-  import { eventService } from '@/lib/services/eventService';
   import { windowService } from '@/lib/services/windowService';
   import { PeekEditor } from '@/lib/components/peek';
-  import { gitStore } from '@/lib/stores/gitStore';
   import { projectStore, isProjectOpen } from '@/lib/stores/projectStore';
   import { settingsStore, startupCommand } from '@/lib/stores/settingsStore';
   import { isRemoteActive } from '@/lib/stores/remoteAccessStore';
   import { toggleRemoteAccess } from '@/lib/utils/remoteAccessToggle';
+  import { toastStore } from '@/lib/stores/toastStore';
   import type { StartupCommand } from '@/lib/services/persistenceService';
   import { performanceService } from '@/lib/services/performanceService';
   import { setupLongTaskObserver } from '@/lib/utils/performanceMarker';
-  import {
-    loadSettings,
-    saveSettings,
-    loadProjectSettings,
-    saveProjectSettings,
-  } from '@/lib/services/persistenceService';
-  import { portIsolationService } from '@/lib/services/portIsolationService';
+  import { loadSettings, saveSettings } from '@/lib/services/persistenceService';
   import { terminalService } from '@/lib/services/terminalService';
   import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
   import { getAllTerminalIds } from '@/lib/stores/tabStore';
@@ -56,17 +44,6 @@
 
   let showShortcuts = $state(false);
   let windowLabel = $state('');
-  let isAppQuitting = $state(false);
-
-  // PR header state (populated from URL params when opened via "Open locally" in PrPanel)
-  let prHeaderNumber = $state<number | null>(null);
-  let prHeaderTitle = $state<string | null>(null);
-  let prHeaderBranch = $state<string | null>(null);
-  let prHeaderCiStatus = $state<string | null>(null);
-
-  let hasPrHeader = $derived(
-    prHeaderNumber !== null && prHeaderTitle !== null && prHeaderBranch !== null
-  );
 
   // Sync tools state to macOS menu bar
   $effect(() => {
@@ -178,37 +155,11 @@
       return;
     }
 
-    // Cmd+G: Toggle Worktrees (only when project is open and not in worktree)
-    if ((e.metaKey || e.ctrlKey) && e.key === 'g' && $isProjectOpen && !$isWorktree) {
+    // Cmd+Shift+P: Toggle PR panel (only when project is open)
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'p' && $isProjectOpen) {
       e.preventDefault();
       const path = projectStore.getCurrentPath();
       if (path) {
-        // Check if opened from a subdirectory of the repo
-        if ($isSubdirectoryOfRepo) {
-          toastStore.warning(
-            'Worktrees can only be managed from the repository root. Please open the project from the root directory.',
-            5000
-          );
-          return;
-        }
-        if ($worktreeViewStore.isOpen) {
-          worktreeViewStore.close();
-        } else {
-          worktreeViewStore.open(path);
-        }
-      }
-      return;
-    }
-
-    // Cmd+Shift+P: Toggle PR panel (only when project is open and not in worktree)
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'p' && $isProjectOpen && !$isWorktree) {
-      e.preventDefault();
-      const path = projectStore.getCurrentPath();
-      if (path) {
-        if ($isSubdirectoryOfRepo) {
-          toastStore.warning('PRs can only be viewed from the repository root.', 4000);
-          return;
-        }
         if ($prViewStore.isOpen) {
           prViewStore.close();
         } else {
@@ -312,39 +263,18 @@
     windowLabel = currentWindow.label;
     const isMainWindow = windowLabel === 'main';
 
-    // Listen for app-quitting event (for non-main windows to skip worktree cleanup)
-    let unlistenAppQuitting: (() => void) | null = null;
-    if (!isMainWindow) {
-      unlistenAppQuitting = await listen('app-quitting', () => {
-        isAppQuitting = true;
-      });
-    }
-
     // Handle URL parameters
     const params = new URLSearchParams(window.location.search);
 
-    // Handle ?project= URL parameter (for worktree windows and open-recent)
+    // Handle ?project= URL parameter (for open-recent and new windows)
     const projectParam = params.get('project');
     if (projectParam) {
       const decodedPath = decodeURIComponent(projectParam);
-
-      // Check if this is a worktree - worktrees should not be added to project history
-      const worktreeContext = await worktreeService.getContext(decodedPath);
-      if (worktreeContext?.is_worktree) {
-        // Worktree: just set current path without updating history
-        projectStore.setCurrentPath(decodedPath);
-      } else {
-        // Normal project: add to history
-        await projectStore.openProject(decodedPath);
-      }
+      await projectStore.openProject(decodedPath);
 
       // Register this window with the project path (for focus_or_create_window)
       try {
-        await windowService.registerWindow(
-          windowLabel,
-          decodedPath,
-          worktreeContext?.is_worktree ?? false
-        );
+        await windowService.registerWindow(windowLabel, decodedPath);
       } catch (e) {
         console.error('Failed to register window:', e);
       }
@@ -354,36 +284,9 @@
       }
     }
 
-    // Handle ?pr_number=, ?pr_title=, ?pr_branch=, ?pr_ci_status= URL params
-    // These are set when a worktree window is opened via PrPanel's "Open locally" button
-    const prNumberParam = params.get('pr_number');
-    const prTitleParam = params.get('pr_title');
-    const prBranchParam = params.get('pr_branch');
-    const prCiStatusParam = params.get('pr_ci_status');
-    if (prNumberParam && prTitleParam && prBranchParam) {
-      const parsedNumber = parseInt(prNumberParam, 10);
-      if (!isNaN(parsedNumber)) {
-        prHeaderNumber = parsedNumber;
-        prHeaderTitle = decodeURIComponent(prTitleParam);
-        prHeaderBranch = decodeURIComponent(prBranchParam);
-        prHeaderCiStatus = prCiStatusParam ? decodeURIComponent(prCiStatusParam) : 'unknown';
-      }
-    }
-
-    // Listen for worktree-removed event (close window if its worktree was removed)
-    const unlistenWorktreeRemoved = await listen<{ path: string }>('worktree-removed', (event) => {
-      const currentPath = projectStore.getCurrentPath();
-      if (currentPath && currentPath === event.payload.path) {
-        projectStore.closeProject();
-      }
-    });
-
-    // Load worktree info when project is open, or resize to start screen size
+    // Resize to start screen size when no project is open
     const currentPath = projectStore.getCurrentPath();
-    if (currentPath) {
-      worktreeStore.refresh(currentPath);
-    } else if (isMainWindow) {
-      // No project open, resize to start screen size and center
+    if (!currentPath && isMainWindow) {
       try {
         await windowService.setSizeAndCenter(800, 600);
       } catch (error) {
@@ -393,10 +296,9 @@
 
     window.addEventListener('keydown', handleKeyDown);
 
-    // Refresh worktree info and update window title when project changes
+    // Update window title and refresh PR list when project changes
     const unsubscribeProjectStore = projectStore.subscribe((state) => {
       if (state.currentPath) {
-        worktreeStore.refresh(state.currentPath);
         prStore.refresh(state.currentPath);
         const projectName = state.currentPath.split('/').pop() || 'kiri';
         windowService.setTitle(`${projectName} — kiri`);
@@ -445,57 +347,6 @@
       }
 
       event.preventDefault();
-
-      // Main window: signal non-main windows that app is quitting
-      if (isMainWindow) {
-        await eventService.emit('app-quitting', {});
-        // Delay to let non-main windows receive and process the quit signal.
-        // 300ms provides enough time for event propagation and handler execution
-        // across multiple windows, which 100ms was sometimes insufficient for.
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
-
-      // For worktree windows, automatically delete the worktree (skip when app is quitting)
-      if (!isAppQuitting) {
-        const currentPath = projectStore.getCurrentPath();
-        if (currentPath) {
-          try {
-            const worktreeContext = await worktreeService.getContext(currentPath);
-            if (
-              worktreeContext?.is_worktree &&
-              worktreeContext?.main_repo_path &&
-              worktreeContext?.worktree_name
-            ) {
-              await worktreeService.remove(
-                worktreeContext.main_repo_path,
-                worktreeContext.worktree_name
-              );
-
-              // Release port assignments for this worktree
-              try {
-                const projectSettings = await loadProjectSettings(worktreeContext.main_repo_path);
-                if (projectSettings.portConfig) {
-                  projectSettings.portConfig = portIsolationService.removeWorktreeAssignments(
-                    projectSettings.portConfig,
-                    worktreeContext.worktree_name
-                  );
-                  await saveProjectSettings(worktreeContext.main_repo_path, projectSettings);
-                }
-              } catch (portError) {
-                console.error('Failed to release port assignments:', portError);
-              }
-
-              // Emit event to notify other windows
-              await eventService.emit('worktree-removed', { path: currentPath });
-            }
-          } catch (error) {
-            // Worktree removal may fail (e.g., locked files, git errors).
-            // The orphaned worktree will be cleaned up by pruneOrphanedAssignments
-            // when WorktreePanel is opened next time.
-            console.error(`Failed to remove worktree at ${currentPath}:`, error);
-          }
-        }
-      }
 
       // Unregister window from the registry
       try {
@@ -582,8 +433,6 @@
     return () => {
       unsubscribeProjectStore();
       unsubscribeSettingsStore?.();
-      unlistenAppQuitting?.();
-      unlistenWorktreeRemoved();
       window.removeEventListener('keydown', handleKeyDown);
       unlistenCloseRequested();
       unlistenMenu();
@@ -600,46 +449,6 @@
 
 {#if $isProjectOpen}
   <div class="app-container">
-    {#if $isWorktree}
-      <div class="worktree-banner">
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-        >
-          <line x1="6" y1="3" x2="6" y2="15"></line>
-          <circle cx="18" cy="6" r="3"></circle>
-          <circle cx="6" cy="18" r="3"></circle>
-          <path d="M18 9a9 9 0 0 1-9 9"></path>
-        </svg>
-        <span class="worktree-label">WT</span>
-        {#if $gitStore.repoInfo?.branch}
-          <span class="worktree-branch">{$gitStore.repoInfo.branch}</span>
-        {:else}
-          <span>Worktree</span>
-        {/if}
-      </div>
-    {/if}
-    {#if hasPrHeader && prHeaderNumber !== null && prHeaderTitle !== null && prHeaderBranch !== null}
-      <div class="pr-header-bar">
-        <span class="pr-header-number">PR #{prHeaderNumber}</span>
-        <span class="pr-header-sep">·</span>
-        <span class="pr-header-title">{prHeaderTitle}</span>
-        <span class="pr-header-sep">·</span>
-        {#if prHeaderCiStatus === 'success'}
-          <span class="pr-header-ci pr-ci-success">✓ CI passed</span>
-        {:else if prHeaderCiStatus === 'failure'}
-          <span class="pr-header-ci pr-ci-failure">✕ CI failed</span>
-        {:else if prHeaderCiStatus === 'pending'}
-          <span class="pr-header-ci pr-ci-pending">◔ CI running</span>
-        {:else}
-          <span class="pr-header-ci pr-ci-unknown">○ No CI</span>
-        {/if}
-      </div>
-    {/if}
     <AppLayout />
   </div>
 
@@ -670,25 +479,8 @@
     <EditorModal filePath={$editorModalStore.filePath} onClose={() => editorModalStore.close()} />
   {/if}
 
-  {#if $worktreeViewStore.isOpen && $worktreeViewStore.projectPath}
-    <WorktreePanel
-      projectPath={$worktreeViewStore.projectPath}
-      autoCreateBranch={$worktreeViewStore.autoCreateBranch}
-      prMetadata={$worktreeViewStore.prMetadata}
-      onClose={() => worktreeViewStore.close()}
-    />
-  {/if}
-
   {#if $prViewStore.isOpen && $prViewStore.projectPath}
-    <PrPanel
-      projectPath={$prViewStore.projectPath}
-      onClose={() => prViewStore.close()}
-      onCreateWorktree={(branchName, prMetadata) => {
-        const path = $prViewStore.projectPath!;
-        prViewStore.close();
-        worktreeViewStore.openAndCreate(path, branchName, prMetadata);
-      }}
-    />
+    <PrPanel projectPath={$prViewStore.projectPath} onClose={() => prViewStore.close()} />
   {/if}
 
   {#if $isContentSearchOpen && projectStore.getCurrentPath()}
@@ -722,106 +514,5 @@
   .app-container > :global(.app-layout) {
     flex: 1;
     min-height: 0;
-  }
-
-  .worktree-banner {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-2);
-    height: 24px;
-    background: linear-gradient(90deg, rgba(251, 191, 36, 0.18) 0%, rgba(251, 191, 36, 0.08) 100%);
-    border-bottom: 1px solid rgba(251, 191, 36, 0.4);
-    color: var(--git-modified);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.03em;
-    flex-shrink: 0;
-  }
-
-  .worktree-banner svg {
-    opacity: 0.9;
-  }
-
-  .worktree-banner .worktree-label {
-    font-size: 10px;
-    font-weight: 700;
-    padding: 1px 6px;
-    background: rgba(251, 191, 36, 0.3);
-    border-radius: 3px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-  }
-
-  .worktree-banner .worktree-branch {
-    font-family: var(--font-mono);
-    font-weight: 600;
-    text-transform: none;
-  }
-
-  /* PR Header Bar — shown in worktree windows opened via "Open locally" */
-  .pr-header-bar {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-2);
-    height: 26px;
-    padding: 0 var(--space-4);
-    background: linear-gradient(
-      90deg,
-      rgba(125, 211, 252, 0.12) 0%,
-      rgba(196, 181, 253, 0.06) 50%,
-      rgba(125, 211, 252, 0.12) 100%
-    );
-    border-bottom: 1px solid rgba(125, 211, 252, 0.25);
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.01em;
-    flex-shrink: 0;
-    overflow: hidden;
-  }
-
-  .pr-header-number {
-    color: var(--accent-color);
-    font-family: var(--font-mono);
-    font-weight: 600;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-
-  .pr-header-sep {
-    color: var(--text-muted);
-    opacity: 0.5;
-    flex-shrink: 0;
-  }
-
-  .pr-header-title {
-    color: var(--text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-
-  .pr-header-ci {
-    white-space: nowrap;
-    flex-shrink: 0;
-    font-size: 11px;
-  }
-
-  .pr-ci-success {
-    color: var(--git-added);
-  }
-
-  .pr-ci-failure {
-    color: var(--git-deleted);
-  }
-
-  .pr-ci-pending {
-    color: var(--accent3-color);
-  }
-
-  .pr-ci-unknown {
-    color: var(--text-muted);
   }
 </style>

@@ -2,43 +2,17 @@
   import { onMount } from 'svelte';
   import { Spinner } from '@/lib/components/ui';
   import { prStore } from '@/lib/stores/prStore';
-  import { worktreeService } from '@/lib/services/worktreeService';
-  import { windowService } from '@/lib/services/windowService';
-  import { toastStore } from '@/lib/stores/toastStore';
   import type { PullRequest } from '@/lib/services/prService';
-  import {
-    buildOpenTaskList,
-    executeOpenFlow,
-    type ProgressTask,
-    type TaskStatus,
-  } from '@/lib/services/worktreeFlowService';
-  import { loadProjectSettings } from '@/lib/services/persistenceService';
-  import type { PrMetadata } from '@/lib/stores/worktreeViewStore';
-  import { tick } from 'svelte';
 
   interface Props {
     projectPath: string;
     onClose: () => void;
-    onCreateWorktree: (branchName: string, prMetadata: PrMetadata) => void;
   }
 
-  let { projectPath, onClose, onCreateWorktree }: Props = $props();
+  let { projectPath, onClose }: Props = $props();
 
   let mounted = $state(false);
   let view = $state<'list' | 'detail'>('list');
-  let isOpeningLocally = $state(false);
-  let progressTasks = $state<ProgressTask[]>([]);
-  let isProgressActive = $state(false);
-  let openCancelled = $state(false);
-  const showProgress = $derived(isProgressActive && progressTasks.length > 0);
-
-  async function updateTask(taskId: string, status: TaskStatus, detail?: string) {
-    progressTasks = progressTasks.map((task) =>
-      task.id === taskId ? { ...task, status, ...(detail !== undefined ? { detail } : {}) } : task
-    );
-    await tick();
-    await new Promise((resolve) => requestAnimationFrame(resolve));
-  }
 
   onMount(() => {
     requestAnimationFrame(() => {
@@ -59,89 +33,6 @@
 
   function handleRefresh() {
     prStore.refresh(projectPath);
-  }
-
-  /**
-   * Compute a simple CI status string for URL param passing.
-   */
-  function getPrCiStatus(pr: PullRequest): string {
-    const checks = pr.status_check_rollup;
-    if (!checks || checks.length === 0) return 'unknown';
-    const hasFailure = checks.some((c) => c.conclusion === 'FAILURE' || c.conclusion === 'failure');
-    if (hasFailure) return 'failure';
-    const hasPending = checks.some(
-      (c) => c.status === 'IN_PROGRESS' || c.status === 'QUEUED' || c.conclusion === null
-    );
-    if (hasPending) return 'pending';
-    return 'success';
-  }
-
-  async function handleOpenLocally() {
-    const pr = $prStore.selectedPr;
-    if (!pr) return;
-
-    isOpeningLocally = true;
-    openCancelled = false;
-
-    try {
-      const worktrees = await worktreeService.list(projectPath);
-
-      // Check if this branch is already checked out in the main worktree
-      const mainWorktree = worktrees.find((wt) => wt.is_main && wt.branch === pr.head_ref_name);
-      if (mainWorktree) {
-        toastStore.success(`Already on branch '${pr.head_ref_name}' in this window`);
-        return;
-      }
-
-      const existing = worktrees.find((wt) => wt.branch === pr.head_ref_name && !wt.is_main);
-
-      if (existing) {
-        // Open existing worktree — run init commands first
-        const settings = await loadProjectSettings(projectPath);
-        const initCommands = (settings.worktreeInitCommands ?? []).filter((c) => c.enabled);
-
-        progressTasks = buildOpenTaskList(initCommands);
-        isProgressActive = true;
-
-        await executeOpenFlow(existing.path, initCommands, {
-          onTaskUpdate: updateTask,
-          onCancelCheck: () => openCancelled,
-        });
-
-        if (!openCancelled) {
-          await updateTask('open-window', 'running');
-          await windowService.focusOrCreateWindowWithPr(
-            existing.path,
-            pr.number,
-            pr.title,
-            pr.head_ref_name,
-            getPrCiStatus(pr)
-          );
-          await updateTask('open-window', 'completed');
-          toastStore.success(`Opened existing worktree for PR #${pr.number}`);
-        }
-
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        isProgressActive = false;
-        progressTasks = [];
-      } else {
-        // Delegate to WorktreePanel for full creation flow
-        onCreateWorktree(pr.head_ref_name, {
-          number: pr.number,
-          title: pr.title,
-          branch: pr.head_ref_name,
-          ciStatus: getPrCiStatus(pr),
-        });
-      }
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      toastStore.error(`Failed to open worktree: ${message}`);
-      isProgressActive = false;
-      progressTasks = [];
-    } finally {
-      isOpeningLocally = false;
-      openCancelled = false;
-    }
   }
 
   function handleKeyDown(event: KeyboardEvent) {
@@ -374,142 +265,72 @@
             </div>
           {/if}
         {:else if view === 'detail' && prState.selectedPr}
-          {#if showProgress}
-            <!-- Progress View (shown when opening existing worktree with init commands) -->
-            {@const pr = prState.selectedPr}
-            <div class="progress-header">
-              <span class="progress-title">Opening worktree for PR #{pr.number}</span>
-              <code class="progress-branch">{pr.head_ref_name}</code>
+          <!-- PR Detail -->
+          {@const pr = prState.selectedPr}
+          {@const ciStatus = getCiStatusIcon(pr)}
+          {@const reviewDecision = getReviewDecisionLabel(pr.review_decision)}
+          <div class="pr-detail">
+            <div class="detail-header">
+              <h2 class="detail-title">
+                <span class="detail-number">#{pr.number}</span>
+                {pr.title}
+              </h2>
+              <div class="detail-meta">
+                <code class="detail-branch">{pr.head_ref_name}</code>
+                <span class="detail-ci" style="color: {ciStatus.color}">{ciStatus.icon}</span>
+                <span class="detail-author">{pr.author_login}</span>
+                <span class="detail-time">{getRelativeTime(pr.updated_at)}</span>
+              </div>
+              <div class="detail-review" style="color: {reviewDecision.color}">
+                {reviewDecision.text}
+              </div>
+              {#if pr.labels.length > 0}
+                <div class="detail-labels">
+                  {#each pr.labels as label (label.name)}
+                    <span
+                      class="label-badge"
+                      style="background: #{label.color}33; color: #{label.color}; border-color: #{label.color}55"
+                    >
+                      {label.name}
+                    </span>
+                  {/each}
+                </div>
+              {/if}
             </div>
-            <div class="progress-task-list">
-              {#each progressTasks as task (task.id)}
-                <div
-                  class="progress-task-item"
-                  class:is-pending={task.status === 'pending'}
-                  class:is-running={task.status === 'running'}
-                  class:is-completed={task.status === 'completed'}
-                  class:is-failed={task.status === 'failed'}
-                >
-                  <div class="task-status-icon">
-                    {#if task.status === 'pending'}
-                      <span class="task-icon-dot"></span>
-                    {:else if task.status === 'running'}
-                      <Spinner size="sm" />
-                    {:else if task.status === 'completed'}
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        class="task-icon-completed"
-                      >
-                        <path
-                          d="M4 8.5L6.5 11L12 5"
-                          stroke="currentColor"
-                          stroke-width="2"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        />
-                      </svg>
-                    {:else if task.status === 'failed'}
-                      <svg
-                        width="16"
-                        height="16"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        class="task-icon-failed"
-                      >
-                        <circle cx="8" cy="8" r="7.5" fill="currentColor" opacity="0.15" />
-                        <line
-                          x1="8"
-                          y1="5"
-                          x2="8"
-                          y2="9"
-                          stroke="currentColor"
-                          stroke-width="1.8"
-                          stroke-linecap="round"
-                        />
-                        <circle cx="8" cy="11.5" r="0.8" fill="currentColor" />
-                      </svg>
-                    {/if}
-                  </div>
-                  <div class="task-content">
-                    <span class="task-name">{task.name}</span>
-                    {#if task.detail}
-                      <span class="task-detail">({task.detail})</span>
-                    {/if}
-                  </div>
-                </div>
-              {/each}
+
+            {#if pr.body}
+              <div class="detail-body">
+                <p class="detail-description">{pr.body}</p>
+              </div>
+            {/if}
+
+            <div class="detail-stats">
+              <span class="stat-additions">+{pr.additions}</span>
+              <span class="stat-deletions">-{pr.deletions}</span>
+              <span class="stat-files">{pr.changed_files} files</span>
             </div>
-          {:else}
-            <!-- PR Detail -->
-            {@const pr = prState.selectedPr}
-            {@const ciStatus = getCiStatusIcon(pr)}
-            {@const reviewDecision = getReviewDecisionLabel(pr.review_decision)}
-            <div class="pr-detail">
-              <div class="detail-header">
-                <h2 class="detail-title">
-                  <span class="detail-number">#{pr.number}</span>
-                  {pr.title}
-                </h2>
-                <div class="detail-meta">
-                  <code class="detail-branch">{pr.head_ref_name}</code>
-                  <span class="detail-ci" style="color: {ciStatus.color}">{ciStatus.icon}</span>
-                  <span class="detail-author">{pr.author_login}</span>
-                  <span class="detail-time">{getRelativeTime(pr.updated_at)}</span>
-                </div>
-                <div class="detail-review" style="color: {reviewDecision.color}">
-                  {reviewDecision.text}
-                </div>
-                {#if pr.labels.length > 0}
-                  <div class="detail-labels">
-                    {#each pr.labels as label (label.name)}
-                      <span
-                        class="label-badge"
-                        style="background: #{label.color}33; color: #{label.color}; border-color: #{label.color}55"
-                      >
-                        {label.name}
+
+            {#if pr.files.length > 0}
+              <div class="detail-files">
+                <h3 class="files-heading">Changed files</h3>
+                <div class="files-list">
+                  {#each pr.files as file (file.path)}
+                    <div class="file-row">
+                      <span class="file-path">{file.path}</span>
+                      <span class="file-changes">
+                        {#if file.additions > 0}
+                          <span class="file-additions">+{file.additions}</span>
+                        {/if}
+                        {#if file.deletions > 0}
+                          <span class="file-deletions">-{file.deletions}</span>
+                        {/if}
                       </span>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
-
-              {#if pr.body}
-                <div class="detail-body">
-                  <p class="detail-description">{pr.body}</p>
+                    </div>
+                  {/each}
                 </div>
-              {/if}
-
-              <div class="detail-stats">
-                <span class="stat-additions">+{pr.additions}</span>
-                <span class="stat-deletions">-{pr.deletions}</span>
-                <span class="stat-files">{pr.changed_files} files</span>
               </div>
-
-              {#if pr.files.length > 0}
-                <div class="detail-files">
-                  <h3 class="files-heading">Changed files</h3>
-                  <div class="files-list">
-                    {#each pr.files as file (file.path)}
-                      <div class="file-row">
-                        <span class="file-path">{file.path}</span>
-                        <span class="file-changes">
-                          {#if file.additions > 0}
-                            <span class="file-additions">+{file.additions}</span>
-                          {/if}
-                          {#if file.deletions > 0}
-                            <span class="file-deletions">-{file.deletions}</span>
-                          {/if}
-                        </span>
-                      </div>
-                    {/each}
-                  </div>
-                </div>
-              {/if}
-            </div>
-          {/if}
+            {/if}
+          </div>
         {:else if view === 'detail' && !prState.selectedPr}
           <!-- Loading detail -->
           <div class="loading-state">
@@ -522,32 +343,6 @@
       <!-- Footer -->
       <div class="panel-footer">
         {#if view === 'detail'}
-          {#if showProgress}
-            <button
-              class="footer-open-locally cancel-btn"
-              onclick={() => {
-                openCancelled = true;
-              }}
-            >
-              <span>Cancel</span>
-            </button>
-          {:else}
-            <button
-              class="footer-open-locally"
-              onclick={handleOpenLocally}
-              disabled={isOpeningLocally || !prState.selectedPr}
-            >
-              <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-                <path
-                  d="M2 8h12M8 2v12"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                  stroke-linecap="round"
-                />
-              </svg>
-              <span>Open locally</span>
-            </button>
-          {/if}
           <span class="footer-item">
             <kbd>Esc</kbd>
             <span>back</span>
@@ -1130,37 +925,6 @@
     border-radius: 0 0 var(--radius-xl) var(--radius-xl);
   }
 
-  .footer-open-locally {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    background: rgba(125, 211, 252, 0.15);
-    border: 1px solid rgba(125, 211, 252, 0.3);
-    border-radius: var(--radius-sm);
-    font-size: 12px;
-    font-weight: 500;
-    font-family: var(--font-sans);
-    color: var(--accent-color);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    white-space: nowrap;
-    margin-right: auto;
-  }
-
-  .footer-open-locally:hover {
-    background: rgba(125, 211, 252, 0.25);
-  }
-
-  .footer-open-locally:active {
-    transform: scale(0.98);
-  }
-
-  .footer-open-locally:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
   .footer-item {
     font-size: 11px;
     color: var(--text-muted);
@@ -1194,174 +958,5 @@
 
   .retry-btn {
     margin-top: var(--space-1);
-  }
-
-  /* Progress Task List */
-  .progress-header {
-    padding: var(--space-3);
-    border-bottom: 1px solid var(--border-primary);
-  }
-
-  .progress-title {
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text-primary);
-  }
-
-  .progress-branch {
-    display: block;
-    margin-top: var(--space-1);
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-
-  .progress-task-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-    padding: var(--space-2) var(--space-3);
-  }
-
-  .progress-task-item {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--space-2);
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-sm);
-    transition: all var(--transition-normal);
-    animation: taskFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-
-  .progress-task-item:nth-child(1) {
-    animation-delay: 0ms;
-  }
-  .progress-task-item:nth-child(2) {
-    animation-delay: 50ms;
-  }
-  .progress-task-item:nth-child(3) {
-    animation-delay: 100ms;
-  }
-  .progress-task-item:nth-child(4) {
-    animation-delay: 150ms;
-  }
-  .progress-task-item:nth-child(5) {
-    animation-delay: 200ms;
-  }
-  .progress-task-item:nth-child(6) {
-    animation-delay: 250ms;
-  }
-  .progress-task-item:nth-child(7) {
-    animation-delay: 300ms;
-  }
-  .progress-task-item:nth-child(8) {
-    animation-delay: 350ms;
-  }
-
-  @keyframes taskFadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(-4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  .progress-task-item.is-pending {
-    opacity: 0.35;
-  }
-  .progress-task-item.is-running {
-    opacity: 1;
-    background: rgba(125, 211, 252, 0.05);
-    border: 1px solid rgba(125, 211, 252, 0.08);
-  }
-  .progress-task-item.is-completed {
-    opacity: 0.85;
-  }
-  .progress-task-item.is-completed .task-status-icon {
-    color: var(--git-added);
-    filter: drop-shadow(0 0 4px rgba(74, 222, 128, 0.3));
-  }
-  .progress-task-item.is-failed {
-    opacity: 0.9;
-  }
-  .progress-task-item.is-failed .task-status-icon {
-    color: var(--git-modified);
-    filter: drop-shadow(0 0 4px rgba(251, 191, 36, 0.3));
-  }
-
-  .task-status-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 20px;
-    flex-shrink: 0;
-    transition: all var(--transition-normal);
-  }
-
-  .task-icon-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-muted);
-    opacity: 0.5;
-  }
-
-  .task-icon-completed {
-    animation: taskCheckIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-
-  @keyframes taskCheckIn {
-    from {
-      opacity: 0;
-      transform: scale(0.5);
-    }
-    to {
-      opacity: 1;
-      transform: scale(1);
-    }
-  }
-
-  .task-icon-failed {
-    animation: taskCheckIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-
-  .task-content {
-    display: flex;
-    flex-direction: row;
-    align-items: baseline;
-    gap: 6px;
-    min-width: 0;
-    line-height: 20px;
-    overflow: hidden;
-  }
-
-  .task-name {
-    font-size: 12px;
-    color: var(--text-secondary);
-    white-space: nowrap;
-  }
-
-  .progress-task-item.is-running .task-name {
-    color: var(--text-primary);
-  }
-
-  .task-detail {
-    font-size: 10px;
-    color: var(--text-muted);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .progress-task-item.is-failed .task-detail {
-    color: var(--git-modified);
-  }
-
-  .cancel-btn {
-    border-color: var(--git-modified) !important;
-    color: var(--git-modified) !important;
   }
 </style>

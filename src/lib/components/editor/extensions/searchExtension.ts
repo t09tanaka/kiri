@@ -13,7 +13,7 @@ export { searchPanelOpen };
 
 /**
  * Custom keybindings for search functionality.
- * Excludes Mod-g (Worktree toggle) and Mod-d (DiffView toggle) to avoid conflicts.
+ * Excludes Mod-d (DiffView toggle) to avoid conflicts.
  */
 const searchKeymap = keymap.of([
   { key: 'Mod-f', run: openSearchPanel, scope: 'editor search-panel' },

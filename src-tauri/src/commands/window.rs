@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -12,8 +12,6 @@ pub struct WindowRegistry {
     path_to_label: HashMap<String, String>,
     /// Maps window labels to project paths
     label_to_path: HashMap<String, String>,
-    /// Paths that are worktrees
-    worktree_paths: HashSet<String>,
 }
 
 impl WindowRegistry {
@@ -22,31 +20,24 @@ impl WindowRegistry {
     }
 
     /// Register a window with a project path
-    pub fn register(&mut self, label: &str, path: &str, is_worktree: bool) {
+    pub fn register(&mut self, label: &str, path: &str) {
         // Clean up old path mapping if this label was previously registered with a different path
         if let Some(old_path) = self.label_to_path.get(label) {
             if old_path != path {
                 let old_path = old_path.clone();
                 self.path_to_label.remove(&old_path);
-                self.worktree_paths.remove(&old_path);
             }
         }
         self.path_to_label
             .insert(path.to_string(), label.to_string());
         self.label_to_path
             .insert(label.to_string(), path.to_string());
-        if is_worktree {
-            self.worktree_paths.insert(path.to_string());
-        } else {
-            self.worktree_paths.remove(path);
-        }
     }
 
     /// Unregister a window by its label
     pub fn unregister_by_label(&mut self, label: &str) {
         if let Some(path) = self.label_to_path.remove(label) {
             self.path_to_label.remove(&path);
-            self.worktree_paths.remove(&path);
         }
     }
 
@@ -58,11 +49,6 @@ impl WindowRegistry {
     /// Get all registered project paths
     pub fn get_all_paths(&self) -> Vec<String> {
         self.path_to_label.keys().cloned().collect()
-    }
-
-    /// Check if a registered path is a worktree
-    pub fn is_worktree_path(&self, path: &str) -> bool {
-        self.worktree_paths.contains(path)
     }
 }
 
@@ -83,7 +69,6 @@ fn window_title(project_path: Option<&str>) -> String {
 }
 
 /// Internal implementation of window creation (used by both command and menu)
-#[allow(clippy::too_many_arguments)]
 pub fn create_window_impl(
     app: &AppHandle,
     registry: Option<&WindowRegistryState>,
@@ -92,7 +77,6 @@ pub fn create_window_impl(
     width: Option<f64>,
     height: Option<f64>,
     project_path: Option<String>,
-    extra_params: Option<Vec<(String, String)>>,
 ) -> Result<(), String> {
     let id = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("window-{}", id);
@@ -109,20 +93,12 @@ pub fn create_window_impl(
             .unwrap_or((1200.0, 800.0)),
     };
 
-    // Build URL with optional parameters
-    let mut params = Vec::new();
-    if let Some(path) = &project_path {
-        params.push(format!("project={}", urlencoding::encode(path)));
-    }
-    if let Some(extra) = extra_params {
-        for (key, value) in extra {
-            params.push(format!("{}={}", key, urlencoding::encode(&value)));
-        }
-    }
-    let url = if params.is_empty() {
-        WebviewUrl::default()
-    } else {
-        WebviewUrl::App(format!("?{}", params.join("&")).into())
+    // Build URL with optional project path
+    let url = match &project_path {
+        Some(path) => WebviewUrl::App(
+            format!("?project={}", urlencoding::encode(path)).into(),
+        ),
+        None => WebviewUrl::default(),
     };
 
     let title = window_title(project_path.as_deref());
@@ -141,10 +117,10 @@ pub fn create_window_impl(
 
     builder.build().map_err(|e| e.to_string())?;
 
-    // Register the window with its project path (worktree status unknown at this point)
+    // Register the window with its project path
     if let (Some(path), Some(registry)) = (project_path, registry) {
         if let Ok(mut reg) = registry.lock() {
-            reg.register(&label, &path, false);
+            reg.register(&label, &path);
         }
     }
 
@@ -161,7 +137,7 @@ pub fn create_window(
     height: Option<f64>,
     project_path: Option<String>,
 ) -> Result<(), String> {
-    create_window_impl(&app, Some(&registry), x, y, width, height, project_path, None)
+    create_window_impl(&app, Some(&registry), x, y, width, height, project_path)
 }
 
 /// Focus an existing window for the given project path, or create a new one if not found
@@ -192,59 +168,7 @@ pub fn focus_or_create_window(
     }
 
     // No existing window, create a new one
-    create_window_impl(&app, Some(&registry), None, None, None, None, Some(project_path), None)?;
-    Ok(false) // Indicates new window was created
-}
-
-/// Focus an existing window for the given project path (with PR metadata), or create a new one.
-/// PR metadata is passed as URL params so the worktree window can display a PR header.
-#[tauri::command]
-pub fn focus_or_create_window_with_pr(
-    app: AppHandle,
-    registry: tauri::State<WindowRegistryState>,
-    project_path: String,
-    pr_number: i64,
-    pr_title: String,
-    pr_branch: String,
-    pr_ci_status: String,
-) -> Result<bool, String> {
-    // Check if a window already exists for this path
-    let existing_label = {
-        let reg = registry.lock().map_err(|e| format!("Lock error: {}", e))?;
-        reg.get_label_for_path(&project_path).cloned()
-    };
-
-    if let Some(label) = existing_label {
-        // Check if the window still exists
-        if let Some(window) = app.get_webview_window(&label) {
-            // Window exists, focus it (PR header already set from initial creation)
-            window.set_focus().map_err(|e| format!("Failed to focus window: {}", e))?;
-            return Ok(true); // Indicates existing window was focused
-        } else {
-            // Window no longer exists, clean up registry
-            if let Ok(mut reg) = registry.lock() {
-                reg.unregister_by_label(&label);
-            }
-        }
-    }
-
-    // No existing window, create a new one with PR metadata as URL params
-    let extra_params = vec![
-        ("pr_number".to_string(), pr_number.to_string()),
-        ("pr_title".to_string(), pr_title),
-        ("pr_branch".to_string(), pr_branch),
-        ("pr_ci_status".to_string(), pr_ci_status),
-    ];
-    create_window_impl(
-        &app,
-        Some(&registry),
-        None,
-        None,
-        None,
-        None,
-        Some(project_path),
-        Some(extra_params),
-    )?;
+    create_window_impl(&app, Some(&registry), None, None, None, None, Some(project_path))?;
     Ok(false) // Indicates new window was created
 }
 
@@ -254,10 +178,9 @@ pub fn register_window(
     registry: tauri::State<WindowRegistryState>,
     label: String,
     project_path: String,
-    is_worktree: Option<bool>,
 ) -> Result<(), String> {
     if let Ok(mut reg) = registry.lock() {
-        reg.register(&label, &project_path, is_worktree.unwrap_or(false));
+        reg.register(&label, &project_path);
     }
     Ok(())
 }
@@ -351,9 +274,9 @@ mod tests {
     #[test]
     fn test_registry_get_all_paths_returns_registered_paths() {
         let mut registry = WindowRegistry::new();
-        registry.register("window-1", "/path/a", false);
-        registry.register("window-2", "/path/b", false);
-        registry.register("window-3", "/path/c", false);
+        registry.register("window-1", "/path/a");
+        registry.register("window-2", "/path/b");
+        registry.register("window-3", "/path/c");
 
         let mut paths = registry.get_all_paths();
         paths.sort();
@@ -363,8 +286,8 @@ mod tests {
     #[test]
     fn test_registry_get_all_paths_excludes_unregistered() {
         let mut registry = WindowRegistry::new();
-        registry.register("window-1", "/path/a", false);
-        registry.register("window-2", "/path/b", false);
+        registry.register("window-1", "/path/a");
+        registry.register("window-2", "/path/b");
         registry.unregister_by_label("window-1");
 
         let paths = registry.get_all_paths();
@@ -372,53 +295,17 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_worktree_tracking() {
-        let mut registry = WindowRegistry::new();
-        registry.register("window-1", "/path/a", false);
-        registry.register("window-2", "/path/b", true);
-
-        assert!(!registry.is_worktree_path("/path/a"));
-        assert!(registry.is_worktree_path("/path/b"));
-    }
-
-    #[test]
-    fn test_registry_worktree_cleared_on_unregister() {
-        let mut registry = WindowRegistry::new();
-        registry.register("window-1", "/path/wt", true);
-        assert!(registry.is_worktree_path("/path/wt"));
-
-        registry.unregister_by_label("window-1");
-        assert!(!registry.is_worktree_path("/path/wt"));
-    }
-
-    #[test]
-    fn test_registry_worktree_updated_on_re_register() {
-        let mut registry = WindowRegistry::new();
-        // First register without worktree
-        registry.register("window-1", "/path/a", false);
-        assert!(!registry.is_worktree_path("/path/a"));
-
-        // Re-register as worktree
-        registry.register("window-1", "/path/a", true);
-        assert!(registry.is_worktree_path("/path/a"));
-
-        // Re-register as non-worktree
-        registry.register("window-1", "/path/a", false);
-        assert!(!registry.is_worktree_path("/path/a"));
-    }
-
-    #[test]
     fn test_registry_register_and_lookup() {
         let mut reg = WindowRegistry::new();
-        reg.register("window-1", "/path/a", false);
+        reg.register("window-1", "/path/a");
         assert_eq!(reg.get_label_for_path("/path/a"), Some(&"window-1".to_string()));
     }
 
     #[test]
     fn test_registry_reregister_cleans_old_path() {
         let mut reg = WindowRegistry::new();
-        reg.register("window-1", "/path/a", false);
-        reg.register("window-1", "/path/b", false);
+        reg.register("window-1", "/path/a");
+        reg.register("window-1", "/path/b");
 
         // Old path should be removed
         assert_eq!(reg.get_label_for_path("/path/a"), None);
@@ -429,15 +316,15 @@ mod tests {
     #[test]
     fn test_registry_reregister_same_path_is_idempotent() {
         let mut reg = WindowRegistry::new();
-        reg.register("window-1", "/path/a", false);
-        reg.register("window-1", "/path/a", false);
+        reg.register("window-1", "/path/a");
+        reg.register("window-1", "/path/a");
         assert_eq!(reg.get_label_for_path("/path/a"), Some(&"window-1".to_string()));
     }
 
     #[test]
     fn test_registry_unregister_cleans_both_maps() {
         let mut reg = WindowRegistry::new();
-        reg.register("window-1", "/path/a", false);
+        reg.register("window-1", "/path/a");
         reg.unregister_by_label("window-1");
         assert_eq!(reg.get_label_for_path("/path/a"), None);
     }
@@ -445,11 +332,11 @@ mod tests {
     #[test]
     fn test_registry_multiple_windows_independent() {
         let mut reg = WindowRegistry::new();
-        reg.register("window-1", "/path/a", false);
-        reg.register("window-2", "/path/b", false);
+        reg.register("window-1", "/path/a");
+        reg.register("window-2", "/path/b");
 
         // Reregistering window-1 should not affect window-2
-        reg.register("window-1", "/path/c", false);
+        reg.register("window-1", "/path/c");
         assert_eq!(reg.get_label_for_path("/path/a"), None);
         assert_eq!(reg.get_label_for_path("/path/b"), Some(&"window-2".to_string()));
         assert_eq!(reg.get_label_for_path("/path/c"), Some(&"window-1".to_string()));
