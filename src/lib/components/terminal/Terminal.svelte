@@ -1091,10 +1091,12 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 4px 8px;
+    height: var(--tabbar-height, 44px);
+    padding: 0 8px;
     background: rgba(10, 12, 16, 0.8);
     border-bottom: 1px solid rgba(125, 211, 252, 0.1);
     z-index: 10;
+    flex-shrink: 0;
   }
 
   .control-btn {
