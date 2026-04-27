@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { terminalService } from '@/lib/services/terminalService';
+  import { gitService, type WorktreeInfo } from '@/lib/services/gitService';
   import { eventService, type UnlistenFn } from '@/lib/services/eventService';
   import type { Terminal as TerminalType } from '@xterm/xterm';
   import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
@@ -68,6 +69,11 @@
   let showShortcutSettings = $state(false);
   let shortcutFocusSection = $state<'reply' | 'command' | null>(null);
   let numberRowEnabled = $state(false);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- used by Task 5 UI rendering
+  let worktreeInfo = $state<WorktreeInfo | null>(null);
+  // Plain (non-reactive) cache: only used to decide whether to refetch.
+  // Updating this should NOT trigger re-renders.
+  let lastCwd: string | null = null;
   const isAiRunning = $derived(isAiProcess(processName));
 
   // Shortcut suggestions state
@@ -762,6 +768,12 @@
     try {
       const info = await terminalService.getProcessInfo(terminalId);
       processName = info.name;
+
+      const cwd = await terminalService.getCwd(terminalId);
+      if (cwd !== lastCwd) {
+        lastCwd = cwd;
+        worktreeInfo = cwd ? await gitService.getWorktreeInfo(cwd) : null;
+      }
     } catch {
       // Terminal may have been closed
     }
