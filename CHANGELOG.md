@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-27
+
+### Added
+
+#### Pull Requests
+- New PR panel (Cmd+Shift+P) with list and detail views
+  - `gh` CLI integration for fetching PR data
+  - Status bar PR button with badge
+  - PR info header in worktree windows and worktree list
+
+#### Terminal
+- Show worktree tag in panel header when in a linked worktree
+  - Detects worktree info via new `get_worktree_info` Tauri command
+  - Polls worktree info on cwd changes
+  - Long worktree names ellipsis-truncate
+
+### Changed
+
+#### Terminal
+- **Breaking**: Drop tab system — single terminal per window
+- Align controls bar height with sidebar header
+- Load shortcut/settings state on every pane mount
+
+### Removed
+
+#### Worktree
+- **Breaking**: Remove the entire git worktree integration
+  - Frontend `WorktreePanel`
+  - Backend `git_worktree` / `port_isolation` / `compose_isolation` commands
+  - `WindowRegistry` worktree tracking
+  - PR panel "Open locally" flow that created worktrees
+
+#### Terminal
+- Drop memory indicator UI
+
 ## [0.2.2] - 2026-03-28
 
 ### Added
