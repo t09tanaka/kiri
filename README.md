@@ -64,7 +64,6 @@ See [Remote Access](#remote-access) for details.
 
 | Feature | Description |
 |---------|-------------|
-| **Multiple Tabs** | `` Cmd+` `` for new terminal, `Cmd+1-9` to switch |
 | **Pane Splitting** | Split horizontally or vertically |
 | **Zoom Control** | `Cmd+`/`-` to adjust font size |
 | **Independent Sessions** | Each pane runs its own PTY |
@@ -112,9 +111,6 @@ See [Remote Access](#remote-access) for details.
 | `Cmd+Shift+N` | New Window |
 | `Cmd+Shift+W` | Close Project |
 | `Cmd+Shift+R` | Remote Access Settings |
-| `` Cmd+` `` | New Terminal |
-| `Cmd+1-9` | Switch Terminal Tab |
-| `Cmd+W` | Close Tab |
 | `Cmd+/` | Show All Shortcuts |
 
 ## Remote Access

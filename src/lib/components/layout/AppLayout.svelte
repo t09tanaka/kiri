@@ -1,11 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { appStore } from '@/lib/stores/appStore';
-  import { tabStore, getAllTerminalIds, type TerminalTab } from '@/lib/stores/tabStore';
   import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
-  import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
-  import { terminalService } from '@/lib/services/terminalService';
   import Sidebar from '@/lib/components/layout/Sidebar.svelte';
   import MainContent from '@/lib/components/layout/MainContent.svelte';
   import StatusBar from '@/lib/components/layout/StatusBar.svelte';
@@ -27,43 +24,6 @@
     const isTyping =
       target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
 
-    // Ctrl/Cmd + T to add new terminal
-    if ((e.ctrlKey || e.metaKey) && e.key === 't') {
-      e.preventDefault();
-      tabStore.addTerminalTab();
-    }
-    // Ctrl/Cmd + W to close current tab
-    if ((e.ctrlKey || e.metaKey) && e.key === 'w') {
-      e.preventDefault();
-      const activeId = $tabStore.activeTabId;
-      if (activeId) {
-        const activeTab = $tabStore.tabs.find((t) => t.id === activeId);
-        // Check if any terminal in the tab has a foreground process running
-        if (activeTab?.type === 'terminal') {
-          const terminalIds = getAllTerminalIds((activeTab as TerminalTab).rootPane);
-          const aliveChecks = await Promise.all(
-            terminalIds.map((id) => terminalService.isTerminalAlive(id).catch(() => false))
-          );
-          const hasRunningTerminal = aliveChecks.some((alive) => alive);
-
-          // Only show confirmation if there's a running foreground process
-          if (hasRunningTerminal) {
-            const confirmed = await confirmDialogStore.confirm({
-              title: 'Close Terminal',
-              message:
-                'Are you sure you want to close this terminal? Any running processes will be terminated.',
-              confirmLabel: 'Close',
-              cancelLabel: 'Cancel',
-              kind: 'warning',
-            });
-            if (!confirmed) {
-              return;
-            }
-          }
-        }
-        tabStore.closeTab(activeId);
-      }
-    }
     // Ctrl/Cmd + B to toggle sidebar
     if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
       e.preventDefault();
@@ -78,15 +38,6 @@
     if ((e.ctrlKey || e.metaKey) && e.key === '/') {
       e.preventDefault();
       showShortcuts = !showShortcuts;
-    }
-    // Number keys to switch tabs
-    if ((e.ctrlKey || e.metaKey) && /^[1-9]$/.test(e.key)) {
-      e.preventDefault();
-      const index = parseInt(e.key) - 1;
-      const tabs = $tabStore.tabs;
-      if (index < tabs.length) {
-        tabStore.setActiveTab(tabs[index].id);
-      }
     }
   }
 

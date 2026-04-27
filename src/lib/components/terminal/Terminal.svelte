@@ -5,7 +5,7 @@
   import { eventService, type UnlistenFn } from '@/lib/services/eventService';
   import type { Terminal as TerminalType } from '@xterm/xterm';
   import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
-  import { tabStore, getAllPaneIds, type TerminalTab } from '@/lib/stores/tabStore';
+  import { terminalStore, getAllPaneIds } from '@/lib/stores/terminalStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
   import { fontSize, startupCommand } from '@/lib/stores/settingsStore';
   import { getStartupCommandString } from '@/lib/services/persistenceService';
@@ -39,7 +39,6 @@
   }
 
   interface Props {
-    tabId: string;
     paneId: string;
     cwd?: string | null;
     showControls?: boolean;
@@ -49,7 +48,6 @@
   }
 
   let {
-    tabId,
     paneId,
     cwd = null,
     showControls = true,
@@ -111,39 +109,16 @@
   // Track last sent PTY size to prevent duplicate resize calls
   let lastSentPtySize: { cols: number; rows: number } | null = null;
 
-  // Watch for tab activation to focus terminal
-  const isActiveTab = $derived($tabStore.activeTabId === tabId);
-
+  // Focus terminal once it is ready (single-terminal model: always active)
   $effect(() => {
-    if (isActiveTab && terminal) {
-      // Small delay to ensure the tab is fully rendered
+    if (terminal) {
       requestAnimationFrame(() => {
         terminal?.focus();
-        // Force fit when tab becomes active
-        // This handles the case when switching tabs or closing other tabs
-        // Use double rAF to ensure layout is fully settled
         requestAnimationFrame(() => {
           fitTerminalToContainer();
         });
       });
     }
-  });
-
-  // Watch for tab count changes and trigger resize
-  // This ensures proper fit when tabs are added or removed
-  const tabCount = $derived($tabStore.tabs.length);
-  let prevTabCount = $state(0);
-
-  $effect(() => {
-    if (prevTabCount !== 0 && prevTabCount !== tabCount && terminal) {
-      // Tab count changed - trigger resize after layout settles
-      setTimeout(() => {
-        requestAnimationFrame(() => {
-          fitTerminalToContainer();
-        });
-      }, 50);
-    }
-    prevTabCount = tabCount;
   });
 
   // KIRI Mist Theme - soft atmospheric terminal colors
@@ -174,27 +149,23 @@
   };
 
   /**
-   * Check if this pane still exists in the tab store
+   * Check if this pane still exists in the terminal store
    */
   function paneExistsInStore(): boolean {
-    const state = get(tabStore);
-    const tab = state.tabs.find((t) => t.id === tabId);
-    if (!tab || tab.type !== 'terminal') return false;
-    const terminalTab = tab as TerminalTab;
-    const allPaneIds = getAllPaneIds(terminalTab.rootPane);
-    return allPaneIds.includes(paneId);
+    const state = get(terminalStore);
+    if (!state.rootPane) return false;
+    return getAllPaneIds(state.rootPane).includes(paneId);
   }
 
   /**
    * Get existing terminal ID from the pane in store
    */
   function getExistingTerminalId(): number | null {
-    const state = get(tabStore);
-    const tab = state.tabs.find((t) => t.id === tabId);
-    if (!tab || tab.type !== 'terminal') return null;
+    const state = get(terminalStore);
+    if (!state.rootPane) return null;
 
-    const terminalTab = tab as TerminalTab;
-    const findTerminalId = (pane: typeof terminalTab.rootPane): number | null => {
+    const findTerminalId = (pane: typeof state.rootPane): number | null => {
+      if (!pane) return null;
       if (pane.type === 'terminal') {
         if (pane.id === paneId) return pane.terminalId;
         return null;
@@ -205,7 +176,7 @@
       }
       return null;
     };
-    return findTerminalId(terminalTab.rootPane);
+    return findTerminalId(state.rootPane);
   }
 
   async function initTerminal() {
@@ -457,8 +428,8 @@
         const rows = Math.max(terminal.rows - PTY_ROW_MARGIN, 10);
 
         terminalId = await terminalService.createTerminal(cwd, cols, rows);
-        // Store terminal ID in tab store
-        tabStore.setTerminalId(tabId, paneId, terminalId);
+        // Store terminal ID in terminal store
+        terminalStore.setTerminalId(paneId, terminalId);
       }
 
       terminal?.focus();
@@ -590,18 +561,13 @@
 
       // Execute startup command if configured
       // Only for newly created terminals (not reattached from registry),
-      // and only for the first pane of the first tab
+      // and only when this is the root terminal pane (no splits yet)
       if (existingTerminalId === null) {
-        const state = get(tabStore);
-        const isFirstTab = state.tabs.length === 1;
-        const firstTab = state.tabs[0];
-        const isFirstPane =
-          isFirstTab &&
-          firstTab?.type === 'terminal' &&
-          firstTab.rootPane.type === 'terminal' &&
-          firstTab.rootPane.id === paneId;
+        const state = get(terminalStore);
+        const isRootTerminalPane =
+          state.rootPane?.type === 'terminal' && state.rootPane.id === paneId;
 
-        if (isFirstPane) {
+        if (isRootTerminalPane) {
           const commandStr = getStartupCommandString(get(startupCommand));
           if (commandStr) {
             // Wait for shell to be ready before sending command

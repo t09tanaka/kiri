@@ -1,116 +1,75 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
-  import { tabStore, getAllPaneIds, type Tab } from '@/lib/stores/tabStore';
+  import { terminalStore } from '@/lib/stores/terminalStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
   import { TerminalContainer } from '@/lib/components/terminal';
-  import TabBar from './TabBar.svelte';
 
-  // Use $state for both active tab and container key
-  // This ensures reactivity when store changes via subscription
-  let currentActiveTab = $state<Tab | null>(null);
-  let containerKey = $state('none');
-
-  // Subscribe to store changes using onMount + store.subscribe
-  // This is more reliable than $derived for detecting nested object changes
-  // particularly when dealing with deeply nested rootPane structures
-  onMount(() => {
-    const unsubscribe = tabStore.subscribe(async (state) => {
-      // Update active tab
-      const newActiveTab = state.tabs.find((t) => t.id === state.activeTabId) || null;
-
-      // Update container key - includes all pane IDs to detect structure changes
-      const newKey = newActiveTab
-        ? `${newActiveTab.id}-${getAllPaneIds(newActiveTab.rootPane).join(',')}`
-        : 'none';
-
-      const keyChanged = containerKey !== newKey;
-
-      // Update state
-      currentActiveTab = newActiveTab;
-      containerKey = newKey;
-
-      // Force Svelte to flush updates when key changes
-      // This ensures the {#key} block re-renders correctly
-      if (keyChanged) {
-        await tick();
-      }
-    });
-
-    return () => unsubscribe();
-  });
+  const rootPane = $derived($terminalStore.rootPane);
 </script>
 
 <main class="main-content">
-  <TabBar tabs={$tabStore.tabs} activeTabId={$tabStore.activeTabId} />
   <div class="content-area">
-    {#key containerKey}
-      {#if currentActiveTab}
-        <TerminalContainer
-          tabId={currentActiveTab.id}
-          pane={currentActiveTab.rootPane}
-          cwd={$currentProjectPath}
-          isOnlyPane={getAllPaneIds(currentActiveTab.rootPane).length === 1}
-        />
-      {:else}
-        <div class="no-tabs">
-          <div class="bg-layer bg-gradient"></div>
-          <div class="bg-layer bg-noise"></div>
-          <div class="bg-layer bg-grid"></div>
-          <div class="bg-layer bg-aurora"></div>
+    {#if rootPane}
+      <TerminalContainer
+        pane={rootPane}
+        cwd={$currentProjectPath}
+        isOnlyPane={rootPane.type === 'terminal'}
+      />
+    {:else}
+      <div class="no-terminal">
+        <div class="bg-layer bg-gradient"></div>
+        <div class="bg-layer bg-noise"></div>
+        <div class="bg-layer bg-grid"></div>
+        <div class="bg-layer bg-aurora"></div>
 
-          <!-- Floating particles -->
-          <div class="particles">
-            {#each Array(8) as _, i (i)}
-              <div class="particle" style="--i: {i}"></div>
-            {/each}
-          </div>
-
-          <div class="empty-state">
-            <div class="empty-icon-container">
-              <div class="icon-glow"></div>
-              <div class="empty-icon">
-                <svg
-                  width="56"
-                  height="56"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <polyline points="4 17 10 11 4 5"></polyline>
-                  <line x1="12" y1="19" x2="20" y2="19"></line>
-                </svg>
-              </div>
-            </div>
-            <h2 class="empty-title">No tabs open</h2>
-            <p class="empty-description">Open a terminal or select a file from the explorer</p>
-            <button class="open-terminal-btn" onclick={() => tabStore.addTerminalTab()}>
-              <span class="btn-icon">
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                >
-                  <line x1="12" y1="5" x2="12" y2="19"></line>
-                  <line x1="5" y1="12" x2="19" y2="12"></line>
-                </svg>
-              </span>
-              <span>New Terminal</span>
-            </button>
-            <p class="shortcut-hint">
-              <kbd>⌘</kbd> + <kbd>`</kbd>
-            </p>
-          </div>
+        <!-- Floating particles -->
+        <div class="particles">
+          {#each Array(8) as _, i (i)}
+            <div class="particle" style="--i: {i}"></div>
+          {/each}
         </div>
-      {/if}
-    {/key}
+
+        <div class="empty-state">
+          <div class="empty-icon-container">
+            <div class="icon-glow"></div>
+            <div class="empty-icon">
+              <svg
+                width="56"
+                height="56"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="4 17 10 11 4 5"></polyline>
+                <line x1="12" y1="19" x2="20" y2="19"></line>
+              </svg>
+            </div>
+          </div>
+          <h2 class="empty-title">Terminal closed</h2>
+          <p class="empty-description">Open a terminal to continue</p>
+          <button class="open-terminal-btn" onclick={() => terminalStore.init()}>
+            <span class="btn-icon">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </span>
+            <span>Open Terminal</span>
+          </button>
+        </div>
+      </div>
+    {/if}
   </div>
 </main>
 
@@ -127,9 +86,22 @@
   .content-area {
     flex: 1;
     overflow: hidden;
+    position: relative;
   }
 
-  .no-tabs {
+  .content-area::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.05), transparent);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .no-terminal {
     position: relative;
     display: flex;
     align-items: center;
@@ -247,6 +219,8 @@
     cursor: pointer;
     transition: all var(--transition-normal);
     margin-top: var(--space-2);
+    position: relative;
+    overflow: hidden;
   }
 
   .open-terminal-btn:hover {
@@ -257,62 +231,6 @@
   .open-terminal-btn:active {
     transform: translateY(0) scale(0.98);
     transition: transform 100ms ease;
-  }
-
-  .btn-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: transform var(--transition-fast);
-  }
-
-  .open-terminal-btn:hover .btn-icon {
-    transform: rotate(90deg);
-  }
-
-  .shortcut-hint {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-    font-size: 12px;
-    color: var(--text-muted);
-    margin: 0;
-    margin-top: var(--space-2);
-    animation: hintFade 0.5s ease 0.4s backwards;
-  }
-
-  @keyframes hintFade {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
-  kbd {
-    padding: 4px 8px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--text-secondary);
-    box-shadow: 0 2px 0 var(--bg-primary);
-    transition: all var(--transition-fast);
-  }
-
-  .shortcut-hint:hover kbd {
-    border-color: var(--accent-subtle);
-    color: var(--accent-color);
-    transform: translateY(-1px);
-    box-shadow: 0 3px 0 var(--bg-primary);
-  }
-
-  /* Button ripple effect */
-  .open-terminal-btn {
-    position: relative;
-    overflow: hidden;
   }
 
   .open-terminal-btn::before {
@@ -328,7 +246,17 @@
     transform: translateX(100%);
   }
 
-  /* Grid background */
+  .btn-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform var(--transition-fast);
+  }
+
+  .open-terminal-btn:hover .btn-icon {
+    transform: rotate(90deg);
+  }
+
   .bg-grid {
     background-image:
       linear-gradient(rgba(125, 211, 252, 0.015) 1px, transparent 1px),
@@ -405,22 +333,5 @@
       transform: translate(15px, 10px) scale(1.1);
       opacity: 0.4;
     }
-  }
-
-  /* Content area subtle border */
-  .content-area {
-    position: relative;
-  }
-
-  .content-area::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(125, 211, 252, 0.05), transparent);
-    pointer-events: none;
-    z-index: 1;
   }
 </style>

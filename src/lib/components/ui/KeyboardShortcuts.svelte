@@ -34,15 +34,6 @@
       ],
     },
     {
-      title: 'Tabs',
-      icon: '📑',
-      shortcuts: [
-        { keys: ['⌘', 'T'], description: 'New Terminal' },
-        { keys: ['⌘', 'W'], description: 'Close Tab' },
-        { keys: ['⌘', '1-9'], description: 'Switch to Tab' },
-      ],
-    },
-    {
       title: 'View',
       icon: '🔍',
       shortcuts: [

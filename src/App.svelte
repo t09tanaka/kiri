@@ -19,7 +19,7 @@
   import EditorModal from '@/lib/components/editor/EditorModal.svelte';
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { contentSearchStore, isContentSearchOpen } from '@/lib/stores/contentSearchStore';
-  import { tabStore } from '@/lib/stores/tabStore';
+  import { terminalStore } from '@/lib/stores/terminalStore';
   import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { peekStore } from '@/lib/stores/peekStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
@@ -38,7 +38,7 @@
   import { loadSettings, saveSettings } from '@/lib/services/persistenceService';
   import { terminalService } from '@/lib/services/terminalService';
   import { confirmDialogStore } from '@/lib/stores/confirmDialogStore';
-  import { getAllTerminalIds } from '@/lib/stores/tabStore';
+  import { getAllTerminalIds } from '@/lib/stores/terminalStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
   import { get } from 'svelte/store';
 
@@ -61,36 +61,34 @@
     if (selected) {
       // Clean up existing terminals if switching projects or if orphaned terminals remain
       const currentPath = projectStore.getCurrentPath();
-      const hasExistingTabs = get(tabStore).tabs.length > 0;
-      if ((currentPath && currentPath !== selected) || hasExistingTabs) {
+      const hasExistingTerminal = get(terminalStore).rootPane !== null;
+      if ((currentPath && currentPath !== selected) || hasExistingTerminal) {
         await resetTerminals();
       }
 
       await projectStore.openProject(selected);
-      // Open a default terminal tab for the new project
-      if (get(tabStore).tabs.length === 0) {
-        tabStore.addTerminalTab();
-      }
+      // Open a default terminal for the new project
+      terminalStore.init();
     }
   }
 
   /**
-   * Close all terminal PTY sessions, dispose xterm instances, and reset tab store.
+   * Close all terminal PTY sessions, dispose xterm instances, and reset the terminal store.
    * Used when switching to a different project in the same window.
    */
   async function resetTerminals() {
-    // Collect terminal IDs from tabs before resetting
-    const state = get(tabStore);
-    const tabTerminalIds = state.tabs.flatMap((t) => getAllTerminalIds(t.rootPane));
+    // Collect terminal IDs from the current pane tree before resetting
+    const state = get(terminalStore);
+    const paneTerminalIds = state.rootPane ? getAllTerminalIds(state.rootPane) : [];
 
-    // Reset tab store first so Svelte unmounts Terminal components cleanly
-    tabStore.reset();
+    // Reset terminal store first so Svelte unmounts Terminal components cleanly
+    terminalStore.reset();
 
     // Clear any remaining registry entries (disposes xterm instances, calls unlisten)
     const registryTerminalIds = terminalRegistry.clearAll();
 
     // Merge all terminal IDs and deduplicate
-    const allIds = [...new Set([...registryTerminalIds, ...tabTerminalIds])];
+    const allIds = [...new Set([...registryTerminalIds, ...paneTerminalIds])];
 
     // Close all PTY processes on the backend
     await Promise.all(allIds.map((id) => terminalService.closeTerminal(id).catch(() => {})));
@@ -279,9 +277,7 @@
         console.error('Failed to register window:', e);
       }
 
-      if (get(tabStore).tabs.length === 0) {
-        tabStore.addTerminalTab();
-      }
+      terminalStore.init();
     }
 
     // Resize to start screen size when no project is open
@@ -325,8 +321,8 @@
     // Handle window close
     const unlistenCloseRequested = await currentWindow.onCloseRequested(async (event) => {
       // Check for running terminal commands before closing
-      const state = get(tabStore);
-      const allTerminalIds = state.tabs.flatMap((tab) => getAllTerminalIds(tab.rootPane));
+      const state = get(terminalStore);
+      const allTerminalIds = state.rootPane ? getAllTerminalIds(state.rootPane) : [];
       if (allTerminalIds.length > 0) {
         const aliveChecks = await Promise.all(
           allTerminalIds.map((id) => terminalService.isTerminalAlive(id))

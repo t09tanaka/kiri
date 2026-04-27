@@ -11,7 +11,7 @@
   import { remoteAccessStore, isRemoteActive } from '@/lib/stores/remoteAccessStore';
   import { remoteAccessViewStore } from '@/lib/stores/remoteAccessViewStore';
   import { settingsStore, startupCommand } from '@/lib/stores/settingsStore';
-  import { tabStore } from '@/lib/stores/tabStore';
+  import { terminalStore } from '@/lib/stores/terminalStore';
   import { toggleRemoteAccess } from '@/lib/utils/remoteAccessToggle';
   import RecentProjectItem from './RecentProjectItem.svelte';
   import { onMount } from 'svelte';
@@ -26,15 +26,15 @@
 
     if (selected) {
       await projectStore.openProject(selected);
-      // Open a default terminal tab when opening a new project
-      tabStore.addTerminalTab();
+      // Open a default terminal when opening a new project
+      terminalStore.init();
     }
   }
 
   function handleProjectSelect(project: RecentProject) {
     projectStore.openProject(project.path);
-    // Open a default terminal tab when opening a new project
-    tabStore.addTerminalTab();
+    // Open a default terminal when opening a new project
+    terminalStore.init();
   }
 
   function handleProjectRemove(project: RecentProject) {

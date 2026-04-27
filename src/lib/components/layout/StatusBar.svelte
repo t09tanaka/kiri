@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { tabStore, activeTab } from '@/lib/stores/tabStore';
   import { gitStore, branchAheadCount } from '@/lib/stores/gitStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
@@ -14,18 +13,6 @@
 
   let { onShowShortcuts }: Props = $props();
 
-  function getActiveInfo(): { mode: string; file: string | null } {
-    const tab = $activeTab;
-    if (!tab) {
-      return { mode: 'No Tab', file: null };
-    }
-    if (tab.type === 'terminal') {
-      return { mode: 'Terminal', file: null };
-    }
-    return { mode: 'Editor', file: tab.filePath };
-  }
-
-  const info = $derived(getActiveInfo());
   const gitInfo = $derived($gitStore.repoInfo);
   const changeCount = $derived(
     $gitStore.repoInfo?.statuses.filter((s) => s.status !== 'Ignored').length ?? 0
@@ -89,54 +76,6 @@
         </svg>
       {/if}
     </button>
-    <span class="status-item mode">
-      {#if info.mode === 'Terminal'}
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <polyline points="4 17 10 11 4 5"></polyline>
-          <line x1="12" y1="19" x2="20" y2="19"></line>
-        </svg>
-      {:else}
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
-          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
-        </svg>
-      {/if}
-      <span>{info.mode}</span>
-    </span>
-    <span class="status-item tab-count">
-      <svg
-        width="12"
-        height="12"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-        <line x1="3" y1="9" x2="21" y2="9"></line>
-      </svg>
-      <span>{$tabStore.tabs.length} tabs</span>
-    </span>
   </div>
   <div class="status-right">
     {#if gitInfo?.branch}
@@ -228,24 +167,6 @@
         {/if}
         <span class="shortcut-key">⌘D</span>
       </button>
-    {/if}
-    {#if info.file}
-      <span class="status-item file-path" title={info.file}>
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-          <polyline points="14 2 14 8 20 8"></polyline>
-        </svg>
-        <span>{info.file.split('/').slice(-2).join('/')}</span>
-      </span>
     {/if}
     <button
       class="status-item shortcut-hint"
@@ -362,38 +283,6 @@
 
   .status-item:hover svg {
     transform: scale(1.1);
-  }
-
-  .mode {
-    padding: 3px var(--space-2);
-    background: var(--accent-subtle);
-    border-radius: var(--radius-sm);
-    color: var(--accent-color);
-    font-weight: 500;
-    font-size: 10px;
-    letter-spacing: 0.02em;
-    transition: all var(--transition-fast);
-  }
-
-  .mode:hover {
-    background: var(--accent-muted);
-    transform: translateY(-1px);
-  }
-
-  .mode:active {
-    transform: translateY(0) scale(0.97);
-  }
-
-  .tab-count {
-    color: var(--text-muted);
-    font-size: 10px;
-    padding: 3px var(--space-2);
-    border-radius: var(--radius-sm);
-  }
-
-  .tab-count:hover {
-    color: var(--text-secondary);
-    background: rgba(125, 211, 252, 0.05);
   }
 
   .pr-btn {
@@ -559,23 +448,6 @@
     color: var(--git-deleted);
     font-weight: 600;
     pointer-events: none;
-  }
-
-  .file-path {
-    max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-muted);
-    font-size: 10px;
-    font-family: var(--font-mono);
-    padding: 3px var(--space-2);
-    border-radius: var(--radius-sm);
-  }
-
-  .file-path:hover {
-    color: var(--text-secondary);
-    background: rgba(125, 211, 252, 0.05);
   }
 
   .shortcut-hint {

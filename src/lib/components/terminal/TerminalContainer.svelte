@@ -1,17 +1,16 @@
 <script lang="ts">
-  import type { TerminalPane } from '@/lib/stores/tabStore';
-  import { tabStore } from '@/lib/stores/tabStore';
+  import type { TerminalPane } from '@/lib/stores/terminalStore';
+  import { terminalStore } from '@/lib/stores/terminalStore';
   import Terminal from './Terminal.svelte';
   import TerminalContainer from './TerminalContainer.svelte';
 
   interface Props {
-    tabId: string;
     pane: TerminalPane;
     cwd?: string | null;
     isOnlyPane?: boolean;
   }
 
-  let { tabId, pane, cwd = null, isOnlyPane = false }: Props = $props();
+  let { pane, cwd = null, isOnlyPane = false }: Props = $props();
 
   let containerRef = $state<HTMLDivElement | null>(null);
   let isDragging = $state(false);
@@ -19,7 +18,7 @@
   let resizeThrottleTimeout: ReturnType<typeof setTimeout> | null = null;
 
   function handleSplitHorizontal(paneId: string) {
-    tabStore.splitPane(tabId, paneId, 'horizontal');
+    terminalStore.splitPane(paneId, 'horizontal');
     // Trigger resize after split
     requestAnimationFrame(() => {
       window.dispatchEvent(new Event('terminal-resize'));
@@ -27,7 +26,7 @@
   }
 
   function handleSplitVertical(paneId: string) {
-    tabStore.splitPane(tabId, paneId, 'vertical');
+    terminalStore.splitPane(paneId, 'vertical');
     // Trigger resize after split
     requestAnimationFrame(() => {
       window.dispatchEvent(new Event('terminal-resize'));
@@ -35,7 +34,7 @@
   }
 
   function handleClose(closingPaneId: string) {
-    tabStore.closePane(tabId, closingPaneId);
+    terminalStore.closePane(closingPaneId);
     // Trigger resize after close
     requestAnimationFrame(() => {
       window.dispatchEvent(new Event('terminal-resize'));
@@ -95,7 +94,7 @@
         }
       }
 
-      tabStore.updatePaneSizes(tabId, pane.id, newSizes);
+      terminalStore.updatePaneSizes(pane.id, newSizes);
 
       // Throttled resize event dispatch during drag
       if (!resizeThrottleTimeout) {
@@ -131,7 +130,6 @@
 {#key pane.type}
   {#if pane.type === 'terminal'}
     <Terminal
-      {tabId}
       paneId={pane.id}
       cwd={pane.cwd || cwd}
       showControls={true}
@@ -149,7 +147,7 @@
     >
       {#each pane.children as child, index (child.type === 'terminal' ? child.id : index)}
         <div class="split-pane" style="flex: 0 0 {pane.sizes[index]}%;">
-          <TerminalContainer {tabId} pane={child} {cwd} isOnlyPane={false} />
+          <TerminalContainer pane={child} {cwd} isOnlyPane={false} />
         </div>
         {#if index < pane.children.length - 1}
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
