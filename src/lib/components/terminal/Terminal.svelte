@@ -1187,6 +1187,7 @@
   }
 
   .worktree-tag-name {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
