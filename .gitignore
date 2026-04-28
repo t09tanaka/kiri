@@ -38,8 +38,9 @@ dist-ssr
 *.sln
 *.sw?
 
-# Tauri
+# Tauri / Cargo workspace
 src-tauri/target/
+target/
 
 # Test coverage
 coverage/
