@@ -1,0 +1,14 @@
+[workspace]
+resolver = "2"
+members = ["src-tauri", "crates/kiri-cli-proto", "crates/kiri-cli"]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/t09tanaka/kiri"
+rust-version = "1.77.2"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+kiri-cli-proto = { path = "crates/kiri-cli-proto" }
