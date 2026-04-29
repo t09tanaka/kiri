@@ -2632,6 +2632,7 @@ dependencies = [
  "kiri-cli-proto",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

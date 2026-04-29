@@ -65,8 +65,8 @@ fn render_ls(panes: &[PaneInfo]) {
         return;
     }
     println!(
-        "{:<5} {:<14} {:<32} {:<16} {:<7} {}",
-        "INDEX", "ID", "CWD", "PROCESS", "RUNNING", "MEM"
+        "{:<5} {:<14} {:<32} {:<16} {:<7} MEM",
+        "INDEX", "ID", "CWD", "PROCESS", "RUNNING"
     );
     for p in panes {
         let focused = if p.focused { " (focused)" } else { "" };

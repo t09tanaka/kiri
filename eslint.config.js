@@ -57,6 +57,13 @@ export default [
     },
   },
   {
-    ignores: ['src-tauri/**/*', 'dist/**/*', 'node_modules/**/*', 'coverage/**/*'],
+    ignores: [
+      'src-tauri/**/*',
+      'dist/**/*',
+      'node_modules/**/*',
+      'coverage/**/*',
+      // Cargo workspace build artifacts (rustdoc, target/, etc.)
+      'target/**/*',
+    ],
   },
 ];
