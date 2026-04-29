@@ -1,4 +1,5 @@
 pub mod cli_install;
+pub mod cli_server;
 pub mod cloudflare_tunnel;
 pub mod drag_drop;
 pub mod file;
