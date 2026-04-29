@@ -272,11 +272,13 @@ async fn handle_status_ws(mut socket: WebSocket, state: AppState) {
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => break,
-                    Some(Ok(Message::Ping(data))) => {
-                        if socket.send(Message::Pong(data)).await.is_err() {
-                            break;
-                        }
-                    }
+                    Some(Ok(Message::Ping(data))) => match socket
+                        .send(Message::Pong(data))
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(_) => break,
+                    },
                     _ => {}
                 }
             }

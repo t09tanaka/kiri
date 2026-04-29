@@ -244,13 +244,15 @@ function createTerminalStore() {
       });
     },
 
-    splitPane: (paneId: string, direction: 'horizontal' | 'vertical') => {
+    splitPane: (paneId: string, direction: 'horizontal' | 'vertical'): string => {
+      const newPaneId = generatePaneId();
       update((state) => {
         if (!state.rootPane) return state;
         return {
-          rootPane: splitPaneInTree(state.rootPane, paneId, direction, generatePaneId()),
+          rootPane: splitPaneInTree(state.rootPane, paneId, direction, newPaneId),
         };
       });
+      return newPaneId;
     },
 
     closePane: (paneId: string) => {
@@ -266,6 +268,45 @@ function createTerminalStore() {
         if (!state.rootPane) return state;
         return { rootPane: updatePaneSizesInTree(state.rootPane, splitId, sizes) };
       });
+    },
+
+    /**
+     * Synchronous read of the current state. Used by the CLI bridge
+     * which needs to look up pane → terminal id mappings on demand.
+     */
+    snapshot: (): TerminalState => {
+      let state: TerminalState = initialState;
+      const unsub = subscribe((s) => {
+        state = s;
+      });
+      unsub();
+      return state;
+    },
+
+    /**
+     * Index (depth-first order) of `paneId` in the current tree, or -1.
+     */
+    indexOf: (paneId: string): number => {
+      let state: TerminalState = initialState;
+      const unsub = subscribe((s) => {
+        state = s;
+      });
+      unsub();
+      if (!state.rootPane) return -1;
+      return getAllPaneIds(state.rootPane).indexOf(paneId);
+    },
+
+    /**
+     * Look up the physical PTY id behind a logical pane id, or null.
+     */
+    terminalIdFor: (paneId: string): number | null => {
+      let state: TerminalState = initialState;
+      const unsub = subscribe((s) => {
+        state = s;
+      });
+      unsub();
+      if (!state.rootPane) return null;
+      return getPaneTerminalIdMap(state.rootPane).get(paneId) ?? null;
     },
 
     reset: () => set(initialState),

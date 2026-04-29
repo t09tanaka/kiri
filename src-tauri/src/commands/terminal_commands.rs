@@ -1,9 +1,11 @@
 //! Tauri command wrappers for terminal functionality
 //! These are thin wrappers that delegate to the core logic in terminal.rs
 
+use super::cli_install;
 use super::terminal::{
     create_pty_size, find_utf8_boundary, get_process_cwd, open_pty_with_shell, resolve_cwd,
-    resolve_terminal_size, PtyInstance, TerminalOutput, TerminalState,
+    resolve_terminal_size, CliEnv, PtyInstance, TerminalOutput, TerminalOutputBusState,
+    TerminalState,
 };
 use serde::Serialize;
 use std::io::{Read, Write};
@@ -11,19 +13,41 @@ use std::str;
 use std::thread;
 use tauri::{AppHandle, Emitter};
 
+/// Build the per-PTY CLI env (PATH + KIRI_SOCKET + KIRI_WINDOW_LABEL) for
+/// the given window label. Returns `None` when the home directory can't
+/// be located (no `~/.kiri/bin` to point PATH at).
+fn cli_env_for(window_label: Option<&str>) -> Option<CliEnv> {
+    let label = window_label?;
+    let bin_dir = cli_install::kiri_bin_dir()?;
+    let socket = cli_install::socket_path_for(label)?;
+    Some(CliEnv {
+        bin_dir,
+        socket,
+        window_label: label.to_string(),
+    })
+}
+
 #[tauri::command]
 pub fn create_terminal(
     app: AppHandle,
     state: tauri::State<'_, TerminalState>,
+    bus: tauri::State<'_, TerminalOutputBusState>,
     cwd: Option<String>,
     cols: Option<u16>,
     rows: Option<u16>,
+    window_label: Option<String>,
 ) -> Result<u32, String> {
     let (initial_cols, initial_rows) = resolve_terminal_size(cols, rows);
     let resolved_cwd = resolve_cwd(cwd);
+    let cli_env = cli_env_for(window_label.as_deref());
 
     // Use extracted function for PTY creation
-    let pty_with_shell = open_pty_with_shell(initial_cols, initial_rows, resolved_cwd.as_deref())?;
+    let pty_with_shell = open_pty_with_shell(
+        initial_cols,
+        initial_rows,
+        resolved_cwd.as_deref(),
+        cli_env.as_ref(),
+    )?;
 
     let mut reader = pty_with_shell
         .pair
@@ -62,6 +86,7 @@ pub fn create_terminal(
 
     // Spawn thread to read PTY output
     let terminal_id = id;
+    let bus_for_task: TerminalOutputBusState = bus.inner().clone();
     thread::spawn(move || {
         let mut buf = [0u8; 4096];
         // Buffer for incomplete UTF-8 sequences from previous reads
@@ -92,8 +117,14 @@ pub fn create_terminal(
                     let valid_len = find_utf8_boundary(data_slice);
 
                     if valid_len > 0 {
+                        let raw_chunk = &data_slice[..valid_len];
+                        // Publish to in-process bus first so cli_server
+                        // sentinel detection sees the same bytes the
+                        // frontend receives.
+                        bus_for_task.publish(terminal_id, raw_chunk);
+
                         // Safety: we just validated this is valid UTF-8
-                        let data = unsafe { str::from_utf8_unchecked(&data_slice[..valid_len]) };
+                        let data = unsafe { str::from_utf8_unchecked(raw_chunk) };
                         let _ = app.emit(
                             "terminal-output",
                             TerminalOutput {
@@ -112,6 +143,7 @@ pub fn create_terminal(
                 Err(_) => break,
             }
         }
+        bus_for_task.close(terminal_id);
     });
 
     Ok(id)
@@ -159,10 +191,15 @@ pub fn resize_terminal(
 }
 
 #[tauri::command]
-pub fn close_terminal(state: tauri::State<'_, TerminalState>, id: u32) -> Result<(), String> {
+pub fn close_terminal(
+    state: tauri::State<'_, TerminalState>,
+    bus: tauri::State<'_, TerminalOutputBusState>,
+    id: u32,
+) -> Result<(), String> {
     let mut manager = state.lock().map_err(|e| e.to_string())?;
 
     if manager.instances.remove(&id).is_some() {
+        bus.close(id);
         Ok(())
     } else {
         Err(format!("Terminal {} not found", id))

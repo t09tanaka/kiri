@@ -1,3 +1,5 @@
+use crate::commands::cli_server::{self, CliServerRegistryState};
+use crate::commands::terminal::{TerminalOutputBusState, TerminalState};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -175,13 +177,18 @@ pub fn focus_or_create_window(
 /// Register a window with a project path (for windows not created via create_window)
 #[tauri::command]
 pub fn register_window(
+    app: AppHandle,
     registry: tauri::State<WindowRegistryState>,
+    cli_registry: tauri::State<CliServerRegistryState>,
+    terminals: tauri::State<TerminalState>,
+    bus: tauri::State<TerminalOutputBusState>,
     label: String,
     project_path: String,
 ) -> Result<(), String> {
     if let Ok(mut reg) = registry.lock() {
         reg.register(&label, &project_path);
     }
+    start_cli_server_if_absent(&app, &cli_registry, &terminals, &bus, &label);
     Ok(())
 }
 
@@ -189,12 +196,58 @@ pub fn register_window(
 #[tauri::command]
 pub fn unregister_window(
     registry: tauri::State<WindowRegistryState>,
+    cli_registry: tauri::State<CliServerRegistryState>,
     label: String,
 ) -> Result<(), String> {
     if let Ok(mut reg) = registry.lock() {
         reg.unregister_by_label(&label);
     }
+    cli_registry.stop_and_remove(&label);
     Ok(())
+}
+
+/// Spawn a per-window CLI server if one is not already registered for this
+/// label. Logs and continues on failure so a broken socket can never
+/// prevent the window from registering.
+///
+/// `interprocess::ListenerOptions::create_tokio()` requires a Tokio
+/// runtime context; `register_window` is a sync command so we route the
+/// listener creation through Tauri's async runtime.
+fn start_cli_server_if_absent(
+    app: &AppHandle,
+    cli_registry: &CliServerRegistryState,
+    terminals: &TerminalState,
+    bus: &TerminalOutputBusState,
+    label: &str,
+) {
+    {
+        let map = match cli_registry.handles.lock() {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        if map.contains_key(label) {
+            return;
+        }
+    }
+
+    let label_owned = label.to_string();
+    let app_clone = app.clone();
+    let terminals_clone = Arc::clone(terminals);
+    let bus_clone = Arc::clone(bus);
+
+    let result = tauri::async_runtime::block_on(async move {
+        cli_server::spawn_for_window(label_owned, app_clone, terminals_clone, bus_clone)
+    });
+
+    match result {
+        Ok(handle) => {
+            cli_registry.insert(label.to_string(), Arc::new(handle));
+            log::info!("started cli_server for window {label}");
+        }
+        Err(e) => {
+            log::warn!("failed to start cli_server for window {label}: {e}");
+        }
+    }
 }
 
 #[cfg(test)]

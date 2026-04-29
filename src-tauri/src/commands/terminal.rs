@@ -40,6 +40,55 @@ impl Default for TerminalManager {
 
 pub type TerminalState = Arc<Mutex<TerminalManager>>;
 
+/// Per-terminal broadcast bus so the cli_server (and anything else that
+/// wants the raw PTY byte stream in-process) can subscribe without going
+/// through the Tauri event bus.
+///
+/// The frontend continues to receive `terminal-output` events as before;
+/// the bus simply fans the same chunks out to additional in-process
+/// subscribers.
+#[derive(Default)]
+pub struct TerminalOutputBus {
+    senders: Mutex<HashMap<u32, tokio::sync::broadcast::Sender<Vec<u8>>>>,
+}
+
+const TERMINAL_BUS_CAPACITY: usize = 512;
+
+impl TerminalOutputBus {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Subscribe to a terminal's output. Creates the channel if it does
+    /// not exist yet so callers can subscribe before any output arrives.
+    pub fn subscribe(&self, terminal_id: u32) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+        let mut map = self.senders.lock().expect("terminal bus mutex poisoned");
+        let sender = map
+            .entry(terminal_id)
+            .or_insert_with(|| tokio::sync::broadcast::channel(TERMINAL_BUS_CAPACITY).0);
+        sender.subscribe()
+    }
+
+    /// Publish a chunk. Returns the number of receivers that got it
+    /// (zero is fine — nobody was listening).
+    pub fn publish(&self, terminal_id: u32, data: &[u8]) -> usize {
+        let map = self.senders.lock().expect("terminal bus mutex poisoned");
+        match map.get(&terminal_id) {
+            Some(sender) => sender.send(data.to_vec()).unwrap_or(0),
+            None => 0,
+        }
+    }
+
+    /// Drop the channel for a terminal that has been closed. Existing
+    /// receivers will see `RecvError::Closed` on their next call.
+    pub fn close(&self, terminal_id: u32) {
+        let mut map = self.senders.lock().expect("terminal bus mutex poisoned");
+        map.remove(&terminal_id);
+    }
+}
+
+pub type TerminalOutputBusState = Arc<TerminalOutputBus>;
+
 /// Resolve terminal size with defaults
 /// Returns (cols, rows)
 pub fn resolve_terminal_size(cols: Option<u16>, rows: Option<u16>) -> (u16, u16) {
@@ -93,8 +142,29 @@ pub fn get_process_cwd(pid: u32) -> Option<String> {
         .map(|p| p.to_string_lossy().to_string())
 }
 
-/// Build a shell command with the given configuration
-pub fn build_shell_command(shell: &str, cwd: Option<&str>) -> CommandBuilder {
+/// Per-PTY environment that exposes the in-terminal `kiri` command.
+///
+/// `bin_dir` is prepended to PATH so `kiri` resolves to the kiri-shipped
+/// binary; `socket` and `window_label` are read by that binary to talk
+/// back to the right window.
+#[derive(Debug, Clone)]
+pub struct CliEnv {
+    pub bin_dir: std::path::PathBuf,
+    pub socket: std::path::PathBuf,
+    pub window_label: String,
+}
+
+/// Build a shell command with the given configuration.
+///
+/// When `cli_env` is `Some`, PATH is prefixed with `cli_env.bin_dir` and
+/// `KIRI_SOCKET` / `KIRI_WINDOW_LABEL` env vars are set. This is how the
+/// in-terminal `kiri` command becomes available without polluting the
+/// user's system PATH.
+pub fn build_shell_command(
+    shell: &str,
+    cwd: Option<&str>,
+    cli_env: Option<&CliEnv>,
+) -> CommandBuilder {
     let mut cmd = CommandBuilder::new(shell);
     cmd.arg("-l"); // Login shell
 
@@ -107,6 +177,19 @@ pub fn build_shell_command(shell: &str, cwd: Option<&str>) -> CommandBuilder {
     // Users can add to ~/.zshrc:
     //   if [[ "$TERM_PROGRAM" == "kiri" ]]; then bindkey -e; fi
     cmd.env("TERM_PROGRAM", "kiri");
+
+    if let Some(env) = cli_env {
+        let parent_path = std::env::var("PATH").unwrap_or_default();
+        let new_path = if parent_path.is_empty() {
+            env.bin_dir.to_string_lossy().into_owned()
+        } else {
+            format!("{}:{}", env.bin_dir.display(), parent_path)
+        };
+        cmd.env("PATH", new_path);
+        cmd.env("KIRI_SOCKET", env.socket.to_string_lossy().to_string());
+        cmd.env("KIRI_WINDOW_LABEL", &env.window_label);
+        cmd.env("KIRI_TERMINAL", "1");
+    }
 
     if let Some(dir) = cwd {
         cmd.cwd(dir);
@@ -162,6 +245,7 @@ pub fn open_pty_with_shell(
     cols: u16,
     rows: u16,
     cwd: Option<&str>,
+    cli_env: Option<&CliEnv>,
 ) -> Result<PtyWithShell, String> {
     let pty_system = native_pty_system();
 
@@ -170,7 +254,7 @@ pub fn open_pty_with_shell(
         .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
     let shell = get_shell_path();
-    let cmd = build_shell_command(&shell, cwd);
+    let cmd = build_shell_command(&shell, cwd, cli_env);
 
     let child = pair
         .slave
@@ -306,29 +390,51 @@ mod tests {
 
     #[test]
     fn test_build_shell_command_basic() {
-        let cmd = build_shell_command("/bin/bash", None);
+        let cmd = build_shell_command("/bin/bash", None, None);
         // CommandBuilder doesn't expose its internals, but we can verify it was created
         let _prog = cmd.get_argv(); // This should not panic
     }
 
     #[test]
     fn test_build_shell_command_with_cwd() {
-        let cmd = build_shell_command("/bin/bash", Some("/tmp"));
+        let cmd = build_shell_command("/bin/bash", Some("/tmp"), None);
         let _prog = cmd.get_argv(); // This should not panic
     }
 
     #[test]
     fn test_build_shell_command_with_different_shells() {
         for shell in ["/bin/bash", "/bin/zsh", "/bin/sh"] {
-            let cmd = build_shell_command(shell, None);
+            let cmd = build_shell_command(shell, None, None);
             let argv = cmd.get_argv();
             assert!(!argv.is_empty());
         }
     }
 
     #[test]
+    fn test_build_shell_command_with_cli_env_sets_path_and_socket() {
+        let env = CliEnv {
+            bin_dir: std::path::PathBuf::from("/tmp/kiri-bin"),
+            socket: std::path::PathBuf::from("/tmp/kiri.sock"),
+            window_label: "window-1".into(),
+        };
+        let cmd = build_shell_command("/bin/bash", None, Some(&env));
+        let envs: std::collections::HashMap<_, _> = cmd
+            .iter_full_env_as_str()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let path = envs.get("PATH").expect("PATH should be set");
+        assert!(
+            path.starts_with("/tmp/kiri-bin"),
+            "expected PATH to start with kiri bin_dir, got: {path}"
+        );
+        assert_eq!(envs.get("KIRI_SOCKET").map(String::as_str), Some("/tmp/kiri.sock"));
+        assert_eq!(envs.get("KIRI_WINDOW_LABEL").map(String::as_str), Some("window-1"));
+        assert_eq!(envs.get("KIRI_TERMINAL").map(String::as_str), Some("1"));
+    }
+
+    #[test]
     fn test_open_pty_with_shell_default_size() {
-        let result = open_pty_with_shell(80, 24, None);
+        let result = open_pty_with_shell(80, 24, None, None);
         assert!(result.is_ok());
 
         let pty = result.unwrap();
@@ -339,21 +445,21 @@ mod tests {
 
     #[test]
     fn test_open_pty_with_shell_with_cwd() {
-        let result = open_pty_with_shell(80, 24, Some("/tmp"));
+        let result = open_pty_with_shell(80, 24, Some("/tmp"), None);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_open_pty_with_shell_various_sizes() {
         for (cols, rows) in [(80, 24), (120, 30), (200, 50)] {
-            let result = open_pty_with_shell(cols, rows, None);
+            let result = open_pty_with_shell(cols, rows, None, None);
             assert!(result.is_ok(), "Failed for size {}x{}", cols, rows);
         }
     }
 
     #[test]
     fn test_pty_with_shell_can_resize() {
-        let result = open_pty_with_shell(80, 24, None);
+        let result = open_pty_with_shell(80, 24, None, None);
         assert!(result.is_ok());
 
         let pty = result.unwrap();
@@ -364,13 +470,38 @@ mod tests {
 
     #[test]
     fn test_pty_with_shell_struct_fields() {
-        let result = open_pty_with_shell(80, 24, None);
+        let result = open_pty_with_shell(80, 24, None, None);
         assert!(result.is_ok());
 
         let pty = result.unwrap();
         // Verify struct has expected fields accessible
         let _ = &pty.pair;
         let _ = &pty.child;
+    }
+
+    #[tokio::test]
+    async fn terminal_bus_subscribe_then_publish_delivers() {
+        let bus = TerminalOutputBus::new();
+        let mut rx = bus.subscribe(1);
+        let n = bus.publish(1, b"hello");
+        assert_eq!(n, 1);
+        let got = rx.recv().await.unwrap();
+        assert_eq!(got, b"hello");
+    }
+
+    #[tokio::test]
+    async fn terminal_bus_publish_without_subscriber_is_noop() {
+        let bus = TerminalOutputBus::new();
+        let n = bus.publish(99, b"anybody");
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn terminal_bus_close_drops_receivers() {
+        let bus = TerminalOutputBus::new();
+        let mut rx = bus.subscribe(1);
+        bus.close(1);
+        assert!(rx.recv().await.is_err());
     }
 
     #[test]

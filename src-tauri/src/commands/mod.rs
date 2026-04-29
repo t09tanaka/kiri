@@ -1,3 +1,5 @@
+pub mod cli_install;
+pub mod cli_server;
 pub mod cloudflare_tunnel;
 pub mod drag_drop;
 pub mod file;
@@ -40,3 +42,6 @@ pub use git_history_commands::*;
 pub use remote_access_commands::*;
 pub use cloudflare_tunnel::*;
 pub use window::*;
+pub use cli_server::{
+    cli_resolve_pending, cli_update_pane_map, CliServerRegistry, CliServerRegistryState,
+};

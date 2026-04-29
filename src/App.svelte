@@ -20,6 +20,9 @@
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { contentSearchStore, isContentSearchOpen } from '@/lib/stores/contentSearchStore';
   import { terminalStore } from '@/lib/stores/terminalStore';
+  import type { TerminalPane } from '@/lib/stores/terminalStore';
+  import { focusedPaneStore } from '@/lib/stores/focusedPaneStore';
+  import { startCliBridge } from '@/lib/services/cliBridge';
   import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { peekStore } from '@/lib/stores/peekStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
@@ -44,6 +47,41 @@
 
   let showShortcuts = $state(false);
   let windowLabel = $state('');
+
+  // CLI bridge teardown handles, populated in onMount when a project loads.
+  let cliBridgeDispose: (() => void) | null = null;
+  let cliPaneMapUnsubTerminal: (() => void) | null = null;
+  let cliPaneMapUnsubFocus: (() => void) | null = null;
+
+  function collectPaneEntries(
+    root: TerminalPane | null,
+    focusedId: string | null
+  ): Array<{ index: number; paneId: string; terminalId: number; focused: boolean }> {
+    if (!root) return [];
+    const out: Array<{ index: number; paneId: string; terminalId: number; focused: boolean }> = [];
+    let i = 0;
+    const visit = (pane: TerminalPane) => {
+      if (pane.type === 'terminal') {
+        const terminalId = terminalStore.terminalIdFor(pane.id);
+        if (terminalId !== null) {
+          out.push({ index: i++, paneId: pane.id, terminalId, focused: pane.id === focusedId });
+        }
+      } else {
+        for (const c of pane.children) visit(c);
+      }
+    };
+    visit(root);
+    return out;
+  }
+
+  function pushPaneMap() {
+    if (!windowLabel) return;
+    const root = terminalStore.snapshot().rootPane;
+    void invoke('cli_update_pane_map', {
+      label: windowLabel,
+      panes: collectPaneEntries(root, focusedPaneStore.current()),
+    });
+  }
 
   // Sync tools state to macOS menu bar
   $effect(() => {
@@ -270,7 +308,9 @@
       const decodedPath = decodeURIComponent(projectParam);
       await projectStore.openProject(decodedPath);
 
-      // Register this window with the project path (for focus_or_create_window)
+      // Register this window with the project path (for focus_or_create_window).
+      // The backend also starts a per-window CLI server on this call so the
+      // in-PTY `kiri` command can talk back to this window.
       try {
         await windowService.registerWindow(windowLabel, decodedPath);
       } catch (e) {
@@ -278,6 +318,20 @@
       }
 
       terminalStore.init();
+
+      // Wire the CLI bridge: route cli:* events from the backend into the
+      // local terminalStore, and stream pane-map updates back so cli term
+      // commands can resolve --pane indices/ids.
+      cliBridgeDispose = await startCliBridge({
+        label: windowLabel,
+        splitPane: (paneId, direction) => terminalStore.splitPane(paneId, direction),
+        closePane: (paneId) => terminalStore.closePane(paneId),
+        indexOf: (paneId) => terminalStore.indexOf(paneId),
+        resolveFocusedPaneId: () => focusedPaneStore.current(),
+      });
+      pushPaneMap();
+      cliPaneMapUnsubTerminal = terminalStore.subscribe(pushPaneMap);
+      cliPaneMapUnsubFocus = focusedPaneStore.subscribe(pushPaneMap);
     }
 
     // Resize to start screen size when no project is open
@@ -343,6 +397,12 @@
       }
 
       event.preventDefault();
+
+      // Tear down the CLI bridge so dangling listen handlers don't fire
+      // after the window is destroyed.
+      cliBridgeDispose?.();
+      cliPaneMapUnsubTerminal?.();
+      cliPaneMapUnsubFocus?.();
 
       // Unregister window from the registry
       try {

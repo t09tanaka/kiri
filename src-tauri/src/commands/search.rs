@@ -136,7 +136,7 @@ pub fn search_files(
     let mut results = Vec::new();
     collect_files(root, &query, &mut results, max_results, true);
 
-    results.sort_by(|a, b| b.score.cmp(&a.score));
+    results.sort_by_key(|r| std::cmp::Reverse(r.score));
 
     Ok(results)
 }
