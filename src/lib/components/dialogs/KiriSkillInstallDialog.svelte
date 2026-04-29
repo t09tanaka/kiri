@@ -16,9 +16,9 @@
   let errorMessage = $state<string | null>(null);
 
   const title = $derived(
-    status.action === 'install' ? 'Claude skill をインストール' : 'Claude skill をアップデート'
+    status.action === 'install' ? 'Install Claude skill' : 'Update Claude skill'
   );
-  const primaryLabel = $derived(status.action === 'install' ? 'インストール' : 'アップデート');
+  const primaryLabel = $derived(status.action === 'install' ? 'Install' : 'Update');
 
   async function handleAccept() {
     if (installing) return;
@@ -108,16 +108,16 @@
 
         <p class="dialog-message">
           {#if status.action === 'install'}
-            kiri ターミナル内で <code>kiri</code> コマンドの使い方を Claude に教える skill を
-            <code>~/.claude/skills/kiri-cli/</code> にインストールします。
+            Install a skill that teaches Claude how to use the <code>kiri</code> command inside kiri
+            terminals to <code>~/.claude/skills/kiri-cli/</code>.
           {:else}
-            Claude skill <code>kiri-cli</code> をバージョン {status.installed_version ??
-              '未インストール'} から {status.source_version ?? '?'} に更新します。
+            Update the Claude skill <code>kiri-cli</code> from version {status.installed_version ??
+              'not installed'} to {status.source_version ?? '?'}.
           {/if}
         </p>
 
         <div class="install-path-pill">
-          <span class="install-path-label">インストール先</span>
+          <span class="install-path-label">Path</span>
           <code class="install-path-value">{status.install_path}</code>
         </div>
 
@@ -129,13 +129,13 @@
       <!-- Action buttons -->
       <div class="dialog-actions">
         <button class="btn btn-ghost" onclick={handleDismiss} disabled={installing}>
-          <span class="btn-label">あとで</span>
+          <span class="btn-label">Later</span>
           <span class="btn-hint">esc</span>
         </button>
         <button class="btn btn-confirm" onclick={handleAccept} disabled={installing}>
           {#if installing}
             <Spinner size="xs" />
-            <span class="btn-label">インストール中…</span>
+            <span class="btn-label">Installing…</span>
           {:else}
             <span class="btn-label">{primaryLabel}</span>
             <span class="btn-hint">↵</span>

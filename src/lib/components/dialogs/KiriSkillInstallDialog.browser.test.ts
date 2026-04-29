@@ -31,7 +31,7 @@ describe('KiriSkillInstallDialog Component (Browser)', () => {
       },
     });
 
-    expect(screen.getByText('Claude skill をインストール')).toBeInTheDocument();
+    expect(screen.getByText('Install Claude skill')).toBeInTheDocument();
   });
 
   it('renders upgrade title when action is upgrade', () => {
@@ -43,7 +43,7 @@ describe('KiriSkillInstallDialog Component (Browser)', () => {
       },
     });
 
-    expect(screen.getByText('Claude skill をアップデート')).toBeInTheDocument();
+    expect(screen.getByText('Update Claude skill')).toBeInTheDocument();
   });
 
   it('renders version numbers in upgrade mode', () => {
@@ -68,7 +68,7 @@ describe('KiriSkillInstallDialog Component (Browser)', () => {
       props: { status: installStatus, onAccept, onDismiss },
     });
 
-    const primaryBtn = screen.getByRole('button', { name: /インストール/i });
+    const primaryBtn = screen.getByRole('button', { name: /^Install/i });
     await fireEvent.click(primaryBtn);
 
     expect(onAccept).toHaveBeenCalledOnce();
@@ -82,7 +82,7 @@ describe('KiriSkillInstallDialog Component (Browser)', () => {
       props: { status: installStatus, onAccept, onDismiss },
     });
 
-    const dismissBtn = screen.getByRole('button', { name: /あとで/i });
+    const dismissBtn = screen.getByRole('button', { name: /Later/i });
     await fireEvent.click(dismissBtn);
 
     expect(onDismiss).toHaveBeenCalledOnce();
