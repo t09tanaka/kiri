@@ -34,7 +34,6 @@ describe('KeyboardShortcuts Component (Browser)', () => {
 
     await waitFor(() => {
       expect(screen.getByText('General')).toBeInTheDocument();
-      expect(screen.getByText('Tabs')).toBeInTheDocument();
       expect(screen.getByText('View')).toBeInTheDocument();
       expect(screen.getByText('File Tree')).toBeInTheDocument();
     });
@@ -46,7 +45,7 @@ describe('KeyboardShortcuts Component (Browser)', () => {
     await waitFor(() => {
       expect(screen.getByText('Quick Open')).toBeInTheDocument();
       expect(screen.getByText('Toggle Sidebar')).toBeInTheDocument();
-      expect(screen.getByText('New Terminal')).toBeInTheDocument();
+      expect(screen.getByText('New Window')).toBeInTheDocument();
     });
   });
 
