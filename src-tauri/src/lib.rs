@@ -1,7 +1,8 @@
 pub mod commands;
 
 use commands::{
-    check_gh_cli, clear_performance_timings, close_terminal,
+    check_gh_cli, clear_performance_timings, cli_resolve_pending, cli_update_pane_map,
+    close_terminal,
     get_foreground_process_name, get_terminal_cwd, get_terminal_process_info,
     copy_paths_to_directory, create_directory, move_path,
     create_terminal, create_window, delete_path, fetch_remote,
@@ -14,7 +15,8 @@ use commands::{
     get_pull_request_detail, search_content, search_files, setup_menu, start_watching, stop_all_watching,
     is_cloudflared_available, start_cloudflare_tunnel, start_remote_server,
     stop_cloudflare_tunnel, stop_remote_server, is_remote_server_running,
-    stop_watching, unregister_window, write_terminal, RemoteServerState, RemoteServerStateType,
+    stop_watching, unregister_window, write_terminal, CliServerRegistry, CliServerRegistryState,
+    RemoteServerState, RemoteServerStateType,
     TerminalOutputBus, TerminalOutputBusState, TerminalState, TunnelState, TunnelStateType,
     WatcherState, WindowRegistry, WindowRegistryState,
 };
@@ -29,6 +31,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(Arc::new(Mutex::new(commands::TerminalManager::new())) as TerminalState)
         .manage(Arc::new(TerminalOutputBus::new()) as TerminalOutputBusState)
+        .manage(Arc::new(CliServerRegistry::new()) as CliServerRegistryState)
         .manage(Arc::new(Mutex::new(commands::WatcherManager::new())) as WatcherState)
         .manage(Arc::new(Mutex::new(WindowRegistry::new())) as WindowRegistryState)
         .manage(Arc::new(tokio::sync::Mutex::new(RemoteServerState::new())) as RemoteServerStateType)
@@ -117,6 +120,9 @@ pub fn run() {
             check_gh_cli,
             list_pull_requests,
             get_pull_request_detail,
+            // CLI server (per-window socket)
+            cli_resolve_pending,
+            cli_update_pane_map,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
