@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-04-29
+
+### Fixed
+
+#### CLI
+- Start the per-window CLI server for every project entry point, not just URL `?project=`
+  - Previously `register_window` was only called from the focus_or_create_window flow; opening a project via Cmd+O, the start-screen "Open Folder" button, or Recent Projects never created a socket file, so `kiri term *` always failed with `internal_error: no kiri windows are running`
+  - The CLI register/unregister now mirrors `projectStore.currentPath` reactively, so every entry point (URL param, Cmd+O, start screen, Cmd+Shift+W close, project switch) converges on the same setup/teardown path
+- Recover `kiri term run` output capture when the shell echoes the payload inline
+  - First `run` succeeded but subsequent runs returned `output: ""` even with a correct exit code
+  - `extract_output` now uses the regex match's start position to locate the real sentinel line (instead of scanning for the literal `__KIRI_DONE_` substring, which collides with the printf format string in the shell's echo)
+  - Hardened leading-echo stripping with extra shapes for ANSI-redraw-mangled echoes (`g\x08git status; printf …`)
+
 ## [0.4.0] - 2026-04-29
 
 ### Added
