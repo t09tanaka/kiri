@@ -15,7 +15,8 @@ use commands::{
     is_cloudflared_available, start_cloudflare_tunnel, start_remote_server,
     stop_cloudflare_tunnel, stop_remote_server, is_remote_server_running,
     stop_watching, unregister_window, write_terminal, RemoteServerState, RemoteServerStateType,
-    TerminalState, TunnelState, TunnelStateType, WatcherState, WindowRegistry, WindowRegistryState,
+    TerminalOutputBus, TerminalOutputBusState, TerminalState, TunnelState, TunnelStateType,
+    WatcherState, WindowRegistry, WindowRegistryState,
 };
 use std::sync::{Arc, Mutex};
 
@@ -27,6 +28,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(Arc::new(Mutex::new(commands::TerminalManager::new())) as TerminalState)
+        .manage(Arc::new(TerminalOutputBus::new()) as TerminalOutputBusState)
         .manage(Arc::new(Mutex::new(commands::WatcherManager::new())) as WatcherState)
         .manage(Arc::new(Mutex::new(WindowRegistry::new())) as WindowRegistryState)
         .manage(Arc::new(tokio::sync::Mutex::new(RemoteServerState::new())) as RemoteServerStateType)

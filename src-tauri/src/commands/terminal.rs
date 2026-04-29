@@ -40,6 +40,55 @@ impl Default for TerminalManager {
 
 pub type TerminalState = Arc<Mutex<TerminalManager>>;
 
+/// Per-terminal broadcast bus so the cli_server (and anything else that
+/// wants the raw PTY byte stream in-process) can subscribe without going
+/// through the Tauri event bus.
+///
+/// The frontend continues to receive `terminal-output` events as before;
+/// the bus simply fans the same chunks out to additional in-process
+/// subscribers.
+#[derive(Default)]
+pub struct TerminalOutputBus {
+    senders: Mutex<HashMap<u32, tokio::sync::broadcast::Sender<Vec<u8>>>>,
+}
+
+const TERMINAL_BUS_CAPACITY: usize = 512;
+
+impl TerminalOutputBus {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Subscribe to a terminal's output. Creates the channel if it does
+    /// not exist yet so callers can subscribe before any output arrives.
+    pub fn subscribe(&self, terminal_id: u32) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
+        let mut map = self.senders.lock().expect("terminal bus mutex poisoned");
+        let sender = map
+            .entry(terminal_id)
+            .or_insert_with(|| tokio::sync::broadcast::channel(TERMINAL_BUS_CAPACITY).0);
+        sender.subscribe()
+    }
+
+    /// Publish a chunk. Returns the number of receivers that got it
+    /// (zero is fine — nobody was listening).
+    pub fn publish(&self, terminal_id: u32, data: &[u8]) -> usize {
+        let map = self.senders.lock().expect("terminal bus mutex poisoned");
+        match map.get(&terminal_id) {
+            Some(sender) => sender.send(data.to_vec()).unwrap_or(0),
+            None => 0,
+        }
+    }
+
+    /// Drop the channel for a terminal that has been closed. Existing
+    /// receivers will see `RecvError::Closed` on their next call.
+    pub fn close(&self, terminal_id: u32) {
+        let mut map = self.senders.lock().expect("terminal bus mutex poisoned");
+        map.remove(&terminal_id);
+    }
+}
+
+pub type TerminalOutputBusState = Arc<TerminalOutputBus>;
+
 /// Resolve terminal size with defaults
 /// Returns (cols, rows)
 pub fn resolve_terminal_size(cols: Option<u16>, rows: Option<u16>) -> (u16, u16) {
@@ -428,6 +477,31 @@ mod tests {
         // Verify struct has expected fields accessible
         let _ = &pty.pair;
         let _ = &pty.child;
+    }
+
+    #[tokio::test]
+    async fn terminal_bus_subscribe_then_publish_delivers() {
+        let bus = TerminalOutputBus::new();
+        let mut rx = bus.subscribe(1);
+        let n = bus.publish(1, b"hello");
+        assert_eq!(n, 1);
+        let got = rx.recv().await.unwrap();
+        assert_eq!(got, b"hello");
+    }
+
+    #[tokio::test]
+    async fn terminal_bus_publish_without_subscriber_is_noop() {
+        let bus = TerminalOutputBus::new();
+        let n = bus.publish(99, b"anybody");
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn terminal_bus_close_drops_receivers() {
+        let bus = TerminalOutputBus::new();
+        let mut rx = bus.subscribe(1);
+        bus.close(1);
+        assert!(rx.recv().await.is_err());
     }
 
     #[test]
