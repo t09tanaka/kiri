@@ -341,12 +341,12 @@ async fn split(ctx: &DispatchContext, p: PaneRef, direction: SplitDirection) -> 
     }
     match timeout(Duration::from_secs(2), rx).await {
         Ok(Ok(value)) => {
-            if let Some(err_code) = value.get("error").and_then(|v| v.as_str()) {
-                return Response::Error {
-                    code: ErrorCode::PaneNotFound,
-                    message: format!("frontend rejected split: {err_code}"),
-                    detail: Some(value),
-                };
+            let err_code = value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let Some(code) = err_code {
+                return frontend_error_to_response(&code, value, "split");
             }
             let new_pane_id = value
                 .get("newPaneId")
@@ -373,6 +373,29 @@ async fn split(ctx: &DispatchContext, p: PaneRef, direction: SplitDirection) -> 
     }
 }
 
+/// Map a frontend-reported error code (sent in the `error` field of the
+/// `cli_resolve_pending` payload) to a wire-level [`ErrorCode`].
+///
+/// The frontend currently only emits `"no_focused_pane"`, but the helper
+/// keeps unknown codes from being silently coerced to `PaneNotFound` and
+/// surfaces them as `InternalError` so they show up as protocol-level
+/// problems instead of looking like normal CLI usage errors.
+fn frontend_error_to_response(
+    err_code: &str,
+    raw_payload: serde_json::Value,
+    op: &str,
+) -> Response {
+    let code = match err_code {
+        "no_focused_pane" => ErrorCode::PaneNotFound,
+        _ => ErrorCode::InternalError,
+    };
+    Response::Error {
+        code,
+        message: format!("frontend rejected {op}: {err_code}"),
+        detail: Some(raw_payload),
+    }
+}
+
 async fn close_pane(ctx: &DispatchContext, p: PaneRef) -> Response {
     let Some(app) = ctx.app.as_ref() else {
         return internal("no Tauri AppHandle bound to dispatch context");
@@ -396,12 +419,12 @@ async fn close_pane(ctx: &DispatchContext, p: PaneRef) -> Response {
     }
     match timeout(Duration::from_secs(2), rx).await {
         Ok(Ok(value)) => {
-            if let Some(err_code) = value.get("error").and_then(|v| v.as_str()) {
-                return Response::Error {
-                    code: ErrorCode::PaneNotFound,
-                    message: format!("frontend rejected close: {err_code}"),
-                    detail: Some(value),
-                };
+            let err_code = value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let Some(code) = err_code {
+                return frontend_error_to_response(&code, value, "close");
             }
             Response::Close
         }
