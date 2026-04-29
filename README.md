@@ -29,7 +29,7 @@ The agent did all of that with `kiri term split`, `kiri term send`, and `kiri te
 
 ## Status
 
-v0.4.0 — early but usable. macOS / Windows / Linux binaries on every [release](https://github.com/t09tanaka/kiri/releases). The CLI surface is stable; expect more verbs over time.
+v0.4.0 — early but usable. **macOS Apple Silicon only** for now (binaries on every [release](https://github.com/t09tanaka/kiri/releases)). The CLI surface is stable; expect more verbs over time.
 
 ## What kiri is
 
@@ -138,9 +138,9 @@ Security: every URL carries a UUID auth token validated in constant time, the ho
 
 Pre-built binaries on the [Releases](https://github.com/t09tanaka/kiri/releases) page:
 
-- macOS (Apple Silicon `aarch64.dmg`, Intel `x64.dmg`)
-- Windows (`x64-setup.exe`)
-- Linux (`amd64.deb`, `amd64.AppImage`)
+- macOS Apple Silicon (`aarch64.dmg`)
+
+Other platforms (Intel Mac, Windows, Linux) are not currently shipped — build from source if you need them.
 
 ### Build from source
 

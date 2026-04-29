@@ -33,7 +33,7 @@ jobs:
               repo: context.repo.repo,
               tag_name: context.ref.replace('refs/tags/', ''),
               name: `kiri v${{ steps.get_version.outputs.VERSION }}`,
-              body: `## What's Changed\n\nSee [CHANGELOG](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CHANGELOG.md) for details.\n\n## Downloads\n\n| Platform | File |\n|----------|------|\n| macOS (Apple Silicon) | \`kiri_${{ steps.get_version.outputs.VERSION }}_aarch64.dmg\` |\n| macOS (Intel) | \`kiri_${{ steps.get_version.outputs.VERSION }}_x64.dmg\` |\n| Windows | \`kiri_${{ steps.get_version.outputs.VERSION }}_x64-setup.exe\` |\n| Linux (deb) | \`kiri_${{ steps.get_version.outputs.VERSION }}_amd64.deb\` |\n| Linux (AppImage) | \`kiri_${{ steps.get_version.outputs.VERSION }}_amd64.AppImage\` |`,
+              body: `## What's Changed\n\nSee [CHANGELOG](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CHANGELOG.md) for details.\n\n## Downloads\n\n| Platform | File |\n|----------|------|\n| macOS (Apple Silicon) | \`kiri_${{ steps.get_version.outputs.VERSION }}_aarch64.dmg\` |`,
               draft: true,
               prerelease: false
             })
@@ -51,15 +51,6 @@ jobs:
           - platform: macos-latest
             args: --target aarch64-apple-darwin
             target: aarch64-apple-darwin
-          - platform: macos-latest
-            args: --target x86_64-apple-darwin
-            target: x86_64-apple-darwin
-          - platform: ubuntu-22.04
-            args: ''
-            target: ''
-          - platform: windows-latest
-            args: ''
-            target: ''
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -75,12 +66,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Install system dependencies (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
