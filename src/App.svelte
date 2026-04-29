@@ -77,10 +77,16 @@
     kiriSkillPrompt = null;
   }
 
-  // CLI bridge teardown handles, populated in onMount when a project loads.
+  // CLI bridge teardown handles, populated by setupCliForProject.
+  // The lifecycle of these handles mirrors the project lifecycle:
+  // a non-null currentPath means "this window has a CLI server for that
+  // project". The subscribe block below drives this reactively, so any
+  // entry point that opens or closes a project (URL param, Cmd+O, start
+  // screen, Cmd+Shift+W) goes through the same register/unregister path.
   let cliBridgeDispose: (() => void) | null = null;
   let cliPaneMapUnsubTerminal: (() => void) | null = null;
   let cliPaneMapUnsubFocus: (() => void) | null = null;
+  let registeredPath: string | null = null;
 
   function collectPaneEntries(
     root: TerminalPane | null,
@@ -110,6 +116,59 @@
       label: windowLabel,
       panes: collectPaneEntries(root, focusedPaneStore.current()),
     });
+  }
+
+  /**
+   * Register this window with the backend and bring up the CLI bridge so
+   * the in-PTY `kiri` command can talk to this window. Idempotent: the
+   * backend skips if the window is already registered, and `registeredPath`
+   * gates duplicate frontend setup. Safe to call from the project-store
+   * subscribe handler.
+   */
+  async function setupCliForProject(path: string) {
+    if (!windowLabel) return;
+    // Optimistic: claim the slot immediately so an overlapping subscribe
+    // tick can't trigger a second setup before this one finishes.
+    registeredPath = path;
+    try {
+      await windowService.registerWindow(windowLabel, path);
+      cliBridgeDispose = await startCliBridge({
+        label: windowLabel,
+        splitPane: (paneId, direction) => terminalStore.splitPane(paneId, direction),
+        closePane: (paneId) => terminalStore.closePane(paneId),
+        indexOf: (paneId) => terminalStore.indexOf(paneId),
+        resolveFocusedPaneId: () => focusedPaneStore.current(),
+      });
+      pushPaneMap();
+      cliPaneMapUnsubTerminal = terminalStore.subscribe(pushPaneMap);
+      cliPaneMapUnsubFocus = focusedPaneStore.subscribe(pushPaneMap);
+    } catch (e) {
+      console.error('Failed to set up CLI for project:', e);
+      registeredPath = null;
+    }
+  }
+
+  /**
+   * Tear down the CLI bridge and unregister this window from the backend.
+   * Safe to call when nothing is set up — every step is null-checked.
+   */
+  async function teardownCliForProject() {
+    cliBridgeDispose?.();
+    cliBridgeDispose = null;
+    cliPaneMapUnsubTerminal?.();
+    cliPaneMapUnsubTerminal = null;
+    cliPaneMapUnsubFocus?.();
+    cliPaneMapUnsubFocus = null;
+    if (registeredPath !== null) {
+      registeredPath = null;
+      if (windowLabel) {
+        try {
+          await windowService.unregisterWindow(windowLabel);
+        } catch (e) {
+          console.error('Failed to unregister window:', e);
+        }
+      }
+    }
   }
 
   // Sync tools state to macOS menu bar
@@ -331,36 +390,14 @@
     // Handle URL parameters
     const params = new URLSearchParams(window.location.search);
 
-    // Handle ?project= URL parameter (for open-recent and new windows)
+    // Handle ?project= URL parameter (for open-recent and new windows).
+    // Registration + CLI bridge setup is driven by the projectStore
+    // subscription below, so this block only seeds the store.
     const projectParam = params.get('project');
     if (projectParam) {
       const decodedPath = decodeURIComponent(projectParam);
       await projectStore.openProject(decodedPath);
-
-      // Register this window with the project path (for focus_or_create_window).
-      // The backend also starts a per-window CLI server on this call so the
-      // in-PTY `kiri` command can talk back to this window.
-      try {
-        await windowService.registerWindow(windowLabel, decodedPath);
-      } catch (e) {
-        console.error('Failed to register window:', e);
-      }
-
       terminalStore.init();
-
-      // Wire the CLI bridge: route cli:* events from the backend into the
-      // local terminalStore, and stream pane-map updates back so cli term
-      // commands can resolve --pane indices/ids.
-      cliBridgeDispose = await startCliBridge({
-        label: windowLabel,
-        splitPane: (paneId, direction) => terminalStore.splitPane(paneId, direction),
-        closePane: (paneId) => terminalStore.closePane(paneId),
-        indexOf: (paneId) => terminalStore.indexOf(paneId),
-        resolveFocusedPaneId: () => focusedPaneStore.current(),
-      });
-      pushPaneMap();
-      cliPaneMapUnsubTerminal = terminalStore.subscribe(pushPaneMap);
-      cliPaneMapUnsubFocus = focusedPaneStore.subscribe(pushPaneMap);
     }
 
     // Resize to start screen size when no project is open
@@ -380,7 +417,11 @@
 
     window.addEventListener('keydown', handleKeyDown);
 
-    // Update window title and refresh PR list when project changes
+    // Update window title, refresh PR list, and drive CLI server lifecycle
+    // when the project changes. The CLI register/unregister is reactive to
+    // currentPath so every entry point (URL param, Cmd+O, start screen
+    // Recent click, Cmd+Shift+W close) converges here — no per-handler
+    // wiring required.
     const unsubscribeProjectStore = projectStore.subscribe((state) => {
       if (state.currentPath) {
         prStore.refresh(state.currentPath);
@@ -388,6 +429,18 @@
         windowService.setTitle(`${projectName} — kiri`);
       } else {
         windowService.setTitle('kiri');
+      }
+
+      if (state.currentPath !== registeredPath) {
+        const target = state.currentPath;
+        void (async () => {
+          if (registeredPath !== null) {
+            await teardownCliForProject();
+          }
+          if (target !== null) {
+            await setupCliForProject(target);
+          }
+        })();
       }
     });
 
@@ -432,18 +485,9 @@
 
       event.preventDefault();
 
-      // Tear down the CLI bridge so dangling listen handlers don't fire
-      // after the window is destroyed.
-      cliBridgeDispose?.();
-      cliPaneMapUnsubTerminal?.();
-      cliPaneMapUnsubFocus?.();
-
-      // Unregister window from the registry
-      try {
-        await windowService.unregisterWindow(windowLabel);
-      } catch (error) {
-        console.error('Failed to unregister window:', error);
-      }
+      // Tear down the CLI bridge + unregister so dangling listen handlers
+      // don't fire after the window is destroyed.
+      await teardownCliForProject();
 
       await currentWindow.destroy();
     });
