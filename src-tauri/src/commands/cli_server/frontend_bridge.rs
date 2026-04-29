@@ -40,6 +40,14 @@ impl PendingReplies {
             None => false,
         }
     }
+
+    /// Drop a registered sender without sending a value. Used by the
+    /// caller to clean up after `emit_to` failures or timeouts so the
+    /// map doesn't accumulate stranded entries.
+    pub fn cancel(&self, request_id: &str) {
+        let mut map = self.inner.lock().expect("pending mutex poisoned");
+        map.remove(request_id);
+    }
 }
 
 #[cfg(test)]
@@ -60,5 +68,14 @@ mod tests {
     fn resolve_unknown_id_returns_false() {
         let pr = PendingReplies::new();
         assert!(!pr.resolve("nobody-home", serde_json::json!(null)));
+    }
+
+    #[tokio::test]
+    async fn cancel_removes_entry_so_subsequent_resolve_is_noop() {
+        let pr = PendingReplies::new();
+        let rx = pr.register("req-c".into());
+        pr.cancel("req-c");
+        assert!(!pr.resolve("req-c", serde_json::json!({})));
+        assert!(rx.await.is_err()); // sender dropped
     }
 }

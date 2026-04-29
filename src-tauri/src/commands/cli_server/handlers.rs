@@ -51,19 +51,28 @@ fn process_info_for(
     id: u32,
 ) -> (String, u64, bool) {
     use sysinfo::{Pid, ProcessesToUpdate, System};
-    let mut manager = match state.lock() {
-        Ok(g) => g,
-        Err(_) => return ("Terminal".into(), 0, false),
+
+    // Phase 1: hold the TerminalState mutex only for the cheap lookup.
+    // Sysinfo's full process scan is slow (50–200ms on macOS) and we
+    // must not block create_terminal/write_terminal/etc. for that long.
+    let shell_pid = {
+        let mut manager = match state.lock() {
+            Ok(g) => g,
+            Err(_) => return ("Terminal".into(), 0, false),
+        };
+        let Some(instance) = manager.instances.get_mut(&id) else {
+            return ("Terminal".into(), 0, false);
+        };
+        if matches!(instance.child.try_wait(), Ok(Some(_))) {
+            return ("Terminal".into(), 0, false);
+        }
+        match instance.shell_pid {
+            Some(pid) => pid,
+            None => return ("Terminal".into(), 0, false),
+        }
     };
-    let Some(instance) = manager.instances.get_mut(&id) else {
-        return ("Terminal".into(), 0, false);
-    };
-    if matches!(instance.child.try_wait(), Ok(Some(_))) {
-        return ("Terminal".into(), 0, false);
-    }
-    let Some(shell_pid) = instance.shell_pid else {
-        return ("Terminal".into(), 0, false);
-    };
+
+    // Phase 2: sysinfo scan happens with no kiri locks held.
     let mut sys = System::new();
     sys.refresh_processes(ProcessesToUpdate::All);
     let mut total: u64 = 0;
@@ -93,12 +102,17 @@ fn process_info_for(
 }
 
 fn cwd_for(state: &crate::commands::terminal::TerminalState, id: u32) -> Option<String> {
-    let mut manager = state.lock().ok()?;
-    let instance = manager.instances.get_mut(&id)?;
-    if matches!(instance.child.try_wait(), Ok(Some(_))) {
-        return None;
-    }
-    let pid = instance.shell_pid?;
+    // Same locking discipline as process_info_for: extract pid under
+    // the lock, release, then call into get_process_cwd which does its
+    // own (slow) /proc lookup.
+    let pid = {
+        let mut manager = state.lock().ok()?;
+        let instance = manager.instances.get_mut(&id)?;
+        if matches!(instance.child.try_wait(), Ok(Some(_))) {
+            return None;
+        }
+        instance.shell_pid?
+    };
     crate::commands::terminal::get_process_cwd(pid)
 }
 
@@ -318,6 +332,7 @@ async fn split(ctx: &DispatchContext, p: PaneRef, direction: SplitDirection) -> 
         },
     });
     if let Err(e) = app.emit_to(ctx.label.as_str(), "cli:pane-split", payload) {
+        ctx.pending.cancel(&request_id);
         return Response::Error {
             code: ErrorCode::FrontendUnresponsive,
             message: format!("emit failed: {e}"),
@@ -326,6 +341,13 @@ async fn split(ctx: &DispatchContext, p: PaneRef, direction: SplitDirection) -> 
     }
     match timeout(Duration::from_secs(2), rx).await {
         Ok(Ok(value)) => {
+            if let Some(err_code) = value.get("error").and_then(|v| v.as_str()) {
+                return Response::Error {
+                    code: ErrorCode::PaneNotFound,
+                    message: format!("frontend rejected split: {err_code}"),
+                    detail: Some(value),
+                };
+            }
             let new_pane_id = value
                 .get("newPaneId")
                 .and_then(|v| v.as_str())
@@ -340,11 +362,14 @@ async fn split(ctx: &DispatchContext, p: PaneRef, direction: SplitDirection) -> 
                 new_pane_index,
             }
         }
-        _ => Response::Error {
-            code: ErrorCode::FrontendUnresponsive,
-            message: "frontend did not reply within 2s".into(),
-            detail: None,
-        },
+        _ => {
+            ctx.pending.cancel(&request_id);
+            Response::Error {
+                code: ErrorCode::FrontendUnresponsive,
+                message: "frontend did not reply within 2s".into(),
+                detail: None,
+            }
+        }
     }
 }
 
@@ -362,6 +387,7 @@ async fn close_pane(ctx: &DispatchContext, p: PaneRef) -> Response {
         "paneId": pane.pane_id,
     });
     if let Err(e) = app.emit_to(ctx.label.as_str(), "cli:pane-close", payload) {
+        ctx.pending.cancel(&request_id);
         return Response::Error {
             code: ErrorCode::FrontendUnresponsive,
             message: format!("emit failed: {e}"),
@@ -369,12 +395,24 @@ async fn close_pane(ctx: &DispatchContext, p: PaneRef) -> Response {
         };
     }
     match timeout(Duration::from_secs(2), rx).await {
-        Ok(Ok(_)) => Response::Close,
-        _ => Response::Error {
-            code: ErrorCode::FrontendUnresponsive,
-            message: "frontend did not reply within 2s".into(),
-            detail: None,
-        },
+        Ok(Ok(value)) => {
+            if let Some(err_code) = value.get("error").and_then(|v| v.as_str()) {
+                return Response::Error {
+                    code: ErrorCode::PaneNotFound,
+                    message: format!("frontend rejected close: {err_code}"),
+                    detail: Some(value),
+                };
+            }
+            Response::Close
+        }
+        _ => {
+            ctx.pending.cancel(&request_id);
+            Response::Error {
+                code: ErrorCode::FrontendUnresponsive,
+                message: "frontend did not reply within 2s".into(),
+                detail: None,
+            }
+        }
     }
 }
 
@@ -402,12 +440,12 @@ fn pty_error(msg: String) -> Response {
     }
 }
 
+/// Process-wide monotonic counter so concurrent `Run` requests can never
+/// collide on the same sentinel — even within the same nanosecond.
+static NONCE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn rand_nonce() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
+    NONCE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 #[cfg(test)]

@@ -58,7 +58,11 @@ export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
     (event) => {
       const { requestId, paneId } = event.payload;
       const target = resolveTarget(paneId);
-      if (target) deps.closePane(target);
+      if (!target) {
+        reply(requestId, { error: 'no_focused_pane' });
+        return;
+      }
+      deps.closePane(target);
       reply(requestId, {});
     }
   );

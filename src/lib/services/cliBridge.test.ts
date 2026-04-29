@@ -88,6 +88,29 @@ describe('cliBridge', () => {
     expect(splitPane).toHaveBeenCalledWith('fp', 'vertical');
   });
 
+  it('on cli:pane-close with focused but no focused pane, replies with error', async () => {
+    const closePane = vi.fn();
+    await startCliBridge({
+      label: 'window-1',
+      splitPane: vi.fn(),
+      closePane,
+      indexOf: () => 0,
+      resolveFocusedPaneId: () => null,
+    });
+
+    listeners.get('cli:pane-close')!({
+      payload: { requestId: 'rc', paneId: 'focused' },
+    });
+    await Promise.resolve();
+
+    expect(closePane).not.toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith('cli_resolve_pending', {
+      label: 'window-1',
+      requestId: 'rc',
+      payload: { error: 'no_focused_pane' },
+    });
+  });
+
   it('on cli:pane-split with focused but no focused pane, replies with error', async () => {
     const splitPane = vi.fn(() => 'never');
     await startCliBridge({

@@ -82,6 +82,15 @@ pub fn spawn_for_window(
         .ok_or_else(|| std::io::Error::other("no home dir for socket path"))?;
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)?;
+        // Tighten the parent dir to 0700 so that even if the socket file
+        // is briefly created with wider permissions (between bind and the
+        // explicit chmod below), no other local user can list or open it.
+        // This is the primary defence; the chmod is belt-and-suspenders.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
     }
     // Best-effort: ensure no stale socket file blocks bind.
     let _ = std::fs::remove_file(&socket_path);
