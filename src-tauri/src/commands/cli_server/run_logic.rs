@@ -35,40 +35,53 @@ impl Sentinel {
     }
 
     /// Search `data` for the sentinel. Returns
-    /// `(exit_code, end_byte_index_of_match)` if found.
-    pub fn find(&self, data: &[u8]) -> Option<(i32, usize)> {
+    /// `(exit_code, start_byte_index, end_byte_index)` of the match.
+    pub fn find(&self, data: &[u8]) -> Option<(i32, usize, usize)> {
         let s = std::str::from_utf8(data).ok()?;
         let m = self.pattern.captures(s)?;
         let exit: i32 = m.get(1)?.as_str().parse().ok()?;
         let whole = m.get(0)?;
-        Some((exit, whole.end()))
+        Some((exit, whole.start(), whole.end()))
     }
 }
 
 /// Trim the command echo and the sentinel line(s) from `data`, returning
 /// just the command's textual output.
 ///
-/// 1. Slice off everything from the sentinel onward (incl. its line).
-/// 2. If the very first line of what's left is an echo of `cmd` (or its
-///    first physical line), drop that too.
-pub fn extract_output(data: &[u8], cmd: &str, sentinel_end: usize) -> String {
-    let upto = sentinel_end.min(data.len());
-    let head = &data[..upto];
-    let head_str = String::from_utf8_lossy(head);
+/// 1. Use the regex match's `sentinel_start` to find the start of the
+///    line containing the actual sentinel, and slice everything before it.
+///    (Matching the literal substring `__KIRI_DONE_` is unsafe — when the
+///    shell echoes our payload back inline, that substring appears in the
+///    `printf` invocation too, and we'd slice off the real output.)
+/// 2. Drop the leading line(s) that echoed our payload back at us. We
+///    handle three observed shapes: bare `<cmd>` echo, `<cmd>` echo with
+///    our injected `; printf '...'` suffix, and ANSI-redraw-mangled echo
+///    that still contains a recognisable sentinel-marker fragment.
+pub fn extract_output(
+    data: &[u8],
+    cmd: &str,
+    sentinel_start: usize,
+    sentinel_end: usize,
+) -> String {
+    let _ = sentinel_end; // kept for symmetry with `find`; line cut uses start.
+    let start = sentinel_start.min(data.len());
 
-    // Drop the sentinel line itself: walk back to the previous '\n'
-    // before the sentinel and slice there.
-    let mut text: &str = head_str.as_ref();
-    if let Some(idx) = find_sentinel_line_start(text, cmd_done_marker_prefix(text)) {
-        text = &text[..idx];
-    }
+    // Walk back from `sentinel_start` to the previous '\n' to find the
+    // start of the sentinel line. Operate on raw bytes so indexing matches
+    // `Sentinel::find`'s byte offsets even if `data` has invalid UTF-8.
+    let sentinel_line_start = data[..start]
+        .iter()
+        .rposition(|&b| b == b'\n')
+        .map(|i| i + 1)
+        .unwrap_or(0);
 
-    // Drop a leading echo of `cmd`'s first physical line, if present.
+    let text_bytes = &data[..sentinel_line_start];
+    let text = String::from_utf8_lossy(text_bytes);
+    let mut text: &str = text.as_ref();
+
     let cmd_first_line = cmd.lines().next().unwrap_or("");
-    if !cmd_first_line.is_empty() {
-        if let Some(stripped) = strip_leading_command_echo(text, cmd_first_line) {
-            text = stripped;
-        }
+    if let Some(stripped) = strip_leading_payload_echo(text, cmd_first_line) {
+        text = stripped;
     }
 
     // Trim a single trailing '\n' if present so the caller-visible
@@ -78,32 +91,46 @@ pub fn extract_output(data: &[u8], cmd: &str, sentinel_end: usize) -> String {
     trimmed.to_string()
 }
 
-/// Return the byte index of the start of the line that contains the
-/// sentinel marker in `text`. We pass in the marker prefix so callers
-/// can pre-compute it for clarity.
-fn find_sentinel_line_start(text: &str, marker_prefix: &str) -> Option<usize> {
-    let pos = text.find(marker_prefix)?;
-    // Walk back to start of that line.
-    Some(text[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0))
-}
-
-fn cmd_done_marker_prefix(_text: &str) -> &'static str {
-    "__KIRI_DONE_"
-}
-
-/// If the first line of `text` matches `cmd_first_line` (after stripping
-/// any common shell-emitted control chars like CR), strip that line and
-/// return the rest. Otherwise return `None`.
-fn strip_leading_command_echo<'a>(text: &'a str, cmd_first_line: &str) -> Option<&'a str> {
+/// If the first line of `text` looks like the shell's echo of our payload,
+/// strip it and return the rest. Returns `None` when nothing was stripped.
+///
+/// Three accepted shapes:
+/// 1. Exactly `cmd_first_line` — bracketed-paste hid the printf.
+/// 2. Starts/ends with `cmd_first_line` — full payload echoed inline.
+/// 3. Contains `__KIRI_DONE_` — ANSI-mangled echo where (1) and (2) failed
+///    but the marker substring still leaks through.
+fn strip_leading_payload_echo<'a>(text: &'a str, cmd_first_line: &str) -> Option<&'a str> {
     let mut iter = text.splitn(2, '\n');
     let first = iter.next()?;
     let rest = iter.next().unwrap_or("");
     let first_clean = first.trim_end_matches('\r');
-    if first_clean == cmd_first_line || first_clean.ends_with(cmd_first_line) {
-        Some(rest)
-    } else {
-        None
+
+    if !cmd_first_line.is_empty()
+        && (first_clean == cmd_first_line
+            || first_clean.starts_with(cmd_first_line)
+            || first_clean.ends_with(cmd_first_line))
+    {
+        return Some(rest);
     }
+
+    // Cmd is present anywhere in the line AND our injected `printf '`
+    // is also present — this catches ANSI-redraw-mangled echoes where
+    // the cmd is preceded by control bytes (e.g. `g\x08git status...`)
+    // so plain prefix/suffix checks miss it. Pairing with `printf '`
+    // avoids false-positives on real output that happens to mention
+    // the cmd verbatim.
+    if !cmd_first_line.is_empty()
+        && first_clean.contains(cmd_first_line)
+        && first_clean.contains("printf '")
+    {
+        return Some(rest);
+    }
+
+    if first_clean.contains("__KIRI_DONE_") {
+        return Some(rest);
+    }
+
+    None
 }
 
 /// Return the last `n` lines of `text` (using `split_inclusive('\n')`),
@@ -137,14 +164,14 @@ mod tests {
     fn finds_exit_code() {
         let s = Sentinel::new("xyz");
         let result = s.find(b"hello\n__KIRI_DONE_xyz__0__\n");
-        assert!(matches!(result, Some((0, _))));
+        assert!(matches!(result, Some((0, _, _))));
     }
 
     #[test]
     fn finds_nonzero_exit() {
         let s = Sentinel::new("xyz");
         let result = s.find(b"oops\n__KIRI_DONE_xyz__127__\n");
-        assert!(matches!(result, Some((127, _))));
+        assert!(matches!(result, Some((127, _, _))));
     }
 
     #[test]
@@ -157,9 +184,38 @@ mod tests {
     fn extract_output_drops_command_echo_and_sentinel() {
         let s = Sentinel::new("xyz");
         let data: &[u8] = b"ls\nfile1\nfile2\n__KIRI_DONE_xyz__0__\n";
-        let (_, end) = s.find(data).expect("sentinel should be found");
-        let out = extract_output(data, "ls", end);
+        let (_, start, end) = s.find(data).expect("sentinel should be found");
+        let out = extract_output(data, "ls", start, end);
         assert_eq!(out, "file1\nfile2");
+    }
+
+    #[test]
+    fn extract_output_when_shell_echoes_payload_inline() {
+        // Reproduces the v0.4.0 bug where the shell echoes the full
+        // payload (cmd + injected printf) on a single line. The previous
+        // implementation matched the marker substring inside the echo
+        // and sliced off the actual output.
+        let s = Sentinel::new("00000001");
+        let data: &[u8] = b"echo hello; printf '\\n__KIRI_DONE_00000001__%d__\\n' \"$?\"\nhello\n__KIRI_DONE_00000001__0__\n";
+        let (exit, start, end) = s.find(data).expect("sentinel should be found");
+        assert_eq!(exit, 0);
+        let out = extract_output(data, "echo hello", start, end);
+        assert_eq!(out, "hello");
+    }
+
+    #[test]
+    fn extract_output_when_echo_has_ansi_redraws() {
+        // Reproduces the v0.4.0 case where bash inline-edit/redraw codes
+        // break up the marker in the echo, so the literal substring
+        // doesn't appear in the echo line itself — only on the real
+        // sentinel line. Output must include the real command output and
+        // exclude the ANSI-mangled echo.
+        let s = Sentinel::new("00000000");
+        let data: &[u8] = b"g\x08git status; printf '\\n__ \r\x1b[KK\rKIRI_DONE_00000000__%d__\\n' \"$?\"\r\nOn branch main\n__KIRI_DONE_00000000__0__\n";
+        let (exit, start, end) = s.find(data).expect("sentinel should be found");
+        assert_eq!(exit, 0);
+        let out = extract_output(data, "git status", start, end);
+        assert_eq!(out, "On branch main");
     }
 
     #[test]

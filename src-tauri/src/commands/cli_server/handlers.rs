@@ -273,8 +273,8 @@ async fn run(
             match rx.recv().await {
                 Ok(chunk) => {
                     acc.extend_from_slice(&chunk);
-                    if let Some((exit, end)) = sentinel.find(&acc) {
-                        let text = extract_output(&acc, &cmd, end);
+                    if let Some((exit, start, end)) = sentinel.find(&acc) {
+                        let text = extract_output(&acc, &cmd, start, end);
                         return (Some(exit), text);
                     }
                 }
