@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-29
+
+### Added
+
+#### CLI
+- New `kiri` CLI binary for driving the app from inside its terminal panes
+  - Wire protocol crate (`kiri-cli-proto`) with `Request`/`Response`/`PaneInfo`/`PaneRef`/`SplitDirection`/`ErrorCode`
+  - clap-based surface with UDS transport and pretty rendering (`kiri term ls/run/send/read/follow/cancel/split/close`)
+  - Per-window CLI server started/stopped on window register/unregister
+  - Pure modules: `ring_buffer`, `run_logic`, `pane_map`, `frontend_bridge`
+  - Dispatch + handlers + listener + Tauri commands
+  - `TerminalOutputBus` for in-process subscribers
+  - Frontend `cliBridge` + `focusedPaneStore` to power the in-PTY `kiri` command
+  - Inject `kiri` into PTY env and install the binary on startup
+  - Fall back to socket discovery when `KIRI_SOCKET` is stale
+
+#### Skill installer
+- New `skill_install` backend module + Tauri commands for installing Claude Code skills
+- Install confirmation dialog with English copy + service wrapper
+- Bundled `kiri-cli` SKILL.md for Claude Code agents
+
+### Fixed
+
+#### CLI
+- Spawn the listener inside Tauri's tokio runtime (fixes startup hang)
+- Map frontend error codes by name instead of collapsing them to `PaneNotFound`
+- Address code review findings across cli-server (5 issues)
+
+#### CI
+- Grant `contents: write` to the release create job
+- Resolve pre-existing clippy 1.95 lints and stale tab-system test
+
+### Changed
+
+- Bump `@tauri-apps/plugin-dialog` to 2.7.0 and add `@tauri-apps/plugin-fs`
+- Move `Cargo.lock` to the workspace root and gitignore workspace `target/`
+
 ## [0.3.0] - 2026-04-27
 
 ### Added
