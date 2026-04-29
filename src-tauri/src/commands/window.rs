@@ -209,6 +209,10 @@ pub fn unregister_window(
 /// Spawn a per-window CLI server if one is not already registered for this
 /// label. Logs and continues on failure so a broken socket can never
 /// prevent the window from registering.
+///
+/// `interprocess::ListenerOptions::create_tokio()` requires a Tokio
+/// runtime context; `register_window` is a sync command so we route the
+/// listener creation through Tauri's async runtime.
 fn start_cli_server_if_absent(
     app: &AppHandle,
     cli_registry: &CliServerRegistryState,
@@ -225,12 +229,17 @@ fn start_cli_server_if_absent(
             return;
         }
     }
-    match cli_server::spawn_for_window(
-        label.to_string(),
-        app.clone(),
-        Arc::clone(terminals),
-        Arc::clone(bus),
-    ) {
+
+    let label_owned = label.to_string();
+    let app_clone = app.clone();
+    let terminals_clone = Arc::clone(terminals);
+    let bus_clone = Arc::clone(bus);
+
+    let result = tauri::async_runtime::block_on(async move {
+        cli_server::spawn_for_window(label_owned, app_clone, terminals_clone, bus_clone)
+    });
+
+    match result {
         Ok(handle) => {
             cli_registry.insert(label.to_string(), Arc::new(handle));
             log::info!("started cli_server for window {label}");
