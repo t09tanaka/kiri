@@ -1,5 +1,6 @@
 pub mod cli_install;
 pub mod cli_server;
+pub mod skill_install;
 pub mod cloudflare_tunnel;
 pub mod drag_drop;
 pub mod file;
@@ -45,3 +46,4 @@ pub use window::*;
 pub use cli_server::{
     cli_resolve_pending, cli_update_pane_map, CliServerRegistry, CliServerRegistryState,
 };
+pub use skill_install::{install_kiri_skill, kiri_skill_status};

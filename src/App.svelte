@@ -44,9 +44,38 @@
   import { getAllTerminalIds } from '@/lib/stores/terminalStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
   import { get } from 'svelte/store';
+  import { skillInstallService, type SkillStatus } from '@/lib/services/skillInstallService';
+  import KiriSkillInstallDialog from '@/lib/components/dialogs/KiriSkillInstallDialog.svelte';
 
   let showShortcuts = $state(false);
   let windowLabel = $state('');
+  let kiriSkillPrompt = $state<SkillStatus | null>(null);
+
+  async function checkKiriSkillStatus() {
+    try {
+      const status = await skillInstallService.status();
+      if (status.action === 'install' || status.action === 'upgrade') {
+        kiriSkillPrompt = status;
+      }
+    } catch (e) {
+      console.warn('Failed to check kiri skill status:', e);
+    }
+  }
+
+  async function handleSkillInstallAccept() {
+    if (!kiriSkillPrompt) return;
+    try {
+      await skillInstallService.install(false);
+      kiriSkillPrompt = null;
+    } catch (e) {
+      console.error('Failed to install kiri skill:', e);
+      throw e;
+    }
+  }
+
+  function handleSkillInstallDismiss() {
+    kiriSkillPrompt = null;
+  }
 
   // CLI bridge teardown handles, populated in onMount when a project loads.
   let cliBridgeDispose: (() => void) | null = null;
@@ -344,6 +373,11 @@
       }
     }
 
+    // Check and prompt for kiri skill install/upgrade (main window only)
+    if (isMainWindow) {
+      void checkKiriSkillStatus();
+    }
+
     window.addEventListener('keydown', handleKeyDown);
 
     // Update window title and refresh PR list when project changes
@@ -553,6 +587,14 @@
 
 {#if $remoteAccessViewStore.isQrModalOpen}
   <QrCodeModal onClose={() => remoteAccessViewStore.closeQrModal()} />
+{/if}
+
+{#if kiriSkillPrompt}
+  <KiriSkillInstallDialog
+    status={kiriSkillPrompt}
+    onAccept={handleSkillInstallAccept}
+    onDismiss={handleSkillInstallDismiss}
+  />
 {/if}
 
 <!-- Global Toast notifications -->
