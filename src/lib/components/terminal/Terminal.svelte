@@ -7,6 +7,7 @@
   import type { Terminal as TerminalType } from '@xterm/xterm';
   import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
   import { terminalStore, getAllPaneIds } from '@/lib/stores/terminalStore';
+  import { focusedPaneStore } from '@/lib/stores/focusedPaneStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
   import { fontSize, startupCommand } from '@/lib/stores/settingsStore';
   import { getStartupCommandString } from '@/lib/services/persistenceService';
@@ -238,6 +239,7 @@
       // Setup focus tracking for the reattached terminal
       terminal.textarea?.addEventListener('focus', () => {
         isFocused = true;
+        focusedPaneStore.set(paneId);
       });
       terminal.textarea?.addEventListener('blur', () => {
         isFocused = false;
@@ -648,6 +650,7 @@
       // Track focus state for visual feedback
       terminal.textarea?.addEventListener('focus', () => {
         isFocused = true;
+        focusedPaneStore.set(paneId);
       });
       terminal.textarea?.addEventListener('blur', () => {
         isFocused = false;
