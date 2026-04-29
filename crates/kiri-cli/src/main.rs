@@ -31,11 +31,11 @@ async fn run() -> Result<i32> {
     let args = Cli::parse();
     let pretty = args.pretty;
 
-    let socket = locate_socket()?;
-
     let req = match args.command {
         Top::Term(t) => build_request(t),
     };
+
+    let socket = resolve_socket().await?;
 
     let responses = transport::send(&socket, &req).await?;
     let mut last_was_error = false;
@@ -50,15 +50,83 @@ async fn run() -> Result<i32> {
     Ok(if last_was_error { 1 } else { 0 })
 }
 
-/// Locate the per-window socket via the env var injected by the kiri PTY.
-fn locate_socket() -> Result<PathBuf> {
-    let value = std::env::var("KIRI_SOCKET").map_err(|_| {
-        anyhow!("KIRI_SOCKET not set — this command must be run from inside a kiri terminal")
-    })?;
-    if value.is_empty() {
-        return Err(anyhow!("KIRI_SOCKET is set but empty"));
+/// Resolve the kiri socket to use, in priority order:
+///
+/// 1. `$KIRI_SOCKET` — if set AND the socket file exists AND a connection
+///    succeeds. This is the happy path inside a live kiri terminal.
+/// 2. Discovery — scan `~/.kiri/instances/*.sock` and pick the one that
+///    accepts a connection. This rescues stale-env situations (the
+///    original kiri instance died, leaving `KIRI_SOCKET` pointing at a
+///    deleted file) and stale-file situations (the socket file remains
+///    on disk but no listener is bound).
+async fn resolve_socket() -> Result<PathBuf> {
+    if let Ok(value) = std::env::var("KIRI_SOCKET") {
+        if !value.is_empty() {
+            let p = PathBuf::from(&value);
+            if p.exists() && socket_alive(&p).await {
+                return Ok(p);
+            }
+            eprintln!(
+                "warning: KIRI_SOCKET={} is stale — searching for an active kiri window",
+                p.display()
+            );
+        }
     }
-    Ok(PathBuf::from(value))
+
+    let dir = dirs::home_dir()
+        .map(|h| h.join(".kiri").join("instances"))
+        .ok_or_else(|| anyhow!("no home directory"))?;
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(it) => it,
+        Err(_) => {
+            return Err(anyhow!(
+                "no kiri windows are running (no {} directory)",
+                dir.display()
+            ))
+        }
+    };
+
+    let mut alive = Vec::new();
+    let mut stale = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("sock") {
+            continue;
+        }
+        if socket_alive(&path).await {
+            alive.push(path);
+        } else {
+            stale.push(path);
+        }
+    }
+
+    match alive.len() {
+        0 if stale.is_empty() => Err(anyhow!(
+            "no kiri windows are running — open a project window in kiri first"
+        )),
+        0 => Err(anyhow!(
+            "found {} stale socket file(s) but no live kiri window: {:?}",
+            stale.len(),
+            stale
+        )),
+        1 => Ok(alive.into_iter().next().unwrap()),
+        _ => Err(anyhow!(
+            "multiple kiri windows are running — set KIRI_SOCKET explicitly to one of: {:?}",
+            alive
+        )),
+    }
+}
+
+/// Cheap liveness probe: try to connect, drop the connection immediately.
+async fn socket_alive(path: &std::path::Path) -> bool {
+    use interprocess::local_socket::tokio::prelude::*;
+    use interprocess::local_socket::{GenericFilePath, ToFsName};
+    let Ok(name) = path.as_os_str().to_fs_name::<GenericFilePath>() else {
+        return false;
+    };
+    interprocess::local_socket::tokio::Stream::connect(name)
+        .await
+        .is_ok()
 }
 
 fn build_request(cmd: TermCmd) -> Request {

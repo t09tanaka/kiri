@@ -18,6 +18,7 @@ clap = { version = "4", features = ["derive"] }
 interprocess = { version = "2", features = ["tokio"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "net", "time"] }
 anyhow = "1"
+dirs = "5"
 
 [dev-dependencies]
 tempfile = "3"

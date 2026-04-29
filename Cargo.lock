@@ -2628,6 +2628,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dirs 5.0.1",
  "interprocess",
  "kiri-cli-proto",
  "serde",
