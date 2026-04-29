@@ -44,6 +44,15 @@ pub fn run() {
                 app.handle()
                     .plugin(tauri_plugin_mcp_bridge::init())?;
             }
+
+            // Install the kiri-cli binary into ~/.kiri/bin so that PTYs
+            // spawned with that dir on PATH can invoke it as `kiri`.
+            // Best-effort: we log and continue if it fails so that a
+            // missing/broken cli does not prevent the app from launching.
+            if let Err(e) = commands::cli_install::ensure_installed(app.handle()) {
+                log::warn!("failed to install kiri CLI: {e}");
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

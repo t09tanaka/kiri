@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 
 /**
  * Terminal/PTY operations service
@@ -6,10 +7,19 @@ import { invoke } from '@tauri-apps/api/core';
  */
 export const terminalService = {
   /**
-   * Create a new terminal/PTY instance
+   * Create a new terminal/PTY instance.
+   *
+   * Always passes the calling window's label so the backend can inject the
+   * per-window CLI socket path into the PTY's environment, making the
+   * `kiri` command available inside the spawned shell.
    */
   createTerminal: (cwd: string | null, cols: number, rows: number): Promise<number> =>
-    invoke('create_terminal', { cwd, cols, rows }),
+    invoke('create_terminal', {
+      cwd,
+      cols,
+      rows,
+      windowLabel: getCurrentWebviewWindow().label,
+    }),
 
   /**
    * Write data to terminal (fire-and-forget for low latency)

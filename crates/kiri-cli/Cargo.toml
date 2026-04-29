@@ -7,7 +7,7 @@ rust-version.workspace = true
 description = "Command-line client for the kiri terminal"
 
 [[bin]]
-name = "kiri"
+name = "kiri-cli"
 path = "src/main.rs"
 
 [dependencies]
