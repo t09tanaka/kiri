@@ -91,15 +91,33 @@
   function collectPaneEntries(
     root: TerminalPane | null,
     focusedId: string | null
-  ): Array<{ index: number; paneId: string; terminalId: number; focused: boolean }> {
+  ): Array<{
+    index: number;
+    paneId: string;
+    terminalId: number;
+    focused: boolean;
+    collapsed: boolean;
+  }> {
     if (!root) return [];
-    const out: Array<{ index: number; paneId: string; terminalId: number; focused: boolean }> = [];
+    const out: Array<{
+      index: number;
+      paneId: string;
+      terminalId: number;
+      focused: boolean;
+      collapsed: boolean;
+    }> = [];
     let i = 0;
     const visit = (pane: TerminalPane) => {
       if (pane.type === 'terminal') {
         const terminalId = terminalStore.terminalIdFor(pane.id);
         if (terminalId !== null) {
-          out.push({ index: i++, paneId: pane.id, terminalId, focused: pane.id === focusedId });
+          out.push({
+            index: i++,
+            paneId: pane.id,
+            terminalId,
+            focused: pane.id === focusedId,
+            collapsed: terminalStore.isCollapsed(pane.id),
+          });
         }
       } else {
         for (const c of pane.children) visit(c);
