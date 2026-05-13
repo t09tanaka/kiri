@@ -5,8 +5,50 @@
 //! `KIRI_SOCKET`-driven env injection. Outside of a kiri terminal the
 //! command will report an error because `KIRI_SOCKET` is not set.
 
-use clap::{Args, Parser, Subcommand};
-use kiri_cli_proto::PaneRef;
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use kiri_cli_proto::{PaneColor, PaneRef};
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum PaneColorArg {
+    Sky,
+    Iris,
+    Jade,
+    Amber,
+    Coral,
+    Rose,
+}
+
+impl From<PaneColorArg> for PaneColor {
+    fn from(a: PaneColorArg) -> Self {
+        match a {
+            PaneColorArg::Sky => PaneColor::Sky,
+            PaneColorArg::Iris => PaneColor::Iris,
+            PaneColorArg::Jade => PaneColor::Jade,
+            PaneColorArg::Amber => PaneColor::Amber,
+            PaneColorArg::Coral => PaneColor::Coral,
+            PaneColorArg::Rose => PaneColor::Rose,
+        }
+    }
+}
+
+/// Clap value parser for `--name`.
+///
+/// Rules: non-empty, ≤32 chars (counting Unicode scalar values), no
+/// ASCII control characters (\x00–\x1f or \x7f). Newlines or NULs
+/// would otherwise become part of the terminal header.
+fn parse_pane_name(s: &str) -> Result<String, String> {
+    if s.is_empty() {
+        return Err("name must not be empty".into());
+    }
+    if s.chars().count() > 32 {
+        return Err("name must be 32 characters or fewer".into());
+    }
+    if s.chars().any(|c| c.is_control()) {
+        return Err("name must not contain control characters".into());
+    }
+    Ok(s.to_owned())
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "kiri", version, about = "kiri CLI", long_about = None)]
@@ -102,6 +144,12 @@ pub struct SplitArgs {
     /// Split direction: h (horizontal) or v (vertical).
     #[arg(long, default_value = "h")]
     pub dir: String,
+    /// Optional pane label shown in the terminal header (1–32 chars, no control characters).
+    #[arg(long, value_parser = parse_pane_name)]
+    pub name: Option<String>,
+    /// Optional pane color shown in the terminal header.
+    #[arg(long, value_enum)]
+    pub color: Option<PaneColorArg>,
 }
 
 /// Translate a `--pane` flag into a `PaneRef`.
@@ -141,5 +189,66 @@ mod tests {
             pane: Some("abc".into()),
         });
         assert_eq!(r, PaneRef::Id("abc".into()));
+    }
+
+    #[test]
+    fn parses_valid_color() {
+        let cli = Cli::try_parse_from([
+            "kiri", "term", "split", "--color", "coral",
+        ])
+        .unwrap();
+        let Top::Term(TermCmd::Split(a)) = cli.command else {
+            panic!("expected split");
+        };
+        assert_eq!(a.color, Some(PaneColorArg::Coral));
+    }
+
+    #[test]
+    fn rejects_unknown_color() {
+        let err = Cli::try_parse_from([
+            "kiri", "term", "split", "--color", "magenta",
+        ]);
+        assert!(err.is_err(), "should reject unknown color");
+    }
+
+    #[test]
+    fn parses_valid_name() {
+        let cli = Cli::try_parse_from([
+            "kiri", "term", "split", "--name", "build",
+        ])
+        .unwrap();
+        let Top::Term(TermCmd::Split(a)) = cli.command else {
+            panic!("expected split");
+        };
+        assert_eq!(a.name.as_deref(), Some("build"));
+    }
+
+    #[test]
+    fn rejects_empty_name() {
+        let err = Cli::try_parse_from(["kiri", "term", "split", "--name", ""]);
+        assert!(err.is_err(), "should reject empty name");
+    }
+
+    #[test]
+    fn rejects_name_over_32_chars() {
+        let long = "a".repeat(33);
+        let err = Cli::try_parse_from(["kiri", "term", "split", "--name", &long]);
+        assert!(err.is_err(), "should reject 33-char name");
+    }
+
+    #[test]
+    fn accepts_name_at_32_chars() {
+        let edge = "a".repeat(32);
+        let cli = Cli::try_parse_from(["kiri", "term", "split", "--name", &edge]).unwrap();
+        let Top::Term(TermCmd::Split(a)) = cli.command else {
+            panic!("expected split");
+        };
+        assert_eq!(a.name.as_ref().unwrap().chars().count(), 32);
+    }
+
+    #[test]
+    fn rejects_control_char_name() {
+        let err = Cli::try_parse_from(["kiri", "term", "split", "--name", "ab\nc"]);
+        assert!(err.is_err(), "should reject name with newline");
     }
 }
