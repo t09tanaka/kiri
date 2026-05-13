@@ -159,7 +159,7 @@ fn build_request(cmd: TermCmd) -> Request {
                 "v" | "vertical" => SplitDirection::Vertical,
                 _ => SplitDirection::Horizontal,
             },
-            minimized: false,
+            minimized: false, // TODO(task-3): forward args.minimized once Task 2 adds the flag
         },
         TermCmd::Close(p) => Request::Close {
             pane: cli::parse_pane(&p),
