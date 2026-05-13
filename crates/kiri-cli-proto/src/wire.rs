@@ -57,6 +57,10 @@ pub struct PaneInfo {
     pub running: bool,
     pub memory_bytes: u64,
     pub focused: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<crate::PaneColor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -221,5 +225,45 @@ mod tests {
                 color: None,
             }
         );
+    }
+
+    #[test]
+    fn pane_info_with_label_roundtrip() {
+        let info = PaneInfo {
+            index: 0,
+            id: "pane-1".into(),
+            terminal_id: 1,
+            cwd: Some("/p".into()),
+            process_name: "zsh".into(),
+            running: false,
+            memory_bytes: 0,
+            focused: true,
+            name: Some("agent".into()),
+            color: Some(crate::PaneColor::Iris),
+        };
+        let s = serde_json::to_string(&info).unwrap();
+        let back: PaneInfo = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.name.as_deref(), Some("agent"));
+        assert_eq!(back.color, Some(crate::PaneColor::Iris));
+    }
+
+    #[test]
+    fn pane_info_without_label_omits_fields() {
+        let info = PaneInfo {
+            index: 0,
+            id: "pane-1".into(),
+            terminal_id: 1,
+            cwd: None,
+            process_name: "zsh".into(),
+            running: false,
+            memory_bytes: 0,
+            focused: false,
+            name: None,
+            color: None,
+        };
+        let v = serde_json::to_value(&info).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("name"));
+        assert!(!obj.contains_key("color"));
     }
 }

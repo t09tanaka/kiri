@@ -46,6 +46,8 @@ async fn ls(ctx: &DispatchContext) -> Response {
             running,
             memory_bytes,
             focused: e.focused,
+            name: None,
+            color: None,
         });
     }
     Response::Ls { panes }
