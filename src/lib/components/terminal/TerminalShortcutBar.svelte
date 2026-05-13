@@ -1,31 +1,16 @@
 <script lang="ts">
   import type { TerminalShortcut, ShortcutType } from '@/lib/stores/shortcutStore.svelte';
-  import type { InputRecord } from '@/lib/services/persistenceService';
-  import ShortcutSuggestions from './ShortcutSuggestions.svelte';
 
   interface Props {
     visible: boolean;
     shortcuts: TerminalShortcut[];
     showNumberRow: boolean;
-    suggestions: InputRecord[];
     onSend: (text: string, withEnter: boolean) => void;
     onSettingsClick: () => void;
     onAddClick: (type: ShortcutType) => void;
-    onSuggestionAdd: (suggestion: InputRecord) => void;
-    onSuggestionDismiss: (suggestion: InputRecord) => void;
   }
 
-  let {
-    visible,
-    shortcuts,
-    showNumberRow,
-    suggestions,
-    onSend,
-    onSettingsClick,
-    onAddClick,
-    onSuggestionAdd,
-    onSuggestionDismiss,
-  }: Props = $props();
+  let { visible, shortcuts, showNumberRow, onSend, onSettingsClick, onAddClick }: Props = $props();
 
   const numberChoices = [1, 2, 3];
 
@@ -128,9 +113,8 @@
       </div>
     {/if}
 
-    <!-- Bar actions: suggestions badge + settings button -->
+    <!-- Bar actions: settings button -->
     <div class="bar-actions">
-      <ShortcutSuggestions {suggestions} onAdd={onSuggestionAdd} onDismiss={onSuggestionDismiss} />
       <button
         class="settings-btn"
         onclick={onSettingsClick}
@@ -342,7 +326,7 @@
     transform: scale(0.92);
   }
 
-  /* Bar actions wrapper (suggestions badge + settings button) */
+  /* Bar actions wrapper (settings button) */
   .bar-actions {
     position: absolute;
     top: 8px;
