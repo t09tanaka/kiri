@@ -20,7 +20,7 @@
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { contentSearchStore, isContentSearchOpen } from '@/lib/stores/contentSearchStore';
   import { terminalStore } from '@/lib/stores/terminalStore';
-  import type { TerminalPane } from '@/lib/stores/terminalStore';
+  import type { TerminalPane, PaneColor } from '@/lib/stores/terminalStore';
   import { focusedPaneStore } from '@/lib/stores/focusedPaneStore';
   import { startCliBridge } from '@/lib/services/cliBridge';
   import { editorModalStore } from '@/lib/stores/editorModalStore';
@@ -91,15 +91,36 @@
   function collectPaneEntries(
     root: TerminalPane | null,
     focusedId: string | null
-  ): Array<{ index: number; paneId: string; terminalId: number; focused: boolean }> {
+  ): Array<{
+    index: number;
+    paneId: string;
+    terminalId: number;
+    focused: boolean;
+    name?: string;
+    color?: PaneColor;
+  }> {
     if (!root) return [];
-    const out: Array<{ index: number; paneId: string; terminalId: number; focused: boolean }> = [];
+    const out: Array<{
+      index: number;
+      paneId: string;
+      terminalId: number;
+      focused: boolean;
+      name?: string;
+      color?: PaneColor;
+    }> = [];
     let i = 0;
     const visit = (pane: TerminalPane) => {
       if (pane.type === 'terminal') {
         const terminalId = terminalStore.terminalIdFor(pane.id);
         if (terminalId !== null) {
-          out.push({ index: i++, paneId: pane.id, terminalId, focused: pane.id === focusedId });
+          out.push({
+            index: i++,
+            paneId: pane.id,
+            terminalId,
+            focused: pane.id === focusedId,
+            ...(pane.name !== undefined ? { name: pane.name } : {}),
+            ...(pane.color !== undefined ? { color: pane.color } : {}),
+          });
         }
       } else {
         for (const c of pane.children) visit(c);
