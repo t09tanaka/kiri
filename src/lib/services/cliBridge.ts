@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import type { PaneColor } from '@/lib/stores/terminalStore';
 
 /**
  * Dependencies the bridge needs from the host App. Passed in (rather
@@ -8,7 +9,11 @@ import { listen } from '@tauri-apps/api/event';
  */
 export interface CliBridgeDeps {
   label: string;
-  splitPane: (paneId: string, direction: 'horizontal' | 'vertical') => string;
+  splitPane: (
+    paneId: string,
+    direction: 'horizontal' | 'vertical',
+    opts?: { name?: string; color?: PaneColor }
+  ) => string;
   closePane: (paneId: string) => void;
   indexOf: (paneId: string) => number;
   resolveFocusedPaneId: () => string | null;
@@ -44,15 +49,17 @@ export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
     requestId: string;
     paneId: string;
     direction: 'horizontal' | 'vertical';
+    name?: string;
+    color?: PaneColor;
     minimized?: boolean;
   }>('cli:pane-split', (event) => {
-    const { requestId, paneId, direction, minimized } = event.payload;
+    const { requestId, paneId, direction, name, color, minimized } = event.payload;
     const target = resolveTarget(paneId);
     if (!target) {
       reply(requestId, { error: 'no_focused_pane' });
       return;
     }
-    const newPaneId = deps.splitPane(target, direction);
+    const newPaneId = deps.splitPane(target, direction, { name, color });
     if (minimized) deps.setPaneCollapsed(newPaneId, true);
     reply(requestId, { newPaneId, newPaneIndex: deps.indexOf(newPaneId) });
   });

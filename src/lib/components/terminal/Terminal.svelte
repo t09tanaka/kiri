@@ -6,7 +6,7 @@
   import { eventService, type UnlistenFn } from '@/lib/services/eventService';
   import type { Terminal as TerminalType } from '@xterm/xterm';
   import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
-  import { terminalStore, getAllPaneIds } from '@/lib/stores/terminalStore';
+  import { terminalStore, getAllPaneIds, type PaneColor } from '@/lib/stores/terminalStore';
   import { focusedPaneStore } from '@/lib/stores/focusedPaneStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
   import { fontSize, startupCommand } from '@/lib/stores/settingsStore';
@@ -37,6 +37,8 @@
   interface Props {
     paneId: string;
     cwd?: string | null;
+    name?: string;
+    color?: PaneColor;
     showControls?: boolean;
     onSplitHorizontal?: () => void;
     onSplitVertical?: () => void;
@@ -46,6 +48,8 @@
   let {
     paneId,
     cwd = null,
+    name = undefined,
+    color = undefined,
     showControls = true,
     onSplitHorizontal,
     onSplitVertical,
@@ -355,6 +359,13 @@
       return true;
     });
 
+    // Guard against the component unmounting before the async xterm imports
+    // resolve (rapid mount/unmount during tests, or a fast pane teardown).
+    // Without this check xterm throws "Terminal requires a parent element"
+    // on a detached node.
+    if (!terminalContainer?.isConnected) {
+      return;
+    }
     terminal.open(terminalContainer);
 
     // Wait for layout to be complete before creating PTY
@@ -953,6 +964,16 @@
           <line x1="3" y1="12" x2="21" y2="12" />
         </svg>
       </button>
+      <span class="trailing-spacer"></span>
+      {#if name || color}
+        <span
+          class="pane-label"
+          style:--pane-color={color ? `var(--pane-color-${color})` : 'transparent'}
+        >
+          {#if color}<span class="pane-dot" aria-hidden="true"></span>{/if}
+          {#if name}<span class="pane-name">{name}</span>{/if}
+        </span>
+      {/if}
       {#if worktreeInfo?.is_linked_worktree}
         <span
           class="worktree-tag"
@@ -1089,20 +1110,49 @@
     color: var(--accent-color);
   }
 
-  .control-btn.close-btn {
-    margin-left: auto;
-  }
-
   .control-btn.close-btn:hover {
     background: rgba(248, 113, 113, 0.1);
     color: #f87171;
+  }
+
+  /* Flex spacer that pushes the trailing cluster (pane-label, worktree-tag,
+     close-btn) to the right. Using a single spacer keeps the trailing group
+     visually tight regardless of which of those three elements are present. */
+  .trailing-spacer {
+    flex: 1 1 auto;
+  }
+
+  .pane-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-secondary);
+    letter-spacing: 0.04em;
+  }
+
+  .pane-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--pane-color);
+    box-shadow: 0 0 6px 0.5px color-mix(in srgb, var(--pane-color) 60%, transparent);
+    flex-shrink: 0;
+  }
+
+  .pane-name {
+    white-space: nowrap;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .worktree-tag {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    margin-left: auto;
     padding: 2px 8px;
     background: rgba(125, 211, 252, 0.08);
     border: 1px solid rgba(125, 211, 252, 0.2);
@@ -1125,12 +1175,6 @@
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  /* When the worktree tag is rendered (always immediately before close-btn),
-     the tag claims the auto margin; close-btn just needs a small gap. */
-  .worktree-tag + .control-btn.close-btn {
-    margin-left: 4px;
   }
 
   /* Ambient corner glow */

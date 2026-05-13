@@ -5,7 +5,7 @@ mod transport;
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use cli::{Cli, TermCmd, Top};
-use kiri_cli_proto::{Request, Response, SplitDirection};
+use kiri_cli_proto::{PaneColor, Request, Response, SplitDirection};
 use std::path::PathBuf;
 
 #[tokio::main(flavor = "current_thread")]
@@ -159,6 +159,8 @@ fn build_request(cmd: TermCmd) -> Request {
                 "v" | "vertical" => SplitDirection::Vertical,
                 _ => SplitDirection::Horizontal,
             },
+            name: a.name.clone(),
+            color: a.color.map(PaneColor::from),
             minimized: a.minimized,
         },
         TermCmd::Close(p) => Request::Close {

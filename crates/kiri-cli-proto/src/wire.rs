@@ -33,6 +33,10 @@ pub enum Request {
     Split {
         pane: PaneRef,
         direction: SplitDirection,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<crate::PaneColor>,
         #[serde(default)]
         minimized: bool,
     },
@@ -61,6 +65,10 @@ pub struct PaneInfo {
     pub running: bool,
     pub memory_bytes: u64,
     pub focused: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<crate::PaneColor>,
     #[serde(default)]
     pub minimized: bool,
 }
@@ -153,6 +161,8 @@ mod tests {
         roundtrip(&Request::Split {
             pane: PaneRef::focused(),
             direction: SplitDirection::Horizontal,
+            name: None,
+            color: None,
             minimized: false,
         });
     }
@@ -190,6 +200,92 @@ mod tests {
     }
 
     #[test]
+    fn request_split_with_name_and_color_roundtrip() {
+        roundtrip(&Request::Split {
+            pane: PaneRef::focused(),
+            direction: SplitDirection::Horizontal,
+            name: Some("build".into()),
+            color: Some(crate::PaneColor::Coral),
+            minimized: false,
+        });
+    }
+
+    #[test]
+    fn request_split_without_label_omits_fields() {
+        let v = serde_json::to_value(Request::Split {
+            pane: PaneRef::focused(),
+            direction: SplitDirection::Horizontal,
+            name: None,
+            color: None,
+            minimized: false,
+        })
+        .unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("name"));
+        assert!(!obj.contains_key("color"));
+    }
+
+    #[test]
+    fn request_split_back_compat_without_fields_parses() {
+        let parsed: Request = serde_json::from_value(
+            serde_json::json!({ "type": "split", "pane": "focused", "direction": "vertical" }),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            Request::Split {
+                pane: PaneRef::focused(),
+                direction: SplitDirection::Vertical,
+                name: None,
+                color: None,
+                minimized: false,
+            }
+        );
+    }
+
+    #[test]
+    fn pane_info_with_label_roundtrip() {
+        let info = PaneInfo {
+            index: 0,
+            id: "pane-1".into(),
+            terminal_id: 1,
+            cwd: Some("/p".into()),
+            process_name: "zsh".into(),
+            running: false,
+            memory_bytes: 0,
+            focused: true,
+            name: Some("agent".into()),
+            color: Some(crate::PaneColor::Iris),
+            minimized: false,
+        };
+        let s = serde_json::to_string(&info).unwrap();
+        let back: PaneInfo = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.name.as_deref(), Some("agent"));
+        assert_eq!(back.color, Some(crate::PaneColor::Iris));
+    }
+
+    #[test]
+    fn pane_info_without_label_omits_fields() {
+        let info = PaneInfo {
+            index: 0,
+            id: "pane-1".into(),
+            terminal_id: 1,
+            cwd: None,
+            process_name: "zsh".into(),
+            running: false,
+            memory_bytes: 0,
+            focused: false,
+            name: None,
+            color: None,
+            minimized: false,
+        };
+        let v = serde_json::to_value(&info).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("name"));
+        assert!(!obj.contains_key("color"));
+    }
+
+    #[test]
     fn pane_info_minimized_defaults_to_false_when_absent() {
         let parsed: PaneInfo = serde_json::from_value(serde_json::json!({
             "index": 0,
@@ -216,6 +312,8 @@ mod tests {
             running: false,
             memory_bytes: 0,
             focused: true,
+            name: None,
+            color: None,
             minimized: true,
         };
         roundtrip(&info);
@@ -223,12 +321,16 @@ mod tests {
 
     #[test]
     fn request_minimize_round_trip() {
-        roundtrip(&Request::Minimize { pane: PaneRef::Index(2) });
+        roundtrip(&Request::Minimize {
+            pane: PaneRef::Index(2),
+        });
     }
 
     #[test]
     fn request_restore_round_trip() {
-        roundtrip(&Request::Restore { pane: PaneRef::focused() });
+        roundtrip(&Request::Restore {
+            pane: PaneRef::focused(),
+        });
     }
 
     #[test]
@@ -249,12 +351,18 @@ mod tests {
             "type": "split",
             "pane": 0,
             "direction": "horizontal"
-        })).unwrap();
-        assert_eq!(parsed, Request::Split {
-            pane: PaneRef::Index(0),
-            direction: SplitDirection::Horizontal,
-            minimized: false,
-        });
+        }))
+        .unwrap();
+        assert_eq!(
+            parsed,
+            Request::Split {
+                pane: PaneRef::Index(0),
+                direction: SplitDirection::Horizontal,
+                name: None,
+                color: None,
+                minimized: false,
+            }
+        );
     }
 
     #[test]
@@ -262,6 +370,8 @@ mod tests {
         roundtrip(&Request::Split {
             pane: PaneRef::Index(1),
             direction: SplitDirection::Vertical,
+            name: None,
+            color: None,
             minimized: true,
         });
     }

@@ -16,6 +16,10 @@ pub struct PaneEntry {
     pub pane_id: String,
     pub terminal_id: u32,
     pub focused: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<kiri_cli_proto::PaneColor>,
     #[serde(default)]
     pub collapsed: bool,
 }
@@ -73,6 +77,8 @@ mod tests {
             pane_id: pane_id.to_string(),
             terminal_id,
             focused,
+            name: None,
+            color: None,
             collapsed: false,
         }
     }
@@ -124,6 +130,32 @@ mod tests {
     }
 
     #[test]
+    fn entry_with_name_color_roundtrips() {
+        let e = PaneEntry {
+            index: 0,
+            pane_id: "pane-1".into(),
+            terminal_id: 1,
+            focused: true,
+            name: Some("build".into()),
+            color: Some(kiri_cli_proto::PaneColor::Coral),
+            collapsed: false,
+        };
+        let s = serde_json::to_string(&e).unwrap();
+        let back: PaneEntry = serde_json::from_str(&s).unwrap();
+        assert_eq!(back.name.as_deref(), Some("build"));
+        assert_eq!(back.color, Some(kiri_cli_proto::PaneColor::Coral));
+    }
+
+    #[test]
+    fn entry_without_label_omits_fields_in_json() {
+        let e = entry(0, "pane-1", 1, true);
+        let v = serde_json::to_value(&e).unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("name"));
+        assert!(!obj.contains_key("color"));
+    }
+
+    #[test]
     fn pane_entry_collapsed_defaults_to_false_in_json() {
         let parsed: PaneEntry = serde_json::from_value(serde_json::json!({
             "index": 0,
@@ -137,14 +169,16 @@ mod tests {
 
     #[test]
     fn pane_entry_collapsed_round_trips() {
-        let entry = PaneEntry {
+        let e = PaneEntry {
             index: 0,
             pane_id: "p".into(),
             terminal_id: 1,
             focused: true,
+            name: None,
+            color: None,
             collapsed: true,
         };
-        let v = serde_json::to_value(&entry).unwrap();
+        let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["collapsed"], serde_json::Value::Bool(true));
     }
 }

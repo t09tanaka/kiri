@@ -20,7 +20,7 @@
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { contentSearchStore, isContentSearchOpen } from '@/lib/stores/contentSearchStore';
   import { terminalStore } from '@/lib/stores/terminalStore';
-  import type { TerminalPane } from '@/lib/stores/terminalStore';
+  import type { TerminalPane, PaneColor } from '@/lib/stores/terminalStore';
   import { focusedPaneStore } from '@/lib/stores/focusedPaneStore';
   import { startCliBridge } from '@/lib/services/cliBridge';
   import { editorModalStore } from '@/lib/stores/editorModalStore';
@@ -97,6 +97,8 @@
     terminalId: number;
     focused: boolean;
     collapsed: boolean;
+    name?: string;
+    color?: PaneColor;
   }> {
     if (!root) return [];
     const out: Array<{
@@ -105,6 +107,8 @@
       terminalId: number;
       focused: boolean;
       collapsed: boolean;
+      name?: string;
+      color?: PaneColor;
     }> = [];
     let i = 0;
     const visit = (pane: TerminalPane) => {
@@ -117,6 +121,8 @@
             terminalId,
             focused: pane.id === focusedId,
             collapsed: terminalStore.isCollapsed(pane.id),
+            ...(pane.name !== undefined ? { name: pane.name } : {}),
+            ...(pane.color !== undefined ? { color: pane.color } : {}),
           });
         }
       } else {
@@ -152,7 +158,7 @@
       await windowService.registerWindow(windowLabel, path);
       cliBridgeDispose = await startCliBridge({
         label: windowLabel,
-        splitPane: (paneId, direction) => terminalStore.splitPane(paneId, direction),
+        splitPane: (paneId, direction, opts) => terminalStore.splitPane(paneId, direction, opts),
         closePane: (paneId) => terminalStore.closePane(paneId),
         indexOf: (paneId) => terminalStore.indexOf(paneId),
         resolveFocusedPaneId: () => focusedPaneStore.current(),

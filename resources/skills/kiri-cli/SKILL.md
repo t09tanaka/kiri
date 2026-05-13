@@ -1,7 +1,7 @@
 ---
 name: kiri-cli
-description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close`, JSON output schema, pane addressing (index/id/focused), busy-pane detection, and known limitations.
-version: 0.1.0
+description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close/minimize/restore`, JSON output schema, pane addressing (index/id/focused), pane labels (`--name`/`--color`), spawning collapsed side panes (`--minimized`), busy-pane detection, and known limitations.
+version: 0.2.0
 ---
 
 # kiri CLI skill
@@ -68,13 +68,15 @@ Response shape:
       "running": false,
       "memory_bytes": 4096000,
       "focused": true,
-      "minimized": false
+      "minimized": false,
+      "name": "build",
+      "color": "coral"
     }
   ]
 }
 ```
 
-`running: true` means a foreground process is active (not the shell itself). `focused: true` marks the pane the user is currently viewing.
+`running: true` means a foreground process is active (not the shell itself). `focused: true` marks the pane the user is currently viewing. `name` and `color` are **omitted entirely** when the pane was created without label flags — do not expect `null`.
 
 ---
 
@@ -187,18 +189,17 @@ Response shape:
 
 ---
 
-### `kiri term split [--pane X] [--dir h|v] [--minimized]`
+### `kiri term split [--pane X] [--dir h|v] [--name STR] [--color COLOR] [--minimized]`
 
 Split the pane. `--dir h` (default) is horizontal; `--dir v` is vertical.
-`--minimized` creates the new pane with its shortcut bar already
-collapsed — useful when the agent is spawning a side pane for its own
-use and does not want to push the user's primary view down.
 
 ```bash
 kiri term split
 kiri term split --dir v
 kiri term split --pane pane-1 --dir h
 kiri term split --dir v --minimized
+kiri term split --name build --color coral
+kiri term split --name agent --color iris --minimized
 ```
 
 Response shape:
@@ -210,6 +211,25 @@ Response shape:
   "new_pane_index": 2
 }
 ```
+
+**Label flags** (both optional, both apply only at split time — there is no
+way to rename or recolor an existing pane):
+
+- `--name STR` — 1–32 characters, no control characters. Shown as text
+  in the pane's header.
+- `--color COLOR` — one of `sky | iris | jade | amber | coral | rose`.
+  Shown as a colored dot to the left of the name. Anything else is
+  rejected by the CLI.
+
+Either, both, or neither may be supplied. A pane created without these
+flags has no header label.
+
+**Minimize flag** (optional, only at split time):
+
+- `--minimized` — create the new pane with its shortcut bar already
+  collapsed. Useful when the agent is spawning a side pane for its own
+  use and does not want to push the user's primary view down. The user
+  (or `kiri term restore --pane <id>`) can expand it later.
 
 ---
 
@@ -330,7 +350,9 @@ Key error codes (snake_case):
       "running": true,
       "memory_bytes": 52428800,
       "focused": false,
-      "minimized": true
+      "minimized": true,
+      "name": "agent",
+      "color": "iris"
     }
   ]
 }
