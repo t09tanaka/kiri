@@ -521,6 +521,7 @@ mod tests {
             pane_id: "p-0".into(),
             terminal_id: 1,
             focused: true,
+            collapsed: false,
         };
         let (ctx, bus) = make_ctx(vec![entry]);
         // Touch the buffer so the subscriber is installed before publish.
