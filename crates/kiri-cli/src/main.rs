@@ -159,6 +159,7 @@ fn build_request(cmd: TermCmd) -> Request {
                 "v" | "vertical" => SplitDirection::Vertical,
                 _ => SplitDirection::Horizontal,
             },
+            minimized: false,
         },
         TermCmd::Close(p) => Request::Close {
             pane: cli::parse_pane(&p),

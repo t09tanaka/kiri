@@ -33,8 +33,16 @@ pub enum Request {
     Split {
         pane: PaneRef,
         direction: SplitDirection,
+        #[serde(default)]
+        minimized: bool,
     },
     Close {
+        pane: PaneRef,
+    },
+    Minimize {
+        pane: PaneRef,
+    },
+    Restore {
         pane: PaneRef,
     },
 }
@@ -53,6 +61,8 @@ pub struct PaneInfo {
     pub running: bool,
     pub memory_bytes: u64,
     pub focused: bool,
+    #[serde(default)]
+    pub minimized: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -86,6 +96,8 @@ pub enum Response {
         new_pane_index: u32,
     },
     Close,
+    Minimize,
+    Restore,
     Error {
         code: ErrorCode,
         message: String,
@@ -141,6 +153,7 @@ mod tests {
         roundtrip(&Request::Split {
             pane: PaneRef::focused(),
             direction: SplitDirection::Horizontal,
+            minimized: false,
         });
     }
 
@@ -174,5 +187,82 @@ mod tests {
     fn response_send_serializes_as_unit() {
         let v = serde_json::to_value(Response::Send).unwrap();
         assert_eq!(v, serde_json::json!({ "type": "send" }));
+    }
+
+    #[test]
+    fn pane_info_minimized_defaults_to_false_when_absent() {
+        let parsed: PaneInfo = serde_json::from_value(serde_json::json!({
+            "index": 0,
+            "id": "pane-1",
+            "terminal_id": 1,
+            "cwd": null,
+            "process_name": "zsh",
+            "running": false,
+            "memory_bytes": 0,
+            "focused": true
+        }))
+        .unwrap();
+        assert!(!parsed.minimized);
+    }
+
+    #[test]
+    fn pane_info_minimized_round_trips() {
+        let info = PaneInfo {
+            index: 0,
+            id: "pane-1".into(),
+            terminal_id: 1,
+            cwd: None,
+            process_name: "zsh".into(),
+            running: false,
+            memory_bytes: 0,
+            focused: true,
+            minimized: true,
+        };
+        roundtrip(&info);
+    }
+
+    #[test]
+    fn request_minimize_round_trip() {
+        roundtrip(&Request::Minimize { pane: PaneRef::Index(2) });
+    }
+
+    #[test]
+    fn request_restore_round_trip() {
+        roundtrip(&Request::Restore { pane: PaneRef::focused() });
+    }
+
+    #[test]
+    fn response_minimize_serializes_as_unit() {
+        let v = serde_json::to_value(Response::Minimize).unwrap();
+        assert_eq!(v, serde_json::json!({ "type": "minimize" }));
+    }
+
+    #[test]
+    fn response_restore_serializes_as_unit() {
+        let v = serde_json::to_value(Response::Restore).unwrap();
+        assert_eq!(v, serde_json::json!({ "type": "restore" }));
+    }
+
+    #[test]
+    fn request_split_defaults_minimized_to_false() {
+        let parsed: Request = serde_json::from_value(serde_json::json!({
+            "type": "split",
+            "pane": 0,
+            "direction": "horizontal"
+        })).unwrap();
+        assert_eq!(parsed, Request::Split {
+            pane: PaneRef::Index(0),
+            direction: SplitDirection::Horizontal,
+            minimized: false,
+        });
+    }
+
+    #[test]
+    fn request_split_with_minimized_round_trip() {
+        roundtrip(&Request::Split {
+            pane: PaneRef::Index(1),
+            direction: SplitDirection::Vertical,
+            minimized: true,
+        });
     }
 }

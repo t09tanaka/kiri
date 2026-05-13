@@ -19,9 +19,12 @@ pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
             timeout_secs,
             full_output,
         } => vec![run(ctx, pane, cmd, timeout_secs, full_output).await],
-        Request::Split { pane, direction } => vec![split(ctx, pane, direction).await],
+        Request::Split { pane, direction, .. } => vec![split(ctx, pane, direction).await],
         Request::Close { pane } => vec![close_pane(ctx, pane).await],
         Request::Follow { pane } => follow(ctx, pane).await,
+        Request::Minimize { .. } | Request::Restore { .. } => {
+            vec![internal("minimize/restore not yet implemented")]
+        }
     }
 }
 
@@ -41,6 +44,7 @@ async fn ls(ctx: &DispatchContext) -> Response {
             running,
             memory_bytes,
             focused: e.focused,
+            minimized: false,
         });
     }
     Response::Ls { panes }
