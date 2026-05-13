@@ -958,6 +958,7 @@
           <line x1="3" y1="12" x2="21" y2="12" />
         </svg>
       </button>
+      <span class="trailing-spacer"></span>
       {#if name || color}
         <span
           class="pane-label"
@@ -1101,13 +1102,16 @@
     color: var(--accent-color);
   }
 
-  .control-btn.close-btn {
-    margin-left: auto;
-  }
-
   .control-btn.close-btn:hover {
     background: rgba(248, 113, 113, 0.1);
     color: #f87171;
+  }
+
+  /* Flex spacer that pushes the trailing cluster (pane-label, worktree-tag,
+     close-btn) to the right. Using a single spacer keeps the trailing group
+     visually tight regardless of which of those three elements are present. */
+  .trailing-spacer {
+    flex: 1 1 auto;
   }
 
   .pane-label {

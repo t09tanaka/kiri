@@ -321,6 +321,24 @@ async fn run(
     }
 }
 
+/// Validate a pane label name received over the wire.
+///
+/// Mirrors the rules enforced by the CLI's clap parser (1–32 unicode scalar
+/// values, no control characters). Defense-in-depth: clients that speak the
+/// raw JSON protocol bypass clap, so the server must re-check.
+fn validate_pane_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("name must not be empty");
+    }
+    if name.chars().count() > 32 {
+        return Err("name must be 32 characters or fewer");
+    }
+    if name.chars().any(|c| c.is_control()) {
+        return Err("name must not contain control characters");
+    }
+    Ok(())
+}
+
 async fn split(
     ctx: &DispatchContext,
     p: PaneRef,
@@ -328,6 +346,15 @@ async fn split(
     name: Option<String>,
     color: Option<kiri_cli_proto::PaneColor>,
 ) -> Response {
+    if let Some(n) = name.as_deref() {
+        if let Err(reason) = validate_pane_name(n) {
+            return Response::Error {
+                code: ErrorCode::InvalidArgument,
+                message: reason.into(),
+                detail: None,
+            };
+        }
+    }
     let Some(app) = ctx.app.as_ref() else {
         return internal("no Tauri AppHandle bound to dispatch context");
     };
@@ -522,6 +549,68 @@ mod tests {
         match resp {
             Response::Ls { panes } => assert!(panes.is_empty()),
             other => panic!("expected Ls, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_pane_name_rules() {
+        assert!(validate_pane_name("").is_err());
+        assert!(validate_pane_name(&"a".repeat(33)).is_err());
+        assert!(validate_pane_name("ab\nc").is_err());
+        assert!(validate_pane_name("ab\0c").is_err());
+        assert!(validate_pane_name("ab\x7fc").is_err());
+        assert!(validate_pane_name("build").is_ok());
+        assert!(validate_pane_name(&"a".repeat(32)).is_ok());
+        assert!(validate_pane_name("ビルド").is_ok());
+    }
+
+    #[tokio::test]
+    async fn split_rejects_oversize_name() {
+        let entry = PaneEntry {
+            index: 0,
+            pane_id: "p-0".into(),
+            terminal_id: 1,
+            focused: true,
+            name: None,
+            color: None,
+        };
+        let (ctx, _bus) = make_ctx(vec![entry]);
+        let resp = split(
+            &ctx,
+            PaneRef::focused(),
+            SplitDirection::Horizontal,
+            Some("a".repeat(33)),
+            None,
+        )
+        .await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidArgument),
+            other => panic!("expected InvalidArgument error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn split_rejects_control_char_name() {
+        let entry = PaneEntry {
+            index: 0,
+            pane_id: "p-0".into(),
+            terminal_id: 1,
+            focused: true,
+            name: None,
+            color: None,
+        };
+        let (ctx, _bus) = make_ctx(vec![entry]);
+        let resp = split(
+            &ctx,
+            PaneRef::focused(),
+            SplitDirection::Horizontal,
+            Some("ab\nc".into()),
+            None,
+        )
+        .await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidArgument),
+            other => panic!("expected InvalidArgument error, got {other:?}"),
         }
     }
 

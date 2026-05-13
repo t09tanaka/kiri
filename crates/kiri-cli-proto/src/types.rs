@@ -48,6 +48,7 @@ pub enum ErrorCode {
     PtyError,
     FrontendUnresponsive,
     ProtocolError,
+    InvalidArgument,
     InternalError,
 }
 
