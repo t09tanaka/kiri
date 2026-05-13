@@ -22,9 +22,9 @@ pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
         Request::Split {
             pane,
             direction,
-            name: _,
-            color: _,
-        } => vec![split(ctx, pane, direction).await],
+            name,
+            color,
+        } => vec![split(ctx, pane, direction, name, color).await],
         Request::Close { pane } => vec![close_pane(ctx, pane).await],
         Request::Follow { pane } => follow(ctx, pane).await,
     }
@@ -321,7 +321,13 @@ async fn run(
     }
 }
 
-async fn split(ctx: &DispatchContext, p: PaneRef, direction: SplitDirection) -> Response {
+async fn split(
+    ctx: &DispatchContext,
+    p: PaneRef,
+    direction: SplitDirection,
+    name: Option<String>,
+    color: Option<kiri_cli_proto::PaneColor>,
+) -> Response {
     let Some(app) = ctx.app.as_ref() else {
         return internal("no Tauri AppHandle bound to dispatch context");
     };
@@ -337,6 +343,8 @@ async fn split(ctx: &DispatchContext, p: PaneRef, direction: SplitDirection) -> 
             SplitDirection::Horizontal => "horizontal",
             SplitDirection::Vertical => "vertical",
         },
+        "name": name,
+        "color": color,
     });
     if let Err(e) = app.emit_to(ctx.label.as_str(), "cli:pane-split", payload) {
         ctx.pending.cancel(&request_id);
