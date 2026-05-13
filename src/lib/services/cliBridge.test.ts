@@ -32,6 +32,7 @@ describe('cliBridge', () => {
       closePane: vi.fn(),
       indexOf,
       resolveFocusedPaneId: () => 'focused-id',
+      setPaneCollapsed: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -55,6 +56,7 @@ describe('cliBridge', () => {
       closePane,
       indexOf: () => 0,
       resolveFocusedPaneId: () => null,
+      setPaneCollapsed: vi.fn(),
     });
 
     listeners.get('cli:pane-close')!({
@@ -78,6 +80,7 @@ describe('cliBridge', () => {
       closePane: vi.fn(),
       indexOf: () => 0,
       resolveFocusedPaneId: () => 'fp',
+      setPaneCollapsed: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -96,6 +99,7 @@ describe('cliBridge', () => {
       closePane,
       indexOf: () => 0,
       resolveFocusedPaneId: () => null,
+      setPaneCollapsed: vi.fn(),
     });
 
     listeners.get('cli:pane-close')!({
@@ -119,6 +123,7 @@ describe('cliBridge', () => {
       closePane: vi.fn(),
       indexOf: () => 0,
       resolveFocusedPaneId: () => null,
+      setPaneCollapsed: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -132,5 +137,94 @@ describe('cliBridge', () => {
       requestId: 'r3',
       payload: { error: 'no_focused_pane' },
     });
+  });
+
+  it('on cli:pane-minimize, calls setPaneCollapsed and resolves', async () => {
+    const setPaneCollapsed = vi.fn();
+    await startCliBridge({
+      label: 'main',
+      splitPane: vi.fn().mockReturnValue('pane-2'),
+      closePane: vi.fn(),
+      indexOf: vi.fn().mockReturnValue(1),
+      resolveFocusedPaneId: () => 'pane-1',
+      setPaneCollapsed,
+    });
+
+    listeners.get('cli:pane-minimize')!({
+      payload: { requestId: 'r1', paneId: 'pane-1', minimized: true },
+    });
+
+    expect(setPaneCollapsed).toHaveBeenCalledWith('pane-1', true);
+    expect(invokeMock).toHaveBeenCalledWith('cli_resolve_pending', {
+      label: 'main',
+      requestId: 'r1',
+      payload: {},
+    });
+  });
+
+  it('on cli:pane-minimize with focused but no focused pane, replies error', async () => {
+    const setPaneCollapsed = vi.fn();
+    await startCliBridge({
+      label: 'main',
+      splitPane: vi.fn(),
+      closePane: vi.fn(),
+      indexOf: vi.fn(),
+      resolveFocusedPaneId: () => null,
+      setPaneCollapsed,
+    });
+
+    listeners.get('cli:pane-minimize')!({
+      payload: { requestId: 'r2', paneId: 'focused', minimized: false },
+    });
+
+    expect(setPaneCollapsed).not.toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith('cli_resolve_pending', {
+      label: 'main',
+      requestId: 'r2',
+      payload: { error: 'no_focused_pane' },
+    });
+  });
+
+  it('on cli:pane-split with minimized=true, sets new pane collapsed before resolving', async () => {
+    const setPaneCollapsed = vi.fn();
+    const splitPane = vi.fn().mockReturnValue('pane-new');
+    await startCliBridge({
+      label: 'main',
+      splitPane,
+      closePane: vi.fn(),
+      indexOf: vi.fn().mockReturnValue(2),
+      resolveFocusedPaneId: () => 'pane-1',
+      setPaneCollapsed,
+    });
+
+    listeners.get('cli:pane-split')!({
+      payload: { requestId: 'r3', paneId: 'pane-1', direction: 'horizontal', minimized: true },
+    });
+
+    expect(splitPane).toHaveBeenCalledWith('pane-1', 'horizontal');
+    expect(setPaneCollapsed).toHaveBeenCalledWith('pane-new', true);
+    expect(invokeMock).toHaveBeenCalledWith('cli_resolve_pending', {
+      label: 'main',
+      requestId: 'r3',
+      payload: { newPaneId: 'pane-new', newPaneIndex: 2 },
+    });
+  });
+
+  it('on cli:pane-split without minimized, does not touch setPaneCollapsed', async () => {
+    const setPaneCollapsed = vi.fn();
+    await startCliBridge({
+      label: 'main',
+      splitPane: vi.fn().mockReturnValue('pane-new'),
+      closePane: vi.fn(),
+      indexOf: vi.fn().mockReturnValue(2),
+      resolveFocusedPaneId: () => 'pane-1',
+      setPaneCollapsed,
+    });
+
+    listeners.get('cli:pane-split')!({
+      payload: { requestId: 'r4', paneId: 'pane-1', direction: 'horizontal' },
+    });
+
+    expect(setPaneCollapsed).not.toHaveBeenCalled();
   });
 });

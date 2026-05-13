@@ -156,6 +156,7 @@
         closePane: (paneId) => terminalStore.closePane(paneId),
         indexOf: (paneId) => terminalStore.indexOf(paneId),
         resolveFocusedPaneId: () => focusedPaneStore.current(),
+        setPaneCollapsed: (paneId, value) => terminalStore.setCollapsed(paneId, value),
       });
       pushPaneMap();
       cliPaneMapUnsubTerminal = terminalStore.subscribe(pushPaneMap);
