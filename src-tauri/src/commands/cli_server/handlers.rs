@@ -46,8 +46,8 @@ async fn ls(ctx: &DispatchContext) -> Response {
             running,
             memory_bytes,
             focused: e.focused,
-            name: None,
-            color: None,
+            name: e.name,
+            color: e.color,
         });
     }
     Response::Ls { panes }
@@ -513,6 +513,28 @@ mod tests {
         let resp = ls(&ctx).await;
         match resp {
             Response::Ls { panes } => assert!(panes.is_empty()),
+            other => panic!("expected Ls, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn ls_returns_name_and_color_when_present() {
+        let entry = PaneEntry {
+            index: 0,
+            pane_id: "p-0".into(),
+            terminal_id: 1,
+            focused: true,
+            name: Some("agent".into()),
+            color: Some(kiri_cli_proto::PaneColor::Iris),
+        };
+        let (ctx, _bus) = make_ctx(vec![entry]);
+        let resp = ls(&ctx).await;
+        match resp {
+            Response::Ls { panes } => {
+                assert_eq!(panes.len(), 1);
+                assert_eq!(panes[0].name.as_deref(), Some("agent"));
+                assert_eq!(panes[0].color, Some(kiri_cli_proto::PaneColor::Iris));
+            }
             other => panic!("expected Ls, got {other:?}"),
         }
     }
