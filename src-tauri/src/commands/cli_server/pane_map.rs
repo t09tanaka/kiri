@@ -16,6 +16,8 @@ pub struct PaneEntry {
     pub pane_id: String,
     pub terminal_id: u32,
     pub focused: bool,
+    #[serde(default)]
+    pub collapsed: bool,
 }
 
 #[derive(Default)]
@@ -71,6 +73,7 @@ mod tests {
             pane_id: pane_id.to_string(),
             terminal_id,
             focused,
+            collapsed: false,
         }
     }
 
@@ -118,5 +121,30 @@ mod tests {
         pm.replace(vec![entry(0, "p-a", 10, true)]);
         assert!(pm.resolve(&PaneRef::Index(99)).is_none());
         assert!(pm.resolve(&PaneRef::Id("nope".into())).is_none());
+    }
+
+    #[test]
+    fn pane_entry_collapsed_defaults_to_false_in_json() {
+        let parsed: PaneEntry = serde_json::from_value(serde_json::json!({
+            "index": 0,
+            "paneId": "p",
+            "terminalId": 1,
+            "focused": true
+        }))
+        .unwrap();
+        assert!(!parsed.collapsed);
+    }
+
+    #[test]
+    fn pane_entry_collapsed_round_trips() {
+        let entry = PaneEntry {
+            index: 0,
+            pane_id: "p".into(),
+            terminal_id: 1,
+            focused: true,
+            collapsed: true,
+        };
+        let v = serde_json::to_value(&entry).unwrap();
+        assert_eq!(v["collapsed"], serde_json::Value::Bool(true));
     }
 }

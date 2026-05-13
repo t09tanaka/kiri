@@ -286,3 +286,95 @@ describe('pane tree helpers', () => {
     });
   });
 });
+
+describe('terminalStore collapsed state', () => {
+  beforeEach(() => {
+    terminalStore.reset();
+  });
+
+  it('isCollapsed returns false for unknown panes', () => {
+    expect(terminalStore.isCollapsed('pane-unknown')).toBe(false);
+  });
+
+  it('setCollapsed and isCollapsed roundtrip', () => {
+    terminalStore.setCollapsed('pane-1', true);
+    expect(terminalStore.isCollapsed('pane-1')).toBe(true);
+    terminalStore.setCollapsed('pane-1', false);
+    expect(terminalStore.isCollapsed('pane-1')).toBe(false);
+  });
+
+  it('toggleCollapsed flips state', () => {
+    terminalStore.toggleCollapsed('pane-1');
+    expect(terminalStore.isCollapsed('pane-1')).toBe(true);
+    terminalStore.toggleCollapsed('pane-1');
+    expect(terminalStore.isCollapsed('pane-1')).toBe(false);
+  });
+
+  it('closePane clears the collapsed bit for that pane', () => {
+    // Seed a real pane in the tree: init() + splitPane() returns a new paneId
+    // whose pane exists in the tree, so closePane() will actually remove it.
+    terminalStore.init();
+    const rootPaneId = (get(terminalStore).rootPane as { id: string }).id;
+    const newPaneId = terminalStore.splitPane(rootPaneId, 'vertical');
+
+    terminalStore.setCollapsed(newPaneId, true);
+    expect(terminalStore.isCollapsed(newPaneId)).toBe(true);
+
+    terminalStore.closePane(newPaneId);
+    expect(terminalStore.isCollapsed(newPaneId)).toBe(false);
+  });
+
+  it('closePane retains collapsed bits for panes that survive a split collapse', () => {
+    // Build a nested split: split(rootPane, split(paneB, paneC)).
+    // Closing paneB collapses the inner split — paneC survives and is hoisted
+    // into the outer split. paneC's collapsed bit must be retained.
+    terminalStore.init();
+    const rootPaneId = (get(terminalStore).rootPane as { id: string }).id;
+    const paneB = terminalStore.splitPane(rootPaneId, 'vertical');
+    const paneC = terminalStore.splitPane(paneB, 'horizontal');
+
+    terminalStore.setCollapsed(paneB, true);
+    terminalStore.setCollapsed(paneC, true);
+
+    terminalStore.closePane(paneB);
+    expect(terminalStore.isCollapsed(paneB)).toBe(false);
+    // paneC still exists in the tree, so its collapsed bit should be retained.
+    expect(terminalStore.isCollapsed(paneC)).toBe(true);
+  });
+
+  it('snapshot exposes collapsed map for use by App.svelte', () => {
+    terminalStore.setCollapsed('pane-1', true);
+    const snap = terminalStore.snapshot();
+    expect(snap.collapsedByPaneId).toBeInstanceOf(Map);
+    expect(snap.collapsedByPaneId.get('pane-1')).toBe(true);
+  });
+
+  it('snapshot returns a defensive copy of the collapsed map', () => {
+    terminalStore.setCollapsed('pane-1', true);
+    const snap = terminalStore.snapshot();
+    // Mutating the snapshot's map must not affect store state.
+    snap.collapsedByPaneId.set('pane-2', true);
+    snap.collapsedByPaneId.delete('pane-1');
+    expect(terminalStore.isCollapsed('pane-1')).toBe(true);
+    expect(terminalStore.isCollapsed('pane-2')).toBe(false);
+  });
+
+  it('setCollapsed notifies subscribers', () => {
+    let calls = 0;
+    const unsub = terminalStore.subscribe(() => {
+      calls++;
+    });
+    const baseline = calls;
+    terminalStore.setCollapsed('pane-1', true);
+    expect(calls).toBeGreaterThan(baseline);
+    unsub();
+  });
+
+  it('reset clears all collapsed entries', () => {
+    terminalStore.setCollapsed('pane-1', true);
+    terminalStore.setCollapsed('pane-2', true);
+    terminalStore.reset();
+    expect(terminalStore.isCollapsed('pane-1')).toBe(false);
+    expect(terminalStore.isCollapsed('pane-2')).toBe(false);
+  });
+});
