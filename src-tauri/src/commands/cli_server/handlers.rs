@@ -19,7 +19,7 @@ pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
             timeout_secs,
             full_output,
         } => vec![run(ctx, pane, cmd, timeout_secs, full_output).await],
-        Request::Split { pane, direction, .. } => vec![split(ctx, pane, direction).await],
+        Request::Split { pane, direction, minimized } => vec![split(ctx, pane, direction, minimized).await],
         Request::Close { pane } => vec![close_pane(ctx, pane).await],
         Request::Minimize { pane } => vec![set_collapsed(ctx, pane, true).await],
         Request::Restore { pane } => vec![set_collapsed(ctx, pane, false).await],
@@ -317,7 +317,12 @@ async fn run(
     }
 }
 
-async fn split(ctx: &DispatchContext, p: PaneRef, direction: SplitDirection) -> Response {
+async fn split(
+    ctx: &DispatchContext,
+    p: PaneRef,
+    direction: SplitDirection,
+    minimized: bool,
+) -> Response {
     let Some(app) = ctx.app.as_ref() else {
         return internal("no Tauri AppHandle bound to dispatch context");
     };
@@ -333,6 +338,7 @@ async fn split(ctx: &DispatchContext, p: PaneRef, direction: SplitDirection) -> 
             SplitDirection::Horizontal => "horizontal",
             SplitDirection::Vertical => "vertical",
         },
+        "minimized": minimized,
     });
     if let Err(e) = app.emit_to(ctx.label.as_str(), "cli:pane-split", payload) {
         ctx.pending.cancel(&request_id);
