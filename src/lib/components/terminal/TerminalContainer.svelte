@@ -132,6 +132,8 @@
     <Terminal
       paneId={pane.id}
       cwd={pane.cwd || cwd}
+      name={pane.name}
+      color={pane.color}
       showControls={true}
       onSplitHorizontal={() => handleSplitHorizontal(pane.id)}
       onSplitVertical={() => handleSplitVertical(pane.id)}
