@@ -51,6 +51,10 @@ pub enum TermCmd {
     Split(SplitArgs),
     /// Close the pane.
     Close(PaneOpt),
+    /// Collapse the shortcut bar to a thin strip with only the restore + settings buttons.
+    Minimize(PaneOpt),
+    /// Expand a minimized shortcut bar back to its full layout.
+    Restore(PaneOpt),
 }
 
 #[derive(Args, Debug)]
@@ -102,6 +106,9 @@ pub struct SplitArgs {
     /// Split direction: h (horizontal) or v (vertical).
     #[arg(long, default_value = "h")]
     pub dir: String,
+    /// Create the new pane with its shortcut bar already minimized.
+    #[arg(long)]
+    pub minimized: bool,
 }
 
 /// Translate a `--pane` flag into a `PaneRef`.
@@ -141,5 +148,45 @@ mod tests {
             pane: Some("abc".into()),
         });
         assert_eq!(r, PaneRef::Id("abc".into()));
+    }
+
+    #[test]
+    fn parse_minimize_subcommand() {
+        let cli = Cli::try_parse_from(["kiri", "term", "minimize"]).unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Minimize(opt)) => {
+                assert_eq!(parse_pane(&opt), PaneRef::focused());
+            }
+            _ => panic!("expected minimize"),
+        }
+    }
+
+    #[test]
+    fn parse_restore_subcommand_with_pane() {
+        let cli = Cli::try_parse_from(["kiri", "term", "restore", "--pane", "pane-2"]).unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Restore(opt)) => {
+                assert_eq!(parse_pane(&opt), PaneRef::Id("pane-2".into()));
+            }
+            _ => panic!("expected restore"),
+        }
+    }
+
+    #[test]
+    fn parse_split_minimized_flag() {
+        let cli = Cli::try_parse_from(["kiri", "term", "split", "--minimized"]).unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Split(args)) => assert!(args.minimized),
+            _ => panic!("expected split"),
+        }
+    }
+
+    #[test]
+    fn parse_split_default_minimized_false() {
+        let cli = Cli::try_parse_from(["kiri", "term", "split"]).unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Split(args)) => assert!(!args.minimized),
+            _ => panic!("expected split"),
+        }
     }
 }
