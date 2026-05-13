@@ -355,6 +355,13 @@
       return true;
     });
 
+    // Guard against the component unmounting before the async xterm imports
+    // resolve (rapid mount/unmount during tests, or a fast pane teardown).
+    // Without this check xterm throws "Terminal requires a parent element"
+    // on a detached node.
+    if (!terminalContainer?.isConnected) {
+      return;
+    }
     terminal.open(terminalContainer);
 
     // Wait for layout to be complete before creating PTY
