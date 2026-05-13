@@ -19,7 +19,12 @@ pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
             timeout_secs,
             full_output,
         } => vec![run(ctx, pane, cmd, timeout_secs, full_output).await],
-        Request::Split { pane, direction } => vec![split(ctx, pane, direction).await],
+        Request::Split {
+            pane,
+            direction,
+            name: _,
+            color: _,
+        } => vec![split(ctx, pane, direction).await],
         Request::Close { pane } => vec![close_pane(ctx, pane).await],
         Request::Follow { pane } => follow(ctx, pane).await,
     }

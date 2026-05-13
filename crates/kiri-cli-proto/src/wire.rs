@@ -33,6 +33,10 @@ pub enum Request {
     Split {
         pane: PaneRef,
         direction: SplitDirection,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        color: Option<crate::PaneColor>,
     },
     Close {
         pane: PaneRef,
@@ -141,6 +145,8 @@ mod tests {
         roundtrip(&Request::Split {
             pane: PaneRef::focused(),
             direction: SplitDirection::Horizontal,
+            name: None,
+            color: None,
         });
     }
 
@@ -174,5 +180,46 @@ mod tests {
     fn response_send_serializes_as_unit() {
         let v = serde_json::to_value(Response::Send).unwrap();
         assert_eq!(v, serde_json::json!({ "type": "send" }));
+    }
+
+    #[test]
+    fn request_split_with_name_and_color_roundtrip() {
+        roundtrip(&Request::Split {
+            pane: PaneRef::focused(),
+            direction: SplitDirection::Horizontal,
+            name: Some("build".into()),
+            color: Some(crate::PaneColor::Coral),
+        });
+    }
+
+    #[test]
+    fn request_split_without_label_omits_fields() {
+        let v = serde_json::to_value(Request::Split {
+            pane: PaneRef::focused(),
+            direction: SplitDirection::Horizontal,
+            name: None,
+            color: None,
+        })
+        .unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("name"));
+        assert!(!obj.contains_key("color"));
+    }
+
+    #[test]
+    fn request_split_back_compat_without_fields_parses() {
+        let parsed: Request = serde_json::from_value(
+            serde_json::json!({ "type": "split", "pane": "focused", "direction": "vertical" }),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            Request::Split {
+                pane: PaneRef::focused(),
+                direction: SplitDirection::Vertical,
+                name: None,
+                color: None,
+            }
+        );
     }
 }
