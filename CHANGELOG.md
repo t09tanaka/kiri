@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-14
+
+### Added
+
+#### Terminal — pane labels (`kiri term split --name --color`)
+- `kiri term split --name STR --color COLOR` tags a newly-split pane with a short label and one of six fixed Mist-palette colors (`sky | iris | jade | amber | coral | rose`)
+  - Pane header renders a `8px` colored dot plus the name, between the split buttons and the worktree tag
+  - Both flags are independent — `--name` only (text), `--color` only (dot), both, or neither all work
+  - CLI rejects names that are empty, > 32 Unicode scalar values, or contain control characters; backend re-validates the same rules as defense-in-depth and replies with `ErrorCode::InvalidArgument` if a raw-protocol client bypasses the CLI
+- `kiri term ls` returns optional `name` and `color` fields per `PaneInfo` (omitted entirely when unset — not `null`); pretty-table output gains `NAME` and `COLOR` columns
+- Six `--pane-color-*` CSS tokens added to the root palette in `app.css`
+- New `PaneColor` enum on the wire (`kiri-cli-proto`) and `ErrorCode::InvalidArgument` for label validation failures
+
+#### Terminal — minimize / restore (`kiri term minimize/restore` and `split --minimized`)
+- New `kiri term minimize` / `kiri term restore` subcommands collapse the per-pane shortcut bar to a thin strip and expand it back
+- New `kiri term split --minimized` creates the new pane with its shortcut bar already collapsed — useful when an agent spawns a side pane and does not want to push the user's primary view down
+- `kiri term ls` returns the new `minimized` boolean (always present) on each `PaneInfo`
+- Shortcut bar gained a collapse button and a thin-bar layout for the collapsed state
+
+#### Bundled skill
+- `kiri-cli` SKILL.md bumped to `0.2.0` with documentation for the new subcommands and split flags; the in-app skill install dialog will offer a `0.1.0 → 0.2.0` upgrade
+
+### Fixed
+
+#### Terminal
+- Guard `xterm.open()` against a detached container so async xterm lazy-loading no longer throws "Terminal requires a parent element" when a pane unmounts during init (also clears 4 noisy unhandled rejections from the browser test run)
+- Right-aligned trailing header cluster (`pane-label` + `worktree-tag` + close button) now uses a single flex spacer instead of `margin-left: auto` on `.worktree-tag`, so single-pane worktree headers stay right-aligned even when the close button is hidden
+
+### Removed
+
+- `refactor(terminal): remove frequent-command suggestion feature` — drop the in-app frequent-command suggester that was unused after the CLI / skill flows landed
+
 ## [0.4.1] - 2026-04-29
 
 ### Fixed
