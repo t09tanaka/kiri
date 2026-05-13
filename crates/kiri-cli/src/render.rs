@@ -53,6 +53,8 @@ pub fn render_response_pretty(resp: &Response) {
             println!("created pane {new_pane_index} ({new_pane_id})");
         }
         Response::Close => println!("ok"),
+        Response::Minimize => println!("ok"),
+        Response::Restore => println!("ok"),
         Response::Error { code, message, .. } => {
             eprintln!("error [{code:?}]: {message}");
         }

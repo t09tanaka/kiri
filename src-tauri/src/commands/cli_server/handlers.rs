@@ -24,8 +24,11 @@ pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
             direction,
             name,
             color,
-        } => vec![split(ctx, pane, direction, name, color).await],
+            minimized,
+        } => vec![split(ctx, pane, direction, name, color, minimized).await],
         Request::Close { pane } => vec![close_pane(ctx, pane).await],
+        Request::Minimize { pane } => vec![set_collapsed(ctx, pane, true).await],
+        Request::Restore { pane } => vec![set_collapsed(ctx, pane, false).await],
         Request::Follow { pane } => follow(ctx, pane).await,
     }
 }
@@ -48,6 +51,7 @@ async fn ls(ctx: &DispatchContext) -> Response {
             focused: e.focused,
             name: e.name,
             color: e.color,
+            minimized: e.collapsed,
         });
     }
     Response::Ls { panes }
@@ -345,6 +349,7 @@ async fn split(
     direction: SplitDirection,
     name: Option<String>,
     color: Option<kiri_cli_proto::PaneColor>,
+    minimized: bool,
 ) -> Response {
     if let Some(n) = name.as_deref() {
         if let Err(reason) = validate_pane_name(n) {
@@ -372,6 +377,7 @@ async fn split(
         },
         "name": name,
         "color": color,
+        "minimized": minimized,
     });
     if let Err(e) = app.emit_to(ctx.label.as_str(), "cli:pane-split", payload) {
         ctx.pending.cancel(&request_id);
@@ -481,6 +487,58 @@ async fn close_pane(ctx: &DispatchContext, p: PaneRef) -> Response {
     }
 }
 
+async fn set_collapsed(ctx: &DispatchContext, p: PaneRef, minimized: bool) -> Response {
+    let Some(app) = ctx.app.as_ref() else {
+        return internal("no Tauri AppHandle bound to dispatch context");
+    };
+    let Some(pane) = ctx.pane_map.resolve(&p) else {
+        return pane_not_found(p);
+    };
+    let request_id = format!("minimize-{}", uuid::Uuid::new_v4());
+    let rx = ctx.pending.register(request_id.clone());
+    let payload = serde_json::json!({
+        "requestId": request_id,
+        "paneId": pane.pane_id,
+        "minimized": minimized,
+    });
+    if let Err(e) = app.emit_to(ctx.label.as_str(), "cli:pane-minimize", payload) {
+        ctx.pending.cancel(&request_id);
+        return Response::Error {
+            code: ErrorCode::FrontendUnresponsive,
+            message: format!("emit failed: {e}"),
+            detail: None,
+        };
+    }
+    match timeout(Duration::from_secs(2), rx).await {
+        Ok(Ok(value)) => {
+            let err_code = value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let Some(code) = err_code {
+                return frontend_error_to_response(
+                    &code,
+                    value,
+                    if minimized { "minimize" } else { "restore" },
+                );
+            }
+            if minimized {
+                Response::Minimize
+            } else {
+                Response::Restore
+            }
+        }
+        _ => {
+            ctx.pending.cancel(&request_id);
+            Response::Error {
+                code: ErrorCode::FrontendUnresponsive,
+                message: "frontend did not reply within 2s".into(),
+                detail: None,
+            }
+        }
+    }
+}
+
 fn pane_not_found(p: PaneRef) -> Response {
     Response::Error {
         code: ErrorCode::PaneNotFound,
@@ -573,6 +631,7 @@ mod tests {
             focused: true,
             name: None,
             color: None,
+            collapsed: false,
         };
         let (ctx, _bus) = make_ctx(vec![entry]);
         let resp = split(
@@ -581,6 +640,7 @@ mod tests {
             SplitDirection::Horizontal,
             Some("a".repeat(33)),
             None,
+            false,
         )
         .await;
         match resp {
@@ -598,6 +658,7 @@ mod tests {
             focused: true,
             name: None,
             color: None,
+            collapsed: false,
         };
         let (ctx, _bus) = make_ctx(vec![entry]);
         let resp = split(
@@ -606,6 +667,7 @@ mod tests {
             SplitDirection::Horizontal,
             Some("ab\nc".into()),
             None,
+            false,
         )
         .await;
         match resp {
@@ -623,6 +685,7 @@ mod tests {
             focused: true,
             name: Some("agent".into()),
             color: Some(kiri_cli_proto::PaneColor::Iris),
+            collapsed: false,
         };
         let (ctx, _bus) = make_ctx(vec![entry]);
         let resp = ls(&ctx).await;
@@ -645,6 +708,7 @@ mod tests {
             focused: true,
             name: None,
             color: None,
+            collapsed: false,
         };
         let (ctx, bus) = make_ctx(vec![entry]);
         // Touch the buffer so the subscriber is installed before publish.

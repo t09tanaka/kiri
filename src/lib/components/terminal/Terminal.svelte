@@ -70,6 +70,10 @@
   let shortcutFocusSection = $state<'reply' | 'command' | null>(null);
   let numberRowEnabled = $state(false);
   let worktreeInfo = $state<WorktreeInfo | null>(null);
+  let collapsed = $state(false);
+  const unsubscribeCollapsed = terminalStore.subscribe(() => {
+    collapsed = terminalStore.isCollapsed(paneId);
+  });
   // Plain (non-reactive) cache: only used to decide whether to refetch.
   // Updating this should NOT trigger re-renders.
   let lastCwd: string | null = null;
@@ -863,6 +867,8 @@
   });
 
   onDestroy(() => {
+    unsubscribeCollapsed();
+
     if (processPollInterval) {
       clearInterval(processPollInterval);
     }
@@ -1021,12 +1027,14 @@
     visible={isAiRunning}
     shortcuts={shortcutState.allShortcuts}
     showNumberRow={numberRowEnabled}
+    {collapsed}
     onSend={handleShortcutSend}
     onSettingsClick={() => {
       shortcutFocusSection = null;
       showShortcutSettings = true;
     }}
     onAddClick={handleShortcutAddClick}
+    onToggleCollapse={() => terminalStore.toggleCollapsed(paneId)}
   />
   <TerminalShortcutSettings
     open={showShortcutSettings}

@@ -5,12 +5,23 @@
     visible: boolean;
     shortcuts: TerminalShortcut[];
     showNumberRow: boolean;
+    collapsed: boolean;
     onSend: (text: string, withEnter: boolean) => void;
     onSettingsClick: () => void;
     onAddClick: (type: ShortcutType) => void;
+    onToggleCollapse: () => void;
   }
 
-  let { visible, shortcuts, showNumberRow, onSend, onSettingsClick, onAddClick }: Props = $props();
+  let {
+    visible,
+    shortcuts,
+    showNumberRow,
+    collapsed,
+    onSend,
+    onSettingsClick,
+    onAddClick,
+    onToggleCollapse,
+  }: Props = $props();
 
   const numberChoices = [1, 2, 3];
 
@@ -24,97 +35,122 @@
 </script>
 
 {#if visible}
-  <div class="shortcut-bar">
-    <!-- Row 1: Quick Reply -->
-    <div class="shortcut-row">
-      <span class="bar-label reply-label">REPLY</span>
-      <div class="shortcut-buttons">
-        {#each replies as shortcut (shortcut.id)}
-          <button
-            class="shortcut-btn reply-btn"
-            onclick={(e) => handleClick(e, shortcut)}
-            title="{shortcut.label} (Shift+click: input only)"
-          >
-            {shortcut.label}
-          </button>
-        {/each}
-        <button
-          class="add-btn reply-add"
-          onclick={() => onAddClick('reply')}
-          title="Add reply"
-          aria-label="Add reply shortcut"
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"
-            stroke-linecap="round"
-          >
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-        </button>
-      </div>
-    </div>
-
-    <!-- Row 2: Commands -->
-    <div class="shortcut-row">
-      <span class="bar-label cmd-label">CMD</span>
-      <div class="shortcut-buttons">
-        {#each commands as shortcut (shortcut.id)}
-          <button
-            class="shortcut-btn command-btn"
-            onclick={(e) => handleClick(e, shortcut)}
-            title="{shortcut.label} (Shift+click: input only)"
-          >
-            {shortcut.label}
-          </button>
-        {/each}
-        <button
-          class="add-btn cmd-add"
-          onclick={() => onAddClick('command')}
-          title="Add command"
-          aria-label="Add command shortcut"
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"
-            stroke-linecap="round"
-          >
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-        </button>
-      </div>
-    </div>
-
-    <!-- Row 3: Number choices -->
-    {#if showNumberRow}
+  <div class="shortcut-bar" class:collapsed>
+    {#if !collapsed}
+      <!-- Row 1: Quick Reply -->
       <div class="shortcut-row">
-        <span class="bar-label choice-label">PICK</span>
+        <span class="bar-label reply-label">REPLY</span>
         <div class="shortcut-buttons">
-          {#each numberChoices as num (num)}
+          {#each replies as shortcut (shortcut.id)}
             <button
-              class="shortcut-btn choice-btn"
-              onclick={(e) => onSend(String(num), !e.shiftKey)}
-              title="{num} (Shift+click: input only)"
+              class="shortcut-btn reply-btn"
+              onclick={(e) => handleClick(e, shortcut)}
+              title="{shortcut.label} (Shift+click: input only)"
             >
-              {num}
+              {shortcut.label}
             </button>
           {/each}
+          <button
+            class="add-btn reply-add"
+            onclick={() => onAddClick('reply')}
+            title="Add reply"
+            aria-label="Add reply shortcut"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
         </div>
       </div>
+
+      <!-- Row 2: Commands -->
+      <div class="shortcut-row">
+        <span class="bar-label cmd-label">CMD</span>
+        <div class="shortcut-buttons">
+          {#each commands as shortcut (shortcut.id)}
+            <button
+              class="shortcut-btn command-btn"
+              onclick={(e) => handleClick(e, shortcut)}
+              title="{shortcut.label} (Shift+click: input only)"
+            >
+              {shortcut.label}
+            </button>
+          {/each}
+          <button
+            class="add-btn cmd-add"
+            onclick={() => onAddClick('command')}
+            title="Add command"
+            aria-label="Add command shortcut"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Row 3: Number choices -->
+      {#if showNumberRow}
+        <div class="shortcut-row">
+          <span class="bar-label choice-label">PICK</span>
+          <div class="shortcut-buttons">
+            {#each numberChoices as num (num)}
+              <button
+                class="shortcut-btn choice-btn"
+                onclick={(e) => onSend(String(num), !e.shiftKey)}
+                title="{num} (Shift+click: input only)"
+              >
+                {num}
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
     {/if}
 
-    <!-- Bar actions: settings button -->
+    <!-- Bar actions: collapse + settings buttons -->
     <div class="bar-actions">
+      <button
+        class="collapse-btn"
+        onclick={onToggleCollapse}
+        title={collapsed ? 'Restore shortcuts' : 'Minimize shortcuts'}
+        aria-label={collapsed ? 'Restore shortcuts' : 'Minimize shortcuts'}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          {#if collapsed}
+            <polyline points="6 15 12 9 18 15" />
+          {:else}
+            <line x1="5" y1="12" x2="19" y2="12" />
+          {/if}
+        </svg>
+      </button>
       <button
         class="settings-btn"
         onclick={onSettingsClick}
@@ -363,5 +399,46 @@
 
   .settings-btn:active {
     transform: scale(0.92);
+  }
+
+  /* Collapse button — mirrors settings-btn styling */
+  .collapse-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    color: var(--text-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition:
+      color var(--transition-fast),
+      background var(--transition-fast),
+      border-color var(--transition-fast);
+  }
+
+  .collapse-btn:hover {
+    color: var(--text-secondary);
+    background: rgba(125, 211, 252, 0.08);
+    border-color: var(--border-color);
+  }
+
+  .collapse-btn:active {
+    transform: scale(0.92);
+  }
+
+  /* Thin-bar variant when collapsed */
+  .shortcut-bar.collapsed {
+    padding-top: 2px;
+    padding-bottom: 2px;
+    padding-right: 8px;
+    min-height: 28px;
+  }
+
+  .shortcut-bar.collapsed .bar-actions {
+    top: 2px;
   }
 </style>

@@ -96,6 +96,7 @@
     paneId: string;
     terminalId: number;
     focused: boolean;
+    collapsed: boolean;
     name?: string;
     color?: PaneColor;
   }> {
@@ -105,6 +106,7 @@
       paneId: string;
       terminalId: number;
       focused: boolean;
+      collapsed: boolean;
       name?: string;
       color?: PaneColor;
     }> = [];
@@ -118,6 +120,7 @@
             paneId: pane.id,
             terminalId,
             focused: pane.id === focusedId,
+            collapsed: terminalStore.isCollapsed(pane.id),
             ...(pane.name !== undefined ? { name: pane.name } : {}),
             ...(pane.color !== undefined ? { color: pane.color } : {}),
           });
@@ -159,6 +162,7 @@
         closePane: (paneId) => terminalStore.closePane(paneId),
         indexOf: (paneId) => terminalStore.indexOf(paneId),
         resolveFocusedPaneId: () => focusedPaneStore.current(),
+        setPaneCollapsed: (paneId, value) => terminalStore.setCollapsed(paneId, value),
       });
       pushPaneMap();
       cliPaneMapUnsubTerminal = terminalStore.subscribe(pushPaneMap);

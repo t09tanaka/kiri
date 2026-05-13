@@ -37,8 +37,16 @@ pub enum Request {
         name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         color: Option<crate::PaneColor>,
+        #[serde(default)]
+        minimized: bool,
     },
     Close {
+        pane: PaneRef,
+    },
+    Minimize {
+        pane: PaneRef,
+    },
+    Restore {
         pane: PaneRef,
     },
 }
@@ -61,6 +69,8 @@ pub struct PaneInfo {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<crate::PaneColor>,
+    #[serde(default)]
+    pub minimized: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -94,6 +104,8 @@ pub enum Response {
         new_pane_index: u32,
     },
     Close,
+    Minimize,
+    Restore,
     Error {
         code: ErrorCode,
         message: String,
@@ -151,6 +163,7 @@ mod tests {
             direction: SplitDirection::Horizontal,
             name: None,
             color: None,
+            minimized: false,
         });
     }
 
@@ -193,6 +206,7 @@ mod tests {
             direction: SplitDirection::Horizontal,
             name: Some("build".into()),
             color: Some(crate::PaneColor::Coral),
+            minimized: false,
         });
     }
 
@@ -203,6 +217,7 @@ mod tests {
             direction: SplitDirection::Horizontal,
             name: None,
             color: None,
+            minimized: false,
         })
         .unwrap();
         let obj = v.as_object().unwrap();
@@ -223,6 +238,7 @@ mod tests {
                 direction: SplitDirection::Vertical,
                 name: None,
                 color: None,
+                minimized: false,
             }
         );
     }
@@ -240,6 +256,7 @@ mod tests {
             focused: true,
             name: Some("agent".into()),
             color: Some(crate::PaneColor::Iris),
+            minimized: false,
         };
         let s = serde_json::to_string(&info).unwrap();
         let back: PaneInfo = serde_json::from_str(&s).unwrap();
@@ -260,10 +277,102 @@ mod tests {
             focused: false,
             name: None,
             color: None,
+            minimized: false,
         };
         let v = serde_json::to_value(&info).unwrap();
         let obj = v.as_object().unwrap();
         assert!(!obj.contains_key("name"));
         assert!(!obj.contains_key("color"));
+    }
+
+    #[test]
+    fn pane_info_minimized_defaults_to_false_when_absent() {
+        let parsed: PaneInfo = serde_json::from_value(serde_json::json!({
+            "index": 0,
+            "id": "pane-1",
+            "terminal_id": 1,
+            "cwd": null,
+            "process_name": "zsh",
+            "running": false,
+            "memory_bytes": 0,
+            "focused": true
+        }))
+        .unwrap();
+        assert!(!parsed.minimized);
+    }
+
+    #[test]
+    fn pane_info_minimized_round_trips() {
+        let info = PaneInfo {
+            index: 0,
+            id: "pane-1".into(),
+            terminal_id: 1,
+            cwd: None,
+            process_name: "zsh".into(),
+            running: false,
+            memory_bytes: 0,
+            focused: true,
+            name: None,
+            color: None,
+            minimized: true,
+        };
+        roundtrip(&info);
+    }
+
+    #[test]
+    fn request_minimize_round_trip() {
+        roundtrip(&Request::Minimize {
+            pane: PaneRef::Index(2),
+        });
+    }
+
+    #[test]
+    fn request_restore_round_trip() {
+        roundtrip(&Request::Restore {
+            pane: PaneRef::focused(),
+        });
+    }
+
+    #[test]
+    fn response_minimize_serializes_as_unit() {
+        let v = serde_json::to_value(Response::Minimize).unwrap();
+        assert_eq!(v, serde_json::json!({ "type": "minimize" }));
+    }
+
+    #[test]
+    fn response_restore_serializes_as_unit() {
+        let v = serde_json::to_value(Response::Restore).unwrap();
+        assert_eq!(v, serde_json::json!({ "type": "restore" }));
+    }
+
+    #[test]
+    fn request_split_defaults_minimized_to_false() {
+        let parsed: Request = serde_json::from_value(serde_json::json!({
+            "type": "split",
+            "pane": 0,
+            "direction": "horizontal"
+        }))
+        .unwrap();
+        assert_eq!(
+            parsed,
+            Request::Split {
+                pane: PaneRef::Index(0),
+                direction: SplitDirection::Horizontal,
+                name: None,
+                color: None,
+                minimized: false,
+            }
+        );
+    }
+
+    #[test]
+    fn request_split_with_minimized_round_trip() {
+        roundtrip(&Request::Split {
+            pane: PaneRef::Index(1),
+            direction: SplitDirection::Vertical,
+            name: None,
+            color: None,
+            minimized: true,
+        });
     }
 }

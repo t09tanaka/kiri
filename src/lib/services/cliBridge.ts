@@ -17,16 +17,18 @@ export interface CliBridgeDeps {
   closePane: (paneId: string) => void;
   indexOf: (paneId: string) => number;
   resolveFocusedPaneId: () => string | null;
+  setPaneCollapsed: (paneId: string, value: boolean) => void;
 }
 
 const FOCUSED_SENTINEL = 'focused';
 
 /**
- * Subscribe to `cli:pane-split` / `cli:pane-close` events emitted by the
- * Rust cli_server, dispatch them to the local terminalStore, and reply
- * via the `cli_resolve_pending` Tauri command keyed by `requestId`.
+ * Subscribe to `cli:pane-split` / `cli:pane-close` / `cli:pane-minimize`
+ * events emitted by the Rust cli_server, dispatch them to the local
+ * terminalStore, and reply via the `cli_resolve_pending` Tauri command
+ * keyed by `requestId`.
  *
- * Returns a teardown that removes both event listeners. Call it from the
+ * Returns a teardown that removes all event listeners. Call it from the
  * caller's cleanup path (typically the App.svelte onMount return).
  */
 export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
@@ -49,14 +51,16 @@ export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
     direction: 'horizontal' | 'vertical';
     name?: string;
     color?: PaneColor;
+    minimized?: boolean;
   }>('cli:pane-split', (event) => {
-    const { requestId, paneId, direction, name, color } = event.payload;
+    const { requestId, paneId, direction, name, color, minimized } = event.payload;
     const target = resolveTarget(paneId);
     if (!target) {
       reply(requestId, { error: 'no_focused_pane' });
       return;
     }
     const newPaneId = deps.splitPane(target, direction, { name, color });
+    if (minimized) deps.setPaneCollapsed(newPaneId, true);
     reply(requestId, { newPaneId, newPaneIndex: deps.indexOf(newPaneId) });
   });
 
@@ -74,8 +78,24 @@ export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
     }
   );
 
+  const unlistenMinimize = await listen<{
+    requestId: string;
+    paneId: string;
+    minimized: boolean;
+  }>('cli:pane-minimize', (event) => {
+    const { requestId, paneId, minimized } = event.payload;
+    const target = resolveTarget(paneId);
+    if (!target) {
+      reply(requestId, { error: 'no_focused_pane' });
+      return;
+    }
+    deps.setPaneCollapsed(target, minimized);
+    reply(requestId, {});
+  });
+
   return () => {
     unlistenSplit();
     unlistenClose();
+    unlistenMinimize();
   };
 }
