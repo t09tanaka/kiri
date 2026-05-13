@@ -1,7 +1,7 @@
 ---
 name: kiri-cli
-description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close`, JSON output schema, pane addressing (index/id/focused), busy-pane detection, and known limitations.
-version: 0.1.0
+description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close/minimize/restore`, JSON output schema, pane addressing (index/id/focused), pane labels (`--name`/`--color`), busy-pane detection, and known limitations.
+version: 0.2.0
 ---
 
 # kiri CLI skill
