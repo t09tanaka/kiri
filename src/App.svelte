@@ -134,7 +134,7 @@
       await windowService.registerWindow(windowLabel, path);
       cliBridgeDispose = await startCliBridge({
         label: windowLabel,
-        splitPane: (paneId, direction) => terminalStore.splitPane(paneId, direction),
+        splitPane: (paneId, direction, opts) => terminalStore.splitPane(paneId, direction, opts),
         closePane: (paneId) => terminalStore.closePane(paneId),
         indexOf: (paneId) => terminalStore.indexOf(paneId),
         resolveFocusedPaneId: () => focusedPaneStore.current(),

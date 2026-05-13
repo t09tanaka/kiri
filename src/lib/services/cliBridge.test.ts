@@ -39,7 +39,10 @@ describe('cliBridge', () => {
     });
     await Promise.resolve();
 
-    expect(splitPane).toHaveBeenCalledWith('p0', 'horizontal');
+    expect(splitPane).toHaveBeenCalledWith('p0', 'horizontal', {
+      name: undefined,
+      color: undefined,
+    });
     expect(invokeMock).toHaveBeenCalledWith('cli_resolve_pending', {
       label: 'window-1',
       requestId: 'r1',
@@ -85,7 +88,10 @@ describe('cliBridge', () => {
     });
     await Promise.resolve();
 
-    expect(splitPane).toHaveBeenCalledWith('fp', 'vertical');
+    expect(splitPane).toHaveBeenCalledWith('fp', 'vertical', {
+      name: undefined,
+      color: undefined,
+    });
   });
 
   it('on cli:pane-close with focused but no focused pane, replies with error', async () => {
@@ -131,6 +137,62 @@ describe('cliBridge', () => {
       label: 'window-1',
       requestId: 'r3',
       payload: { error: 'no_focused_pane' },
+    });
+  });
+
+  it('on cli:pane-split with name/color, passes them to splitPane', async () => {
+    const splitPane = vi.fn(() => 'new-pane-id');
+    const indexOf = vi.fn(() => 2);
+
+    await startCliBridge({
+      label: 'window-1',
+      splitPane,
+      closePane: vi.fn(),
+      indexOf,
+      resolveFocusedPaneId: () => 'focused-id',
+    });
+
+    listeners.get('cli:pane-split')!({
+      payload: {
+        requestId: 'r4',
+        paneId: 'p0',
+        direction: 'horizontal',
+        name: 'build',
+        color: 'jade',
+      },
+    });
+    await Promise.resolve();
+
+    expect(splitPane).toHaveBeenCalledWith('p0', 'horizontal', {
+      name: 'build',
+      color: 'jade',
+    });
+    expect(invokeMock).toHaveBeenCalledWith('cli_resolve_pending', {
+      label: 'window-1',
+      requestId: 'r4',
+      payload: { newPaneId: 'new-pane-id', newPaneIndex: 2 },
+    });
+  });
+
+  it('on cli:pane-split with neither name nor color, omits opts cleanly', async () => {
+    const splitPane = vi.fn(() => 'new-pane-id');
+
+    await startCliBridge({
+      label: 'window-1',
+      splitPane,
+      closePane: vi.fn(),
+      indexOf: () => 0,
+      resolveFocusedPaneId: () => 'focused-id',
+    });
+
+    listeners.get('cli:pane-split')!({
+      payload: { requestId: 'r5', paneId: 'p0', direction: 'vertical' },
+    });
+    await Promise.resolve();
+
+    expect(splitPane).toHaveBeenCalledWith('p0', 'vertical', {
+      name: undefined,
+      color: undefined,
     });
   });
 });
