@@ -44,7 +44,7 @@ async fn ls(ctx: &DispatchContext) -> Response {
             running,
             memory_bytes,
             focused: e.focused,
-            minimized: false, // TODO(task-5): read e.collapsed once Task 4 adds the field
+            minimized: e.collapsed,
         });
     }
     Response::Ls { panes }
