@@ -68,13 +68,15 @@ Response shape:
       "running": false,
       "memory_bytes": 4096000,
       "focused": true,
-      "minimized": false
+      "minimized": false,
+      "name": "build",
+      "color": "coral"
     }
   ]
 }
 ```
 
-`running: true` means a foreground process is active (not the shell itself). `focused: true` marks the pane the user is currently viewing.
+`running: true` means a foreground process is active (not the shell itself). `focused: true` marks the pane the user is currently viewing. `name` and `color` are **omitted entirely** when the pane was created without label flags — do not expect `null`.
 
 ---
 
@@ -187,7 +189,7 @@ Response shape:
 
 ---
 
-### `kiri term split [--pane X] [--dir h|v] [--minimized]`
+### `kiri term split [--pane X] [--dir h|v] [--name STR] [--color COLOR] [--minimized]`
 
 Split the pane. `--dir h` (default) is horizontal; `--dir v` is vertical.
 `--minimized` creates the new pane with its shortcut bar already
@@ -199,6 +201,8 @@ kiri term split
 kiri term split --dir v
 kiri term split --pane pane-1 --dir h
 kiri term split --dir v --minimized
+kiri term split --name build --color coral
+kiri term split --name agent --color iris --minimized
 ```
 
 Response shape:
@@ -210,6 +214,18 @@ Response shape:
   "new_pane_index": 2
 }
 ```
+
+**Label flags** (both optional, both apply only at split time — there is no
+way to rename or recolor an existing pane):
+
+- `--name STR` — 1–32 characters, no control characters. Shown as text
+  in the pane's header.
+- `--color COLOR` — one of `sky | iris | jade | amber | coral | rose`.
+  Shown as a colored dot to the left of the name. Anything else is
+  rejected by the CLI.
+
+Either, both, or neither may be supplied. A pane created without these
+flags has no header label.
 
 ---
 
@@ -330,7 +346,9 @@ Key error codes (snake_case):
       "running": true,
       "memory_bytes": 52428800,
       "focused": false,
-      "minimized": true
+      "minimized": true,
+      "name": "agent",
+      "color": "iris"
     }
   ]
 }

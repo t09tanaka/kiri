@@ -1,6 +1,6 @@
 //! Human-readable rendering for `--pretty` output.
 
-use kiri_cli_proto::{PaneInfo, Response};
+use kiri_cli_proto::{PaneColor, PaneInfo, Response};
 
 pub fn render_response_pretty(resp: &Response) {
     match resp {
@@ -67,21 +67,36 @@ fn render_ls(panes: &[PaneInfo]) {
         return;
     }
     println!(
-        "{:<5} {:<14} {:<32} {:<16} {:<7} MEM",
-        "INDEX", "ID", "CWD", "PROCESS", "RUNNING"
+        "{:<5} {:<14} {:<10} {:<6} {:<32} {:<16} {:<7} MEM",
+        "INDEX", "ID", "NAME", "COLOR", "CWD", "PROCESS", "RUNNING"
     );
     for p in panes {
         let focused = if p.focused { " (focused)" } else { "" };
+        let name = p.name.as_deref().unwrap_or("-");
+        let color = p.color.as_ref().map(color_label).unwrap_or("-");
         println!(
-            "{:<5} {:<14} {:<32} {:<16} {:<7} {}{}",
+            "{:<5} {:<14} {:<10} {:<6} {:<32} {:<16} {:<7} {}{}",
             p.index,
             p.id,
+            name,
+            color,
             p.cwd.clone().unwrap_or_default(),
             p.process_name,
             if p.running { "yes" } else { "no" },
             human_bytes(p.memory_bytes),
             focused
         );
+    }
+}
+
+fn color_label(c: &PaneColor) -> &'static str {
+    match c {
+        PaneColor::Sky => "sky",
+        PaneColor::Iris => "iris",
+        PaneColor::Jade => "jade",
+        PaneColor::Amber => "amber",
+        PaneColor::Coral => "coral",
+        PaneColor::Rose => "rose",
     }
 }
 
@@ -107,5 +122,15 @@ mod tests {
         assert_eq!(human_bytes(1024), "1KB");
         assert_eq!(human_bytes(1024 * 1024), "1MB");
         assert_eq!(human_bytes(1024 * 1024 * 1024), "1GB");
+    }
+
+    #[test]
+    fn color_label_covers_all_variants() {
+        assert_eq!(color_label(&PaneColor::Sky), "sky");
+        assert_eq!(color_label(&PaneColor::Iris), "iris");
+        assert_eq!(color_label(&PaneColor::Jade), "jade");
+        assert_eq!(color_label(&PaneColor::Amber), "amber");
+        assert_eq!(color_label(&PaneColor::Coral), "coral");
+        assert_eq!(color_label(&PaneColor::Rose), "rose");
     }
 }
