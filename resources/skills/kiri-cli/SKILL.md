@@ -67,7 +67,8 @@ Response shape:
       "process_name": "zsh",
       "running": false,
       "memory_bytes": 4096000,
-      "focused": true
+      "focused": true,
+      "minimized": false
     }
   ]
 }
@@ -186,14 +187,18 @@ Response shape:
 
 ---
 
-### `kiri term split [--pane X] [--dir h|v]`
+### `kiri term split [--pane X] [--dir h|v] [--minimized]`
 
 Split the pane. `--dir h` (default) is horizontal; `--dir v` is vertical.
+`--minimized` creates the new pane with its shortcut bar already
+collapsed — useful when the agent is spawning a side pane for its own
+use and does not want to push the user's primary view down.
 
 ```bash
 kiri term split
 kiri term split --dir v
 kiri term split --pane pane-1 --dir h
+kiri term split --dir v --minimized
 ```
 
 Response shape:
@@ -204,6 +209,40 @@ Response shape:
   "new_pane_id": "pane-4",
   "new_pane_index": 2
 }
+```
+
+---
+
+### `kiri term minimize [--pane X]`
+
+Collapse the pane's shortcut bar to a thin strip with only restore and
+settings buttons. The PTY itself is untouched — only the helper UI bar.
+
+```bash
+kiri term minimize
+kiri term minimize --pane pane-2
+```
+
+Response shape:
+
+```json
+{ "type": "minimize" }
+```
+
+---
+
+### `kiri term restore [--pane X]`
+
+Expand a previously minimized shortcut bar back to its full layout.
+
+```bash
+kiri term restore --pane pane-2
+```
+
+Response shape:
+
+```json
+{ "type": "restore" }
 ```
 
 ---
@@ -279,7 +318,8 @@ Key error codes (snake_case):
       "process_name": "zsh",
       "running": false,
       "memory_bytes": 5242880,
-      "focused": true
+      "focused": true,
+      "minimized": false
     },
     {
       "index": 1,
@@ -289,7 +329,8 @@ Key error codes (snake_case):
       "process_name": "npm",
       "running": true,
       "memory_bytes": 52428800,
-      "focused": false
+      "focused": false,
+      "minimized": true
     }
   ]
 }
@@ -327,6 +368,12 @@ Key error codes (snake_case):
 - Use `read --since CURSOR` to incrementally collect output without re-reading what you already have.
 - On `pane_busy`: (a) `cancel` if you own the process, (b) `split` for a clean pane, (c) pick a pane from `ls` with `running: false`.
 - Surface `lines_omitted > 0` from `run` to the user — important context may be truncated. Re-run with `--full` if needed.
+- When spawning a new pane via `kiri term split` for the agent's own
+  use (background dev server, log tail, parallel run), prefer
+  `--minimized` so the new pane comes up with its shortcut bar
+  collapsed. This keeps the user's primary view from being pushed
+  down. The user (or `kiri term restore --pane <id>`) can expand it
+  at any time.
 
 ## 9. Known limitations (v1)
 
