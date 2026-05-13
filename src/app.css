@@ -46,6 +46,14 @@
   --accent3-color: #fcd34d;
   --accent3-glow: rgba(252, 211, 77, 0.2);
 
+  /* Pane identification colors (kiri term split --color) */
+  --pane-color-sky: #7dd3fc;
+  --pane-color-iris: #c4b5fd;
+  --pane-color-jade: #86efac;
+  --pane-color-amber: #fcd34d;
+  --pane-color-coral: #fb923c;
+  --pane-color-rose: #f9a8d4;
+
   /* Gradient colors - gentle mist transitions */
   --gradient-start: #7dd3fc;
   --gradient-mid: #a5b4fc;
