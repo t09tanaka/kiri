@@ -1,6 +1,6 @@
 ---
 name: kiri-cli
-description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close/minimize/restore`, JSON output schema, pane addressing (index/id/focused), pane labels (`--name`/`--color`), busy-pane detection, and known limitations.
+description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close/minimize/restore`, JSON output schema, pane addressing (index/id/focused), pane labels (`--name`/`--color`), spawning collapsed side panes (`--minimized`), busy-pane detection, and known limitations.
 version: 0.2.0
 ---
 
@@ -192,9 +192,6 @@ Response shape:
 ### `kiri term split [--pane X] [--dir h|v] [--name STR] [--color COLOR] [--minimized]`
 
 Split the pane. `--dir h` (default) is horizontal; `--dir v` is vertical.
-`--minimized` creates the new pane with its shortcut bar already
-collapsed — useful when the agent is spawning a side pane for its own
-use and does not want to push the user's primary view down.
 
 ```bash
 kiri term split
@@ -226,6 +223,13 @@ way to rename or recolor an existing pane):
 
 Either, both, or neither may be supplied. A pane created without these
 flags has no header label.
+
+**Minimize flag** (optional, only at split time):
+
+- `--minimized` — create the new pane with its shortcut bar already
+  collapsed. Useful when the agent is spawning a side pane for its own
+  use and does not want to push the user's primary view down. The user
+  (or `kiri term restore --pane <id>`) can expand it later.
 
 ---
 
