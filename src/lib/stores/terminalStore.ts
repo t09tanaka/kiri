@@ -1,10 +1,14 @@
 import { writable } from 'svelte/store';
 
+export type PaneColor = 'sky' | 'iris' | 'jade' | 'amber' | 'coral' | 'rose';
+
 export interface TerminalPaneLeaf {
   type: 'terminal';
   id: string;
   terminalId: number | null;
   cwd?: string | null;
+  name?: string;
+  color?: PaneColor;
 }
 
 export interface TerminalPaneSplit {
@@ -57,7 +61,8 @@ function splitPaneInTree(
   pane: TerminalPane,
   targetPaneId: string,
   direction: 'horizontal' | 'vertical',
-  newPaneId: string
+  newPaneId: string,
+  newPaneOpts: { name?: string; color?: PaneColor } = {}
 ): TerminalPane {
   if (pane.type === 'terminal') {
     if (pane.id === targetPaneId) {
@@ -65,7 +70,7 @@ function splitPaneInTree(
         type: 'split',
         id: generateSplitId(),
         direction,
-        children: [pane, { type: 'terminal', id: newPaneId, terminalId: null }],
+        children: [pane, { type: 'terminal', id: newPaneId, terminalId: null, ...newPaneOpts }],
         sizes: [50, 50],
       };
     }
@@ -83,6 +88,7 @@ function splitPaneInTree(
         type: 'terminal',
         id: newPaneId,
         terminalId: null,
+        ...newPaneOpts,
       });
 
       const equalSize = 100 / newChildren.length;
@@ -99,7 +105,7 @@ function splitPaneInTree(
   return {
     ...pane,
     children: pane.children.map((child) =>
-      splitPaneInTree(child, targetPaneId, direction, newPaneId)
+      splitPaneInTree(child, targetPaneId, direction, newPaneId, newPaneOpts)
     ),
   };
 }
@@ -244,12 +250,16 @@ function createTerminalStore() {
       });
     },
 
-    splitPane: (paneId: string, direction: 'horizontal' | 'vertical'): string => {
+    splitPane: (
+      paneId: string,
+      direction: 'horizontal' | 'vertical',
+      opts: { name?: string; color?: PaneColor } = {}
+    ): string => {
       const newPaneId = generatePaneId();
       update((state) => {
         if (!state.rootPane) return state;
         return {
-          rootPane: splitPaneInTree(state.rootPane, paneId, direction, newPaneId),
+          rootPane: splitPaneInTree(state.rootPane, paneId, direction, newPaneId, opts),
         };
       });
       return newPaneId;

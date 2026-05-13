@@ -9,6 +9,8 @@ import {
   getAllTerminalIds,
   getPaneTerminalIdMap,
   type TerminalPane,
+  type TerminalPaneLeaf,
+  type TerminalPaneSplit,
 } from './terminalStore';
 
 describe('terminalStore', () => {
@@ -97,6 +99,50 @@ describe('terminalStore', () => {
         expect(root.children).toHaveLength(3);
         expect(root.sizes.every((s) => Math.abs(s - 100 / 3) < 0.01)).toBe(true);
       }
+    });
+
+    it('attaches name to the new pane when opts.name is given', () => {
+      terminalStore.init();
+      const state1 = get(terminalStore);
+      const rootPaneId = (state1.rootPane as TerminalPaneLeaf).id;
+      const newId = terminalStore.splitPane(rootPaneId, 'vertical', { name: 'build' });
+      const state2 = get(terminalStore);
+      const ids = getAllPaneIds(state2.rootPane!);
+      expect(ids).toContain(newId);
+      const split = state2.rootPane as TerminalPaneSplit;
+      const newLeaf = split.children.find(
+        (c) => c.type === 'terminal' && c.id === newId
+      ) as TerminalPaneLeaf;
+      expect(newLeaf.name).toBe('build');
+      expect(newLeaf.color).toBeUndefined();
+    });
+
+    it('attaches color to the new pane when opts.color is given', () => {
+      terminalStore.init();
+      const state1 = get(terminalStore);
+      const rootPaneId = (state1.rootPane as TerminalPaneLeaf).id;
+      const newId = terminalStore.splitPane(rootPaneId, 'vertical', { color: 'jade' });
+      const state2 = get(terminalStore);
+      const split = state2.rootPane as TerminalPaneSplit;
+      const newLeaf = split.children.find(
+        (c) => c.type === 'terminal' && c.id === newId
+      ) as TerminalPaneLeaf;
+      expect(newLeaf.color).toBe('jade');
+      expect(newLeaf.name).toBeUndefined();
+    });
+
+    it('leaves the original pane unlabeled even when child has name/color', () => {
+      terminalStore.init();
+      const state1 = get(terminalStore);
+      const rootPaneId = (state1.rootPane as TerminalPaneLeaf).id;
+      terminalStore.splitPane(rootPaneId, 'vertical', { name: 'build', color: 'coral' });
+      const state2 = get(terminalStore);
+      const split = state2.rootPane as TerminalPaneSplit;
+      const original = split.children.find(
+        (c) => c.type === 'terminal' && c.id === rootPaneId
+      ) as TerminalPaneLeaf;
+      expect(original.name).toBeUndefined();
+      expect(original.color).toBeUndefined();
     });
   });
 
