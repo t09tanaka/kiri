@@ -1,7 +1,7 @@
 ---
 name: kiri-cli
-description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close/minimize/restore`, JSON output schema, pane addressing (index/id/focused), pane labels (`--name`/`--color`), spawning collapsed side panes (`--minimized`), busy-pane detection, and known limitations.
-version: 0.2.0
+description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close/minimize/restore`, JSON output schema, pane addressing (index/id/focused), the default labeling pattern for `split` (`--name`/`--color`, plus `--minimized` for agent-spawned panes), busy-pane detection, and known limitations.
+version: 0.3.0
 ---
 
 # kiri CLI skill
@@ -193,13 +193,19 @@ Response shape:
 
 Split the pane. `--dir h` (default) is horizontal; `--dir v` is vertical.
 
+The **default form for any agent-initiated split** is:
+
 ```bash
-kiri term split
-kiri term split --dir v
-kiri term split --pane pane-1 --dir h
-kiri term split --dir v --minimized
-kiri term split --name build --color coral
-kiri term split --name agent --color iris --minimized
+# Default — use this unless you have a specific reason not to
+kiri term split --dir v --name <purpose> --color <color> --minimized
+```
+
+Other shapes (use only when the default does not fit):
+
+```bash
+kiri term split --name build --color coral             # split the user will watch — drop --minimized
+kiri term split --pane pane-1 --dir h                  # one-off ephemeral pane that will close in seconds
+kiri term split                                        # interactive use only; agents should not emit this form
 ```
 
 Response shape:
@@ -212,24 +218,33 @@ Response shape:
 }
 ```
 
-**Label flags** (both optional, both apply only at split time — there is no
-way to rename or recolor an existing pane):
+**Label flags — set both on every agent-initiated split** unless the pane
+is genuinely throwaway (closes within a minute and never appears in `ls`
+output the user will read). Both apply only at split time — there is no
+way to rename or recolor an existing pane.
 
 - `--name STR` — 1–32 characters, no control characters. Shown as text
-  in the pane's header.
+  in the pane's header. Pick a short, lowercase, purpose-revealing word
+  (e.g. `dev`, `test`, `build`, `lint-fix`, `pg-restore`,
+  `claude-sub`).
 - `--color COLOR` — one of `sky | iris | jade | amber | coral | rose`.
   Shown as a colored dot to the left of the name. Anything else is
-  rejected by the CLI.
+  rejected by the CLI. **There is no canonical color-to-purpose
+  mapping** — pick any of the 6 and just keep different concurrent
+  panes on different colors so they're visually separable.
 
-Either, both, or neither may be supplied. A pane created without these
-flags has no header label.
+Without these flags the pane is anonymous in the header and in `ls`
+output — neither the user nor your future self can tell two panes apart.
 
-**Minimize flag** (optional, only at split time):
+**Minimize flag — default-on for agent-spawned side panes:**
 
 - `--minimized` — create the new pane with its shortcut bar already
-  collapsed. Useful when the agent is spawning a side pane for its own
-  use and does not want to push the user's primary view down. The user
-  (or `kiri term restore --pane <id>`) can expand it later.
+  collapsed. Default for any pane the agent spawns for its own use
+  (background dev server, log tail, parallel sub-agent, long-running
+  job). Keeps the user's primary view from being pushed down. The user
+  (or `kiri term restore --pane <id>`) can expand it later. Drop this
+  flag only when the user explicitly wants to look at the new pane
+  immediately.
 
 ---
 
@@ -390,12 +405,19 @@ Key error codes (snake_case):
 - Use `read --since CURSOR` to incrementally collect output without re-reading what you already have.
 - On `pane_busy`: (a) `cancel` if you own the process, (b) `split` for a clean pane, (c) pick a pane from `ls` with `running: false`.
 - Surface `lines_omitted > 0` from `run` to the user — important context may be truncated. Re-run with `--full` if needed.
-- When spawning a new pane via `kiri term split` for the agent's own
-  use (background dev server, log tail, parallel run), prefer
-  `--minimized` so the new pane comes up with its shortcut bar
-  collapsed. This keeps the user's primary view from being pushed
-  down. The user (or `kiri term restore --pane <id>`) can expand it
-  at any time.
+- **Every agent-initiated `kiri term split` should pass `--name`,
+  `--color`, and (for side panes the agent owns) `--minimized` — all
+  three together.** This is the default; bare `kiri term split` is for
+  interactive human use, not agents. Without `--name`/`--color` the new
+  pane is anonymous in `ls` output and the header, so neither the user
+  nor your future self can tell it apart from other panes. Without
+  `--minimized` agent-spawned side panes push the user's primary view
+  down. Pick `--name` as a short purpose word (`dev`, `test`,
+  `pg-restore`) and pick any of `sky | iris | jade | amber | coral |
+  rose` for `--color`, just keeping different concurrent panes on
+  different colors. The only time to skip these is a truly ephemeral
+  pane (closes within a minute) or a pane the user explicitly wants to
+  watch immediately (then drop `--minimized`).
 
 ## 9. Known limitations (v1)
 
@@ -421,8 +443,8 @@ kiri term run git status
 kiri term run --pane pane-2 npm test
 # => { "type": "error", "code": "pane_busy", ... }
 
-# 4. Split pane-1 to get a clean pane
-kiri term split --pane pane-1
+# 4. Split pane-1 to get a clean pane (default labeled form)
+kiri term split --pane pane-1 --dir v --name test --color jade --minimized
 # => { "type": "split", "new_pane_id": "pane-3", "new_pane_index": 2 }
 
 # 5. Run tests in the new clean pane
