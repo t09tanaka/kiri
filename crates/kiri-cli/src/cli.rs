@@ -147,6 +147,8 @@ pub enum TermCmd {
     Minimize(PaneOpt),
     /// Expand a minimized shortcut bar back to its full layout.
     Restore(PaneOpt),
+    /// Rename and/or recolor an existing pane (including the focused one).
+    SetLabel(SetLabelArgs),
     /// Exchange named messages between this pane and its parent / children.
     #[command(subcommand)]
     Signal(SignalCmd),
@@ -274,6 +276,31 @@ pub struct SignalListArgs {
     /// Pane whose queue to inspect (defaults to the focused pane).
     #[arg(long, value_name = "I_OR_ID")]
     pub pane: Option<String>,
+}
+
+#[derive(Args, Debug)]
+pub struct SetLabelArgs {
+    #[command(flatten)]
+    pub pane: PaneOpt,
+    /// New label text shown in the header (1–32 chars, no control characters).
+    #[arg(long, value_parser = parse_pane_name, conflicts_with = "clear_name")]
+    pub name: Option<String>,
+    /// Remove an existing label, leaving the pane unnamed.
+    #[arg(long)]
+    pub clear_name: bool,
+    /// New color shown in the header.
+    #[arg(long, value_enum, conflicts_with = "clear_color")]
+    pub color: Option<PaneColorArg>,
+    /// Remove an existing color, leaving the pane uncolored.
+    #[arg(long)]
+    pub clear_color: bool,
+}
+
+impl SetLabelArgs {
+    /// True when none of `--name`, `--clear-name`, `--color`, `--clear-color` were given.
+    pub fn is_empty_update(&self) -> bool {
+        self.name.is_none() && !self.clear_name && self.color.is_none() && !self.clear_color
+    }
 }
 
 /// Translate a `--pane` flag into a `PaneRef`.
@@ -632,5 +659,81 @@ mod tests {
             }
             _ => panic!("expected signal list"),
         }
+    }
+
+    #[test]
+    fn parse_set_label_with_name_and_color() {
+        let cli = Cli::try_parse_from([
+            "kiri", "term", "set-label", "--pane", "2", "--name", "build", "--color", "coral",
+        ])
+        .unwrap();
+        let Top::Term(TermCmd::SetLabel(args)) = cli.command else {
+            panic!("expected set-label");
+        };
+        assert_eq!(parse_pane(&args.pane), PaneRef::Index(2));
+        assert_eq!(args.name.as_deref(), Some("build"));
+        assert_eq!(args.color, Some(PaneColorArg::Coral));
+        assert!(!args.clear_name);
+        assert!(!args.clear_color);
+        assert!(!args.is_empty_update());
+    }
+
+    #[test]
+    fn parse_set_label_only_clear_name() {
+        let cli =
+            Cli::try_parse_from(["kiri", "term", "set-label", "--clear-name"]).unwrap();
+        let Top::Term(TermCmd::SetLabel(args)) = cli.command else {
+            panic!("expected set-label");
+        };
+        assert!(args.clear_name);
+        assert!(args.name.is_none());
+        // Targets focused pane by default.
+        assert_eq!(parse_pane(&args.pane), PaneRef::focused());
+        assert!(!args.is_empty_update());
+    }
+
+    #[test]
+    fn parse_set_label_only_clear_color() {
+        let cli =
+            Cli::try_parse_from(["kiri", "term", "set-label", "--clear-color"]).unwrap();
+        let Top::Term(TermCmd::SetLabel(args)) = cli.command else {
+            panic!("expected set-label");
+        };
+        assert!(args.clear_color);
+        assert!(args.color.is_none());
+        assert!(!args.is_empty_update());
+    }
+
+    #[test]
+    fn set_label_rejects_name_with_clear_name() {
+        let err = Cli::try_parse_from([
+            "kiri", "term", "set-label", "--name", "x", "--clear-name",
+        ]);
+        assert!(err.is_err(), "should reject conflicting --name + --clear-name");
+    }
+
+    #[test]
+    fn set_label_rejects_color_with_clear_color() {
+        let err = Cli::try_parse_from([
+            "kiri", "term", "set-label", "--color", "sky", "--clear-color",
+        ]);
+        assert!(err.is_err(), "should reject conflicting --color + --clear-color");
+    }
+
+    #[test]
+    fn set_label_rejects_empty_name() {
+        let err = Cli::try_parse_from(["kiri", "term", "set-label", "--name", ""]);
+        assert!(err.is_err(), "should reject empty name");
+    }
+
+    #[test]
+    fn set_label_no_flags_is_empty_update() {
+        let cli = Cli::try_parse_from(["kiri", "term", "set-label"]).unwrap();
+        let Top::Term(TermCmd::SetLabel(args)) = cli.command else {
+            panic!("expected set-label");
+        };
+        // Clap doesn't enforce "at least one flag" here — main.rs and the
+        // backend handler are the ones who reject this as InvalidArgument.
+        assert!(args.is_empty_update());
     }
 }

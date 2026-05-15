@@ -146,6 +146,91 @@ describe('terminalStore', () => {
     });
   });
 
+  describe('setPaneLabel', () => {
+    it('sets name on the matching leaf', () => {
+      terminalStore.init();
+      const leaf = get(terminalStore).rootPane as TerminalPaneLeaf;
+      terminalStore.setPaneLabel(leaf.id, { name: 'agent' });
+      const next = get(terminalStore).rootPane as TerminalPaneLeaf;
+      expect(next.name).toBe('agent');
+      expect(next.color).toBeUndefined();
+    });
+
+    it('sets color on the matching leaf', () => {
+      terminalStore.init();
+      const leaf = get(terminalStore).rootPane as TerminalPaneLeaf;
+      terminalStore.setPaneLabel(leaf.id, { color: 'jade' });
+      const next = get(terminalStore).rootPane as TerminalPaneLeaf;
+      expect(next.color).toBe('jade');
+      expect(next.name).toBeUndefined();
+    });
+
+    it('updates both name and color in one call', () => {
+      terminalStore.init();
+      const leaf = get(terminalStore).rootPane as TerminalPaneLeaf;
+      terminalStore.setPaneLabel(leaf.id, { name: 'build', color: 'coral' });
+      const next = get(terminalStore).rootPane as TerminalPaneLeaf;
+      expect(next.name).toBe('build');
+      expect(next.color).toBe('coral');
+    });
+
+    it('clears name when passed null', () => {
+      terminalStore.init();
+      const leaf = get(terminalStore).rootPane as TerminalPaneLeaf;
+      terminalStore.setPaneLabel(leaf.id, { name: 'build', color: 'coral' });
+      terminalStore.setPaneLabel(leaf.id, { name: null });
+      const next = get(terminalStore).rootPane as TerminalPaneLeaf;
+      expect(next.name).toBeUndefined();
+      // Color is left alone when its key is absent.
+      expect(next.color).toBe('coral');
+    });
+
+    it('clears color when passed null', () => {
+      terminalStore.init();
+      const leaf = get(terminalStore).rootPane as TerminalPaneLeaf;
+      terminalStore.setPaneLabel(leaf.id, { name: 'build', color: 'coral' });
+      terminalStore.setPaneLabel(leaf.id, { color: null });
+      const next = get(terminalStore).rootPane as TerminalPaneLeaf;
+      expect(next.color).toBeUndefined();
+      expect(next.name).toBe('build');
+    });
+
+    it('only touches the matching leaf inside a split', () => {
+      terminalStore.init();
+      const rootId = (get(terminalStore).rootPane as TerminalPaneLeaf).id;
+      const newId = terminalStore.splitPane(rootId, 'vertical', { name: 'right' });
+      terminalStore.setPaneLabel(rootId, { name: 'left', color: 'sky' });
+
+      const split = get(terminalStore).rootPane as TerminalPaneSplit;
+      const left = split.children.find((c) => c.type === 'terminal' && c.id === rootId) as
+        | TerminalPaneLeaf
+        | undefined;
+      const right = split.children.find((c) => c.type === 'terminal' && c.id === newId) as
+        | TerminalPaneLeaf
+        | undefined;
+      expect(left?.name).toBe('left');
+      expect(left?.color).toBe('sky');
+      expect(right?.name).toBe('right');
+      expect(right?.color).toBeUndefined();
+    });
+
+    it('is a no-op when the paneId does not match any leaf', () => {
+      terminalStore.init();
+      const leaf = get(terminalStore).rootPane as TerminalPaneLeaf;
+      terminalStore.setPaneLabel('nonexistent-pane-id', { name: 'x', color: 'rose' });
+      const next = get(terminalStore).rootPane as TerminalPaneLeaf;
+      expect(next.id).toBe(leaf.id);
+      expect(next.name).toBeUndefined();
+      expect(next.color).toBeUndefined();
+    });
+
+    it('is a no-op when rootPane is null', () => {
+      // No init() call — rootPane stays null.
+      terminalStore.setPaneLabel('anything', { name: 'x' });
+      expect(get(terminalStore).rootPane).toBeNull();
+    });
+  });
+
   describe('closePane', () => {
     it('should remove the pane and collapse the split when only one child remains', () => {
       terminalStore.init();

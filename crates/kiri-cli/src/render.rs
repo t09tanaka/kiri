@@ -55,6 +55,7 @@ pub fn render_response_pretty(resp: &Response) {
         Response::Close => println!("ok"),
         Response::Minimize => println!("ok"),
         Response::Restore => println!("ok"),
+        Response::SetLabel => println!("ok"),
         Response::WhoAmI {
             window_label,
             project_path,

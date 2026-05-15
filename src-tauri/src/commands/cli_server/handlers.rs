@@ -32,6 +32,13 @@ pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
         Request::Minimize { pane } => vec![set_collapsed(ctx, pane, true).await],
         Request::Restore { pane } => vec![set_collapsed(ctx, pane, false).await],
         Request::Follow { pane } => follow(ctx, pane).await,
+        Request::SetLabel {
+            pane,
+            set_name,
+            clear_name,
+            set_color,
+            clear_color,
+        } => vec![set_label(ctx, pane, set_name, clear_name, set_color, clear_color).await],
         Request::SignalSend {
             from,
             target,
@@ -534,6 +541,93 @@ async fn close_pane(ctx: &DispatchContext, p: PaneRef) -> Response {
     }
 }
 
+async fn set_label(
+    ctx: &DispatchContext,
+    p: PaneRef,
+    set_name: Option<String>,
+    clear_name: bool,
+    set_color: Option<kiri_cli_proto::PaneColor>,
+    clear_color: bool,
+) -> Response {
+    // Defence-in-depth: the CLI already enforces these, but raw JSON clients
+    // bypass clap and must be rejected at the server boundary too.
+    if set_name.is_some() && clear_name {
+        return Response::Error {
+            code: ErrorCode::InvalidArgument,
+            message: "set_name and clear_name are mutually exclusive".into(),
+            detail: None,
+        };
+    }
+    if set_color.is_some() && clear_color {
+        return Response::Error {
+            code: ErrorCode::InvalidArgument,
+            message: "set_color and clear_color are mutually exclusive".into(),
+            detail: None,
+        };
+    }
+    if set_name.is_none() && !clear_name && set_color.is_none() && !clear_color {
+        return Response::Error {
+            code: ErrorCode::InvalidArgument,
+            message: "set_label requires at least one of set_name, clear_name, set_color, clear_color".into(),
+            detail: None,
+        };
+    }
+    if let Some(n) = set_name.as_deref() {
+        if let Err(reason) = validate_pane_name(n) {
+            return Response::Error {
+                code: ErrorCode::InvalidArgument,
+                message: reason.into(),
+                detail: None,
+            };
+        }
+    }
+
+    let Some(pane) = ctx.pane_map.resolve(&p) else {
+        return pane_not_found(p);
+    };
+    let Some(app) = ctx.app.as_ref() else {
+        return internal("no Tauri AppHandle bound to dispatch context");
+    };
+    let request_id = format!("set-label-{}", uuid::Uuid::new_v4());
+    let rx = ctx.pending.register(request_id.clone());
+    let payload = serde_json::json!({
+        "requestId": request_id,
+        "paneId": pane.pane_id,
+        "setName": set_name,
+        "clearName": clear_name,
+        "setColor": set_color,
+        "clearColor": clear_color,
+    });
+    if let Err(e) = app.emit_to(ctx.label.as_str(), "cli:pane-set-label", payload) {
+        ctx.pending.cancel(&request_id);
+        return Response::Error {
+            code: ErrorCode::FrontendUnresponsive,
+            message: format!("emit failed: {e}"),
+            detail: None,
+        };
+    }
+    match timeout(Duration::from_secs(2), rx).await {
+        Ok(Ok(value)) => {
+            let err_code = value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let Some(code) = err_code {
+                return frontend_error_to_response(&code, value, "set_label");
+            }
+            Response::SetLabel
+        }
+        _ => {
+            ctx.pending.cancel(&request_id);
+            Response::Error {
+                code: ErrorCode::FrontendUnresponsive,
+                message: "frontend did not reply within 2s".into(),
+                detail: None,
+            }
+        }
+    }
+}
+
 async fn set_collapsed(ctx: &DispatchContext, p: PaneRef, minimized: bool) -> Response {
     let Some(app) = ctx.app.as_ref() else {
         return internal("no Tauri AppHandle bound to dispatch context");
@@ -938,6 +1032,125 @@ mod tests {
                 assert_eq!(bytes_dropped, 0);
             }
             other => panic!("expected Read, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_label_rejects_empty_update() {
+        let entry = PaneEntry {
+            index: 0,
+            pane_id: "p-0".into(),
+            terminal_id: 1,
+            focused: true,
+            name: None,
+            color: None,
+            collapsed: false,
+        };
+        let (ctx, _bus) = make_ctx(vec![entry]);
+        let resp = set_label(&ctx, PaneRef::focused(), None, false, None, false).await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidArgument),
+            other => panic!("expected InvalidArgument error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_label_rejects_conflicting_name_flags() {
+        let entry = PaneEntry {
+            index: 0,
+            pane_id: "p-0".into(),
+            terminal_id: 1,
+            focused: true,
+            name: None,
+            color: None,
+            collapsed: false,
+        };
+        let (ctx, _bus) = make_ctx(vec![entry]);
+        let resp = set_label(
+            &ctx,
+            PaneRef::focused(),
+            Some("build".into()),
+            true,
+            None,
+            false,
+        )
+        .await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidArgument),
+            other => panic!("expected InvalidArgument error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_label_rejects_conflicting_color_flags() {
+        let entry = PaneEntry {
+            index: 0,
+            pane_id: "p-0".into(),
+            terminal_id: 1,
+            focused: true,
+            name: None,
+            color: None,
+            collapsed: false,
+        };
+        let (ctx, _bus) = make_ctx(vec![entry]);
+        let resp = set_label(
+            &ctx,
+            PaneRef::focused(),
+            None,
+            false,
+            Some(kiri_cli_proto::PaneColor::Coral),
+            true,
+        )
+        .await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidArgument),
+            other => panic!("expected InvalidArgument error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_label_rejects_bad_name() {
+        let entry = PaneEntry {
+            index: 0,
+            pane_id: "p-0".into(),
+            terminal_id: 1,
+            focused: true,
+            name: None,
+            color: None,
+            collapsed: false,
+        };
+        let (ctx, _bus) = make_ctx(vec![entry]);
+        let resp = set_label(
+            &ctx,
+            PaneRef::focused(),
+            Some("ab\nc".into()),
+            false,
+            None,
+            false,
+        )
+        .await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidArgument),
+            other => panic!("expected InvalidArgument error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn set_label_returns_pane_not_found_for_unknown_pane() {
+        // No app handle, but pane_not_found is checked before app dereference.
+        let (ctx, _bus) = make_ctx(vec![]);
+        let resp = set_label(
+            &ctx,
+            PaneRef::Index(42),
+            Some("agent".into()),
+            false,
+            None,
+            false,
+        )
+        .await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::PaneNotFound),
+            other => panic!("expected PaneNotFound, got {other:?}"),
         }
     }
 

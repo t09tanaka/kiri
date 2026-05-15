@@ -57,6 +57,40 @@ function updatePaneTerminalId(
   };
 }
 
+/**
+ * @internal Exported for testing. Replaces the leaf with id `paneId`'s
+ * `name` / `color`. Each field follows a three-state convention:
+ *   - `undefined`  → leave alone
+ *   - `null`       → remove the key from the leaf
+ *   - a value      → set the leaf to that value
+ *
+ * Splits are walked unchanged. The returned tree is a new instance only
+ * when something actually changed.
+ */
+export function setPaneLabelInTree(
+  pane: TerminalPane,
+  paneId: string,
+  opts: { name?: string | null; color?: PaneColor | null }
+): TerminalPane {
+  if (pane.type === 'terminal') {
+    if (pane.id !== paneId) return pane;
+    const next: TerminalPaneLeaf = { ...pane };
+    if ('name' in opts) {
+      if (opts.name === null) delete next.name;
+      else if (typeof opts.name === 'string') next.name = opts.name;
+    }
+    if ('color' in opts) {
+      if (opts.color === null) delete next.color;
+      else if (opts.color !== undefined) next.color = opts.color;
+    }
+    return next;
+  }
+  return {
+    ...pane,
+    children: pane.children.map((child) => setPaneLabelInTree(child, paneId, opts)),
+  };
+}
+
 function splitPaneInTree(
   pane: TerminalPane,
   targetPaneId: string,
@@ -281,6 +315,21 @@ function createTerminalStore() {
         };
       });
       return newPaneId;
+    },
+
+    /**
+     * Update an existing pane's label. `name`/`color` follow the same
+     * three-state convention as {@link setPaneLabelInTree}: `undefined`
+     * leaves the field alone, `null` clears it, a value installs it.
+     *
+     * No-op when no leaf matches `paneId` — keeps the store quiet about
+     * panes that disappeared mid-flight.
+     */
+    setPaneLabel: (paneId: string, opts: { name?: string | null; color?: PaneColor | null }) => {
+      update((state) => {
+        if (!state.rootPane) return state;
+        return { rootPane: setPaneLabelInTree(state.rootPane, paneId, opts) };
+      });
     },
 
     closePane: (paneId: string) => {

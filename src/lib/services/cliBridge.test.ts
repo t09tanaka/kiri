@@ -33,6 +33,7 @@ describe('cliBridge', () => {
       indexOf,
       resolveFocusedPaneId: () => 'focused-id',
       setPaneCollapsed: vi.fn(),
+      setPaneLabel: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -60,6 +61,7 @@ describe('cliBridge', () => {
       indexOf: () => 0,
       resolveFocusedPaneId: () => null,
       setPaneCollapsed: vi.fn(),
+      setPaneLabel: vi.fn(),
     });
 
     listeners.get('cli:pane-close')!({
@@ -84,6 +86,7 @@ describe('cliBridge', () => {
       indexOf: () => 0,
       resolveFocusedPaneId: () => 'fp',
       setPaneCollapsed: vi.fn(),
+      setPaneLabel: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -106,6 +109,7 @@ describe('cliBridge', () => {
       indexOf: () => 0,
       resolveFocusedPaneId: () => null,
       setPaneCollapsed: vi.fn(),
+      setPaneLabel: vi.fn(),
     });
 
     listeners.get('cli:pane-close')!({
@@ -130,6 +134,7 @@ describe('cliBridge', () => {
       indexOf: () => 0,
       resolveFocusedPaneId: () => null,
       setPaneCollapsed: vi.fn(),
+      setPaneLabel: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -156,6 +161,7 @@ describe('cliBridge', () => {
       indexOf,
       resolveFocusedPaneId: () => 'focused-id',
       setPaneCollapsed: vi.fn(),
+      setPaneLabel: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -190,6 +196,7 @@ describe('cliBridge', () => {
       indexOf: () => 0,
       resolveFocusedPaneId: () => 'focused-id',
       setPaneCollapsed: vi.fn(),
+      setPaneLabel: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -212,6 +219,7 @@ describe('cliBridge', () => {
       indexOf: vi.fn().mockReturnValue(1),
       resolveFocusedPaneId: () => 'pane-1',
       setPaneCollapsed,
+      setPaneLabel: vi.fn(),
     });
 
     listeners.get('cli:pane-minimize')!({
@@ -235,6 +243,7 @@ describe('cliBridge', () => {
       indexOf: vi.fn(),
       resolveFocusedPaneId: () => null,
       setPaneCollapsed,
+      setPaneLabel: vi.fn(),
     });
 
     listeners.get('cli:pane-minimize')!({
@@ -259,6 +268,7 @@ describe('cliBridge', () => {
       indexOf: vi.fn().mockReturnValue(2),
       resolveFocusedPaneId: () => 'pane-1',
       setPaneCollapsed,
+      setPaneLabel: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -286,6 +296,7 @@ describe('cliBridge', () => {
       indexOf: vi.fn().mockReturnValue(2),
       resolveFocusedPaneId: () => 'pane-1',
       setPaneCollapsed,
+      setPaneLabel: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -293,5 +304,111 @@ describe('cliBridge', () => {
     });
 
     expect(setPaneCollapsed).not.toHaveBeenCalled();
+  });
+
+  it('on cli:pane-set-label, forwards setName/setColor to setPaneLabel and resolves', async () => {
+    const setPaneLabel = vi.fn();
+    await startCliBridge({
+      label: 'main',
+      splitPane: vi.fn(),
+      closePane: vi.fn(),
+      indexOf: vi.fn(),
+      resolveFocusedPaneId: () => 'pane-1',
+      setPaneCollapsed: vi.fn(),
+      setPaneLabel,
+    });
+
+    listeners.get('cli:pane-set-label')!({
+      payload: {
+        requestId: 'rl1',
+        paneId: 'pane-1',
+        setName: 'build',
+        clearName: false,
+        setColor: 'coral',
+        clearColor: false,
+      },
+    });
+
+    expect(setPaneLabel).toHaveBeenCalledWith('pane-1', { name: 'build', color: 'coral' });
+    expect(invokeMock).toHaveBeenCalledWith('cli_resolve_pending', {
+      label: 'main',
+      requestId: 'rl1',
+      payload: {},
+    });
+  });
+
+  it('on cli:pane-set-label with clear flags, passes null sentinels through', async () => {
+    const setPaneLabel = vi.fn();
+    await startCliBridge({
+      label: 'main',
+      splitPane: vi.fn(),
+      closePane: vi.fn(),
+      indexOf: vi.fn(),
+      resolveFocusedPaneId: () => 'pane-1',
+      setPaneCollapsed: vi.fn(),
+      setPaneLabel,
+    });
+
+    listeners.get('cli:pane-set-label')!({
+      payload: {
+        requestId: 'rl2',
+        paneId: 'pane-1',
+        clearName: true,
+        clearColor: true,
+      },
+    });
+
+    expect(setPaneLabel).toHaveBeenCalledWith('pane-1', { name: null, color: null });
+  });
+
+  it('on cli:pane-set-label with focused="focused" resolves via resolveFocusedPaneId', async () => {
+    const setPaneLabel = vi.fn();
+    await startCliBridge({
+      label: 'main',
+      splitPane: vi.fn(),
+      closePane: vi.fn(),
+      indexOf: vi.fn(),
+      resolveFocusedPaneId: () => 'pane-7',
+      setPaneCollapsed: vi.fn(),
+      setPaneLabel,
+    });
+
+    listeners.get('cli:pane-set-label')!({
+      payload: {
+        requestId: 'rl3',
+        paneId: 'focused',
+        setName: 'agent',
+      },
+    });
+
+    expect(setPaneLabel).toHaveBeenCalledWith('pane-7', { name: 'agent' });
+  });
+
+  it('on cli:pane-set-label with focused but no focused pane, replies error', async () => {
+    const setPaneLabel = vi.fn();
+    await startCliBridge({
+      label: 'main',
+      splitPane: vi.fn(),
+      closePane: vi.fn(),
+      indexOf: vi.fn(),
+      resolveFocusedPaneId: () => null,
+      setPaneCollapsed: vi.fn(),
+      setPaneLabel,
+    });
+
+    listeners.get('cli:pane-set-label')!({
+      payload: {
+        requestId: 'rl4',
+        paneId: 'focused',
+        setName: 'agent',
+      },
+    });
+
+    expect(setPaneLabel).not.toHaveBeenCalled();
+    expect(invokeMock).toHaveBeenCalledWith('cli_resolve_pending', {
+      label: 'main',
+      requestId: 'rl4',
+      payload: { error: 'no_focused_pane' },
+    });
   });
 });

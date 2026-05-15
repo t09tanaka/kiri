@@ -40,7 +40,7 @@ async fn run() -> Result<i32> {
     );
 
     let req = match args.command {
-        Top::Term(t) => build_request(t),
+        Top::Term(t) => build_request(t)?,
     };
 
     let socket = resolve_socket().await?;
@@ -229,8 +229,8 @@ async fn socket_alive(path: &std::path::Path) -> bool {
         .is_ok()
 }
 
-fn build_request(cmd: TermCmd) -> Request {
-    match cmd {
+fn build_request(cmd: TermCmd) -> Result<Request> {
+    Ok(match cmd {
         TermCmd::Ls => Request::Ls,
         TermCmd::Run(a) => Request::Run {
             pane: cli::parse_pane(&a.pane),
@@ -273,6 +273,20 @@ fn build_request(cmd: TermCmd) -> Request {
         TermCmd::Restore(opt) => Request::Restore {
             pane: cli::parse_pane(&opt),
         },
+        TermCmd::SetLabel(a) => {
+            if a.is_empty_update() {
+                return Err(anyhow!(
+                    "set-label requires at least one of --name, --clear-name, --color, --clear-color"
+                ));
+            }
+            Request::SetLabel {
+                pane: cli::parse_pane(&a.pane),
+                set_name: a.name.clone(),
+                clear_name: a.clear_name,
+                set_color: a.color.map(PaneColor::from),
+                clear_color: a.clear_color,
+            }
+        }
         TermCmd::Signal(s) => match s {
             SignalCmd::Send(a) => Request::SignalSend {
                 from: cli::parse_pane_string(&a.from),
@@ -293,14 +307,76 @@ fn build_request(cmd: TermCmd) -> Request {
                 pane: cli::parse_pane_string(&a.pane),
             },
         },
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{current_project_root, is_same_or_within_project};
+    use super::*;
+    use clap::Parser;
     use std::fs;
     use std::path::Path;
+
+    fn parse_term(args: &[&str]) -> TermCmd {
+        let cli = Cli::try_parse_from(args).unwrap();
+        match cli.command {
+            Top::Term(t) => t,
+        }
+    }
+
+    #[test]
+    fn build_request_set_label_with_name_and_color() {
+        let req = build_request(parse_term(&[
+            "kiri",
+            "term",
+            "set-label",
+            "--pane",
+            "2",
+            "--name",
+            "build",
+            "--color",
+            "coral",
+        ]))
+        .expect("should build set_label request");
+        assert_eq!(
+            req,
+            Request::SetLabel {
+                pane: kiri_cli_proto::PaneRef::Index(2),
+                set_name: Some("build".into()),
+                clear_name: false,
+                set_color: Some(PaneColor::Coral),
+                clear_color: false,
+            }
+        );
+    }
+
+    #[test]
+    fn build_request_set_label_clear_only() {
+        let req = build_request(parse_term(&[
+            "kiri",
+            "term",
+            "set-label",
+            "--clear-name",
+            "--clear-color",
+        ]))
+        .expect("should build set_label request");
+        assert_eq!(
+            req,
+            Request::SetLabel {
+                pane: kiri_cli_proto::PaneRef::focused(),
+                set_name: None,
+                clear_name: true,
+                set_color: None,
+                clear_color: true,
+            }
+        );
+    }
+
+    #[test]
+    fn build_request_set_label_rejects_empty_update() {
+        let err = build_request(parse_term(&["kiri", "term", "set-label"]));
+        assert!(err.is_err(), "empty set-label should be rejected");
+    }
 
     #[test]
     fn current_project_root_finds_git_directory_in_self() {

@@ -18,15 +18,24 @@ export interface CliBridgeDeps {
   indexOf: (paneId: string) => number;
   resolveFocusedPaneId: () => string | null;
   setPaneCollapsed: (paneId: string, value: boolean) => void;
+  /**
+   * Update an existing pane's label.
+   *
+   * `name`/`color` use a three-state convention: `undefined` leaves the
+   * field alone, `null` clears it, a value installs it. The bridge
+   * builds this from the wire's separate `setName`/`clearName`
+   * (and color) fields so the store stays self-contained.
+   */
+  setPaneLabel: (paneId: string, opts: { name?: string | null; color?: PaneColor | null }) => void;
 }
 
 const FOCUSED_SENTINEL = 'focused';
 
 /**
  * Subscribe to `cli:pane-split` / `cli:pane-close` / `cli:pane-minimize`
- * events emitted by the Rust cli_server, dispatch them to the local
- * terminalStore, and reply via the `cli_resolve_pending` Tauri command
- * keyed by `requestId`.
+ * / `cli:pane-set-label` events emitted by the Rust cli_server, dispatch
+ * them to the local terminalStore, and reply via the `cli_resolve_pending`
+ * Tauri command keyed by `requestId`.
  *
  * Returns a teardown that removes all event listeners. Call it from the
  * caller's cleanup path (typically the App.svelte onMount return).
@@ -93,9 +102,33 @@ export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
     reply(requestId, {});
   });
 
+  const unlistenSetLabel = await listen<{
+    requestId: string;
+    paneId: string;
+    setName?: string | null;
+    clearName?: boolean;
+    setColor?: PaneColor | null;
+    clearColor?: boolean;
+  }>('cli:pane-set-label', (event) => {
+    const { requestId, paneId, setName, clearName, setColor, clearColor } = event.payload;
+    const target = resolveTarget(paneId);
+    if (!target) {
+      reply(requestId, { error: 'no_focused_pane' });
+      return;
+    }
+    const opts: { name?: string | null; color?: PaneColor | null } = {};
+    if (clearName) opts.name = null;
+    else if (typeof setName === 'string') opts.name = setName;
+    if (clearColor) opts.color = null;
+    else if (setColor !== undefined && setColor !== null) opts.color = setColor;
+    deps.setPaneLabel(target, opts);
+    reply(requestId, {});
+  });
+
   return () => {
     unlistenSplit();
     unlistenClose();
     unlistenMinimize();
+    unlistenSetLabel();
   };
 }
