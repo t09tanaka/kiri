@@ -10,6 +10,7 @@ use super::frontend_bridge::PendingReplies;
 use super::handlers;
 use super::pane_map::PaneMap;
 use super::ring_buffer::RingBuffer;
+use super::signals::SignalRegistry;
 use crate::commands::terminal::{TerminalOutputBus, TerminalOutputBusState, TerminalState};
 use kiri_cli_proto::{ErrorCode, Request, Response};
 use std::collections::HashMap;
@@ -83,6 +84,7 @@ pub struct DispatchContext {
     pub pane_map: Arc<PaneMap>,
     pub pending: Arc<PendingReplies>,
     pub buffers: Arc<TerminalBuffers>,
+    pub signals: Arc<SignalRegistry>,
 }
 
 /// Parse a single newline-delimited JSON line into a `Request` and run
@@ -121,6 +123,7 @@ mod tests {
             pane_map: Arc::new(PaneMap::new()),
             pending: Arc::new(PendingReplies::new()),
             buffers: Arc::new(TerminalBuffers::new()),
+            signals: Arc::new(SignalRegistry::new()),
         }
     }
 

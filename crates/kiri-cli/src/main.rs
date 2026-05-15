@@ -4,8 +4,8 @@ mod transport;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use cli::{Cli, TermCmd, Top};
-use kiri_cli_proto::{PaneColor, Request, Response, SplitDirection};
+use cli::{Cli, SignalCmd, SignalTargetArg, TermCmd, Top};
+use kiri_cli_proto::{PaneColor, Request, Response, SignalTarget, SplitDirection};
 use std::path::PathBuf;
 
 #[tokio::main(flavor = "current_thread")]
@@ -31,6 +31,14 @@ async fn run() -> Result<i32> {
     let args = Cli::parse();
     let pretty = args.pretty;
 
+    // `signal wait --print-data` decodes the payload only on the success
+    // path; capture it now so we can branch on it after the response
+    // arrives.
+    let print_signal_data = matches!(
+        &args.command,
+        Top::Term(TermCmd::Signal(SignalCmd::Wait(w))) if w.print_data
+    );
+
     let req = match args.command {
         Top::Term(t) => build_request(t),
     };
@@ -44,6 +52,11 @@ async fn run() -> Result<i32> {
             render::render_response_pretty(resp);
         } else {
             println!("{}", serde_json::to_string(resp)?);
+        }
+        if print_signal_data {
+            if let Response::SignalWait { data: Some(v), .. } = resp {
+                println!("{}", serde_json::to_string(v)?);
+            }
         }
         last_was_error = matches!(resp, Response::Error { .. });
     }
@@ -159,9 +172,10 @@ fn build_request(cmd: TermCmd) -> Request {
                 "v" | "vertical" => SplitDirection::Vertical,
                 _ => SplitDirection::Horizontal,
             },
-            name: a.name.clone(),
-            color: a.color.map(PaneColor::from),
-            minimized: a.minimized,
+            name: Some(a.name.clone()),
+            color: Some(PaneColor::from(a.color)),
+            // New panes default to minimized; `--no-minimized` opts out.
+            minimized: !a.no_minimized,
         },
         TermCmd::Close(p) => Request::Close {
             pane: cli::parse_pane(&p),
@@ -171,6 +185,26 @@ fn build_request(cmd: TermCmd) -> Request {
         },
         TermCmd::Restore(opt) => Request::Restore {
             pane: cli::parse_pane(&opt),
+        },
+        TermCmd::Signal(s) => match s {
+            SignalCmd::Send(a) => Request::SignalSend {
+                from: cli::parse_pane_string(&a.from),
+                target: match a.target {
+                    Some(SignalTargetArg::Parent) => SignalTarget::Parent,
+                    Some(SignalTargetArg::Children) => SignalTarget::Children,
+                    None => SignalTarget::Pane(cli::parse_pane_string(&a.pane)),
+                },
+                name: a.name,
+                data: a.data,
+            },
+            SignalCmd::Wait(a) => Request::SignalWait {
+                pane: cli::parse_pane_string(&a.pane),
+                name: a.name,
+                timeout_secs: a.timeout,
+            },
+            SignalCmd::List(a) => Request::SignalList {
+                pane: cli::parse_pane_string(&a.pane),
+            },
         },
     }
 }
