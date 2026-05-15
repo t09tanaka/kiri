@@ -33,9 +33,9 @@ const FOCUSED_SENTINEL = 'focused';
 
 /**
  * Subscribe to `cli:pane-split` / `cli:pane-close` / `cli:pane-minimize`
- * events emitted by the Rust cli_server, dispatch them to the local
- * terminalStore, and reply via the `cli_resolve_pending` Tauri command
- * keyed by `requestId`.
+ * / `cli:pane-set-label` events emitted by the Rust cli_server, dispatch
+ * them to the local terminalStore, and reply via the `cli_resolve_pending`
+ * Tauri command keyed by `requestId`.
  *
  * Returns a teardown that removes all event listeners. Call it from the
  * caller's cleanup path (typically the App.svelte onMount return).
