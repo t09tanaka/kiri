@@ -21,7 +21,6 @@ use commands::{
     WatcherState, WindowRegistry, WindowRegistryState,
 };
 use std::sync::{Arc, Mutex};
-use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -40,14 +39,6 @@ pub fn run() {
         .setup(|app| {
             // Setup menu bar
             setup_menu(app)?;
-
-            // Center the window title on macOS by attaching a unified
-            // toolbar to every window declared in tauri.conf.json. Windows
-            // created later via create_window_impl get the same treatment
-            // inline.
-            for window in app.handle().webview_windows().values() {
-                commands::window::apply_unified_titlebar(window);
-            }
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(
