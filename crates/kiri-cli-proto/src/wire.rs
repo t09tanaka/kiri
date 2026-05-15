@@ -189,9 +189,11 @@ pub enum Response {
     Send {
         /// True when the submit sequence (`\r`) was appended after the
         /// data. Only set for `Request::Send { submit: true, .. }` whose
-        /// target pane was running claude / codex at the time. Older
-        /// servers omit the field, which deserializes to `false`.
-        #[serde(default)]
+        /// target pane was running claude / codex at the time. Omitted
+        /// from the wire when false so older clients (which decode into
+        /// the field-less `Response::Send`) see the same JSON shape they
+        /// always did.
+        #[serde(default, skip_serializing_if = "is_false")]
         submitted: bool,
     },
     Read {
@@ -346,14 +348,21 @@ mod tests {
 
     #[test]
     fn response_send_default_submitted_omits_field() {
-        // submitted defaults to false; serializing the default should not
-        // emit the field, so older clients that don't know about it keep
-        // working unchanged.
+        // submitted defaults to false; serializing the default omits
+        // the field so older clients that don't know about it see the
+        // same JSON shape as before this PR.
         let v = serde_json::to_value(Response::Send { submitted: false }).unwrap();
-        assert_eq!(v, serde_json::json!({ "type": "send", "submitted": false }));
-        let parsed: Response =
-            serde_json::from_value(serde_json::json!({ "type": "send" })).unwrap();
+        assert_eq!(v, serde_json::json!({ "type": "send" }));
+        let parsed: Response = serde_json::from_value(v).unwrap();
         assert_eq!(parsed, Response::Send { submitted: false });
+    }
+
+    #[test]
+    fn response_send_submitted_true_emits_field() {
+        let v = serde_json::to_value(Response::Send { submitted: true }).unwrap();
+        assert_eq!(v, serde_json::json!({ "type": "send", "submitted": true }));
+        let parsed: Response = serde_json::from_value(v).unwrap();
+        assert_eq!(parsed, Response::Send { submitted: true });
     }
 
     #[test]

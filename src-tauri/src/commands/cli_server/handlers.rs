@@ -154,32 +154,60 @@ async fn send(ctx: &DispatchContext, p: PaneRef, data: String, submit: bool) -> 
     let Some(pane) = ctx.pane_map.resolve(&p) else {
         return pane_not_found(p);
     };
-    // Snapshot the shell pid while we hold the manager lock just long
-    // enough to write `data`. The auto-submit check below talks to
-    // sysinfo, which is slow, so release the lock before that.
+
+    // Decide whether to append `\r` BEFORE taking the write lock. The
+    // sysinfo lookup is slow (~50–200ms) and we don't want to hold the
+    // terminal manager mutex across it. Doing the check first means the
+    // subsequent write of `data` + (maybe) `\r` happens under a single
+    // lock acquisition — concurrent writers (other `kiri term send`
+    // calls, or frontend keystrokes via `write_terminal` which shares
+    // this mutex) can't interleave bytes between `data` and the auto
+    // submit `\r`.
+    //
+    // `data` ending in `\r` already contains claude / codex's submit
+    // byte; we skip the auto-append in that case to avoid an extra
+    // empty turn. `\n` is *not* a submit byte for these TUIs (it's a
+    // newline within the input box, i.e. Shift+Enter), so legacy
+    // recipes like `kiri term send $'msg\n'` still get the auto-`\r`
+    // and commit cleanly.
     let shell_pid = {
-        let mut manager = match ctx.terminals.lock() {
+        let manager = match ctx.terminals.lock() {
             Ok(g) => g,
             Err(_) => return internal("terminal state poisoned"),
         };
-        let Some(instance) = manager.instances.get_mut(&pane.terminal_id) else {
+        let Some(instance) = manager.instances.get(&pane.terminal_id) else {
             return pane_not_found(p);
         };
-        use std::io::Write;
-        if let Err(e) = instance.writer.write_all(data.as_bytes()) {
-            return pty_error(format!("write failed: {e}"));
-        }
-        if let Err(e) = instance.writer.flush() {
-            return pty_error(format!("flush failed: {e}"));
-        }
         instance.shell_pid
     };
-
-    let submitted = submit
+    let should_submit = submit
+        && !ends_with_submit_byte(&data)
         && shell_pid
             .map(is_ai_process_for_shell_pid)
-            .unwrap_or(false)
-        && write_submit_sequence(ctx, pane.terminal_id);
+            .unwrap_or(false);
+
+    let mut manager = match ctx.terminals.lock() {
+        Ok(g) => g,
+        Err(_) => return internal("terminal state poisoned"),
+    };
+    let Some(instance) = manager.instances.get_mut(&pane.terminal_id) else {
+        return pane_not_found(p);
+    };
+    use std::io::Write;
+    if let Err(e) = instance.writer.write_all(data.as_bytes()) {
+        return pty_error(format!("write failed: {e}"));
+    }
+    let submitted = if should_submit {
+        if let Err(e) = instance.writer.write_all(b"\r") {
+            return pty_error(format!("submit write failed: {e}"));
+        }
+        true
+    } else {
+        false
+    };
+    if let Err(e) = instance.writer.flush() {
+        return pty_error(format!("flush failed: {e}"));
+    }
     Response::Send { submitted }
 }
 
@@ -191,22 +219,14 @@ fn is_ai_process_for_shell_pid(shell_pid: u32) -> bool {
     matches!(info.name.to_lowercase().as_str(), "claude" | "codex")
 }
 
-/// Append `\r` to the PTY identified by `terminal_id`. Returns true on
-/// success — a write or flush failure is logged but doesn't fail the
-/// surrounding `send` (the data itself has already been delivered).
-fn write_submit_sequence(ctx: &DispatchContext, terminal_id: u32) -> bool {
-    let mut manager = match ctx.terminals.lock() {
-        Ok(g) => g,
-        Err(_) => return false,
-    };
-    let Some(instance) = manager.instances.get_mut(&terminal_id) else {
-        return false;
-    };
-    use std::io::Write;
-    if instance.writer.write_all(b"\r").is_err() {
-        return false;
-    }
-    instance.writer.flush().is_ok()
+/// True when `data` already ends with claude / codex's submit byte
+/// (`\r`). Used to skip the auto-`\r` so a caller that explicitly
+/// terminated its data with `\r` doesn't double-submit. `\n` does NOT
+/// count: claude / codex TUIs treat it as a newline within the input
+/// (Shift+Enter), not as submit, so `kiri term send $'msg\n'` still
+/// needs the trailing `\r` for the message to actually commit.
+fn ends_with_submit_byte(data: &str) -> bool {
+    data.ends_with('\r')
 }
 
 async fn cancel(ctx: &DispatchContext, p: PaneRef) -> Response {
@@ -1175,6 +1195,23 @@ mod tests {
             Response::Error { code, .. } => assert_eq!(code, ErrorCode::PaneNotFound),
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn ends_with_submit_byte_only_treats_carriage_return_as_submit() {
+        // Plain text never ends with a submit byte.
+        assert!(!ends_with_submit_byte(""));
+        assert!(!ends_with_submit_byte("hello"));
+        assert!(!ends_with_submit_byte("hello world"));
+        // \r is the actual submit byte claude / codex commit on.
+        assert!(ends_with_submit_byte("\r"));
+        assert!(ends_with_submit_byte("hello\r"));
+        // \n is a newline within the input, not submit. Auto-`\r` must
+        // still fire for these so legacy recipes like
+        // `kiri term send $'msg\n'` continue to commit.
+        assert!(!ends_with_submit_byte("\n"));
+        assert!(!ends_with_submit_byte("hello\n"));
+        assert!(!ends_with_submit_byte("hello\nworld"));
     }
 
     // --- signal_send / signal_wait / signal_list tests ---
