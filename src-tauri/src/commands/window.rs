@@ -3,9 +3,50 @@ use crate::commands::terminal::{TerminalOutputBusState, TerminalState};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
+
+/// Center the window title on macOS by attaching an empty NSToolbar with
+/// the unified style. Without a toolbar, NSWindow renders the title
+/// left-aligned next to the traffic lights.
+#[cfg(target_os = "macos")]
+#[allow(deprecated, unexpected_cfgs)]
+pub fn apply_unified_titlebar(window: &WebviewWindow) {
+    use cocoa::appkit::NSWindow;
+    use cocoa::base::{id, nil, NO};
+    use cocoa::foundation::NSString;
+    use objc::{class, msg_send, sel, sel_impl};
+
+    // NSWindowToolbarStyleUnified raw value (centers the title between the
+    // traffic lights and the trailing edge). The cocoa crate's enum lacks
+    // this variant on some versions, so we pass the integer directly.
+    // 0=Automatic, 1=Expanded, 2=Preference, 3=Unified, 4=UnifiedCompact.
+    const NS_WINDOW_TOOLBAR_STYLE_UNIFIED: i64 = 3;
+
+    let ns_window = match window.ns_window() {
+        Ok(handle) => handle as id,
+        Err(e) => {
+            log::warn!("ns_window() failed; skipping unified titlebar: {e}");
+            return;
+        }
+    };
+
+    unsafe {
+        let identifier = NSString::alloc(nil).init_str("io.github.t09tanaka.kiri.toolbar");
+        let toolbar: id = msg_send![class!(NSToolbar), alloc];
+        let toolbar: id = msg_send![toolbar, initWithIdentifier: identifier];
+        let _: () = msg_send![toolbar, setShowsBaselineSeparator: NO];
+        ns_window.setToolbar_(toolbar);
+        let _: () = msg_send![
+            ns_window,
+            setToolbarStyle: NS_WINDOW_TOOLBAR_STYLE_UNIFIED
+        ];
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn apply_unified_titlebar(_window: &WebviewWindow) {}
 
 /// Registry to track which windows are associated with which project paths
 #[derive(Default)]
@@ -117,7 +158,8 @@ pub fn create_window_impl(
         builder = builder.position(pos_x as f64, pos_y as f64);
     }
 
-    builder.build().map_err(|e| e.to_string())?;
+    let window = builder.build().map_err(|e| e.to_string())?;
+    apply_unified_titlebar(&window);
 
     // Register the window with its project path
     if let (Some(path), Some(registry)) = (project_path, registry) {
