@@ -1,5 +1,8 @@
 import { render, cleanup } from '@testing-library/svelte';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { tick } from 'svelte';
+import { terminalStore } from '@/lib/stores/terminalStore';
+import { terminalRegistry } from '@/lib/stores/terminalRegistry';
 
 // Mock services used by Terminal.svelte beyond what browser-setup.ts already covers.
 // The pane-label markup is rendered synchronously from props, so the async onMount path
@@ -89,5 +92,55 @@ describe('Terminal pane-label header', () => {
   test('omits pane-label entirely when neither name nor color is set', () => {
     const { container } = render(Terminal, { props: { paneId: 'p1' } });
     expect(container.querySelector('.pane-label')).toBeNull();
+  });
+});
+
+describe('Terminal paneId stability (regression: split kills original pane)', () => {
+  afterEach(() => {
+    cleanup();
+    terminalRegistry.clearAll();
+    terminalStore.reset();
+  });
+
+  // The bug: TerminalContainer.svelte uses {#key pane.type} to destroy and
+  // re-mount the Terminal subtree when a terminal pane is wrapped in a new
+  // parent split. In Svelte 5, the destroying Terminal's reactive `paneId`
+  // prop briefly took the parent split's id (e.g. "split-1") instead of its
+  // own original id (e.g. "pane-1"). That made paneExistsInStore() return
+  // false and the destroy handler take the "true close" branch — killing the
+  // still-needed PTY for the original pane.
+  //
+  // Fix: Terminal.svelte captures paneId once at construction and uses that
+  // captured value in onDestroy. This test forces the prop to mutate after
+  // mount and confirms the destroy path still uses the original id.
+  test('onDestroy uses the paneId captured at mount, not the reactive prop value', async () => {
+    const originalPaneId = 'pane-regression';
+    const wrongPaneId = 'split-regression';
+
+    // Empty tree → paneExistsInStore() returns false → destroy takes the
+    // cleanup branch, which is where the captured-vs-reactive paneId matters.
+    terminalStore.reset();
+
+    const removeSpy = vi.spyOn(terminalRegistry, 'remove');
+
+    const { rerender, unmount } = render(Terminal, {
+      props: { paneId: originalPaneId },
+    });
+    await tick();
+
+    // Simulate the parent tree restructure that the {#key pane.type} block
+    // produces: the same component's prop briefly receives the split's id.
+    await rerender({ paneId: wrongPaneId });
+    await tick();
+
+    unmount();
+    await tick();
+
+    // With the fix in place we must see the captured (original) id in the
+    // destroy path. Without the fix this would be the wrong (split) id.
+    expect(removeSpy).toHaveBeenCalledWith(originalPaneId);
+    expect(removeSpy).not.toHaveBeenCalledWith(wrongPaneId);
+
+    removeSpy.mockRestore();
   });
 });

@@ -46,7 +46,7 @@
   }
 
   let {
-    paneId,
+    paneId: reactivePaneId,
     cwd = null,
     name = undefined,
     color = undefined,
@@ -55,6 +55,16 @@
     onSplitVertical,
     onClose,
   }: Props = $props();
+
+  // Capture pane identity once at construction. The reactive prop briefly
+  // reflects a different value (e.g. the parent split's id like "split-1")
+  // during the parent tree restructure that {#key pane.type} in
+  // TerminalContainer.svelte triggers on split. Reading it reactively from
+  // onDestroy would otherwise make paneExistsInStore() return false and
+  // take the "true close" branch — killing the PTY that the reattached
+  // Terminal component still needs.
+  // svelte-ignore state_referenced_locally
+  const paneId = reactivePaneId;
 
   let terminalWrapper: HTMLDivElement;
   let terminalPadding: HTMLDivElement;
