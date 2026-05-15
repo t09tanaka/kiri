@@ -9,6 +9,7 @@ use tokio::time::{timeout, Duration};
 
 pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
     match req {
+        Request::WhoAmI => vec![whoami(ctx).await],
         Request::Ls => vec![ls(ctx).await],
         Request::Send { pane, data } => vec![send(ctx, pane, data).await],
         Request::Read { pane, since, tail } => vec![read(ctx, pane, since, tail).await],
@@ -31,6 +32,31 @@ pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
         Request::Restore { pane } => vec![set_collapsed(ctx, pane, false).await],
         Request::Follow { pane } => follow(ctx, pane).await,
     }
+}
+
+/// Report the window label and currently-open project path for this socket.
+///
+/// The CLI uses this to refuse acting on a window that belongs to a
+/// different project than the user's current working directory. If no
+/// `AppHandle` is available (only happens in unit tests) or no project
+/// has been registered for this window, `project_path` is `None`.
+async fn whoami(ctx: &DispatchContext) -> Response {
+    let project_path = ctx
+        .app
+        .as_ref()
+        .and_then(|app| project_path_for_label(app, &ctx.label));
+    Response::WhoAmI {
+        window_label: ctx.label.clone(),
+        project_path,
+    }
+}
+
+fn project_path_for_label(app: &tauri::AppHandle, label: &str) -> Option<String> {
+    use crate::commands::window::WindowRegistryState;
+    use tauri::Manager;
+    let registry = app.try_state::<WindowRegistryState>()?;
+    let guard = registry.lock().ok()?;
+    guard.get_path_for_label(label).cloned()
 }
 
 async fn ls(ctx: &DispatchContext) -> Response {
@@ -608,6 +634,33 @@ mod tests {
             Response::Ls { panes } => assert!(panes.is_empty()),
             other => panic!("expected Ls, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn whoami_without_app_handle_returns_label_and_no_project() {
+        let (ctx, _bus) = make_ctx(vec![]);
+        let resp = whoami(&ctx).await;
+        match resp {
+            Response::WhoAmI {
+                window_label,
+                project_path,
+            } => {
+                assert_eq!(window_label, "test");
+                assert!(project_path.is_none());
+            }
+            other => panic!("expected WhoAmI, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn window_registry_label_to_path_round_trip() {
+        let mut reg = crate::commands::window::WindowRegistry::new();
+        reg.register("window-7", "/Users/u/projects/kiri");
+        assert_eq!(
+            reg.get_path_for_label("window-7").map(String::as_str),
+            Some("/Users/u/projects/kiri"),
+        );
+        assert!(reg.get_path_for_label("missing").is_none());
     }
 
     #[test]

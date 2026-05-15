@@ -48,6 +48,11 @@ impl WindowRegistry {
         self.path_to_label.get(path)
     }
 
+    /// Get the project path for a window label
+    pub fn get_path_for_label(&self, label: &str) -> Option<&String> {
+        self.label_to_path.get(label)
+    }
+
     /// Get all registered project paths
     pub fn get_all_paths(&self) -> Vec<String> {
         self.path_to_label.keys().cloned().collect()

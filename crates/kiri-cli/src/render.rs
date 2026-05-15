@@ -55,6 +55,13 @@ pub fn render_response_pretty(resp: &Response) {
         Response::Close => println!("ok"),
         Response::Minimize => println!("ok"),
         Response::Restore => println!("ok"),
+        Response::WhoAmI {
+            window_label,
+            project_path,
+        } => {
+            let project = project_path.as_deref().unwrap_or("(no project)");
+            println!("window {window_label} — {project}");
+        }
         Response::Error { code, message, .. } => {
             eprintln!("error [{code:?}]: {message}");
         }
