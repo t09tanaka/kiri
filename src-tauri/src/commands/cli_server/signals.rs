@@ -77,25 +77,30 @@ impl SignalRegistry {
     /// queues, and notifiers. Any waiter still hanging on a removed
     /// pane's `Notify` will wake and then see an empty queue with no
     /// matching entries (its outer `timeout` ultimately fires).
+    ///
+    /// Collects the `Notify`s of removed panes inside the lock, then
+    /// drops the lock before calling `notify_waiters()` on each — so
+    /// woken waiters that try to re-acquire the registry mutex don't
+    /// block on us holding it.
     pub fn retain(&self, known: &HashSet<String>) {
-        let mut g = self.inner.lock().expect("signal registry mutex poisoned");
-        g.parents.retain(|child, parent| {
-            known.contains(child) && known.contains(parent)
-        });
-        g.queues.retain(|pane, _| known.contains(pane));
-        // Drain notifiers for removed panes after waking any waiters so
-        // they observe the disappearance (queue is gone → no match) and
-        // can exit cleanly via their outer timeout.
-        let to_drop: Vec<String> = g
-            .notifiers
-            .keys()
-            .filter(|p| !known.contains(*p))
-            .cloned()
-            .collect();
-        for p in to_drop {
-            if let Some(n) = g.notifiers.remove(&p) {
-                n.notify_waiters();
-            }
+        let drained_notifiers = {
+            let mut g = self.inner.lock().expect("signal registry mutex poisoned");
+            g.parents
+                .retain(|child, parent| known.contains(child) && known.contains(parent));
+            g.queues.retain(|pane, _| known.contains(pane));
+            let to_drop: Vec<String> = g
+                .notifiers
+                .keys()
+                .filter(|p| !known.contains(*p))
+                .cloned()
+                .collect();
+            to_drop
+                .into_iter()
+                .filter_map(|p| g.notifiers.remove(&p))
+                .collect::<Vec<_>>()
+        };
+        for n in drained_notifiers {
+            n.notify_waiters();
         }
     }
 
@@ -164,9 +169,21 @@ impl SignalRegistry {
     }
 
     /// Block until a signal named `name` lands on `pane_id`'s queue, or
-    /// until `total_timeout` elapses. Each wake-up re-scans the queue
-    /// to handle concurrent waiters (only one wins per signal). Returns
-    /// `None` on timeout.
+    /// until `total_timeout` elapses. Returns `None` on timeout.
+    ///
+    /// Race-free pattern (this is the bit that's easy to get wrong):
+    /// `Notify::notified()` only registers a listener when the returned
+    /// future is **first polled** — calling `notified()` is not enough.
+    /// If we did `try_pop_named` → fail → `notified()` → `pin!` → `await`,
+    /// an `enqueue + notify_waiters` that lands in the window between
+    /// the queue check and the first poll would be dropped on the floor
+    /// (no waiter registered yet) and we'd block until the outer
+    /// timeout for a signal that already exists.
+    ///
+    /// The fix is `tokio::sync::Notify`'s documented pattern: build the
+    /// future, pin it, call `enable()` to register the listener
+    /// **before** checking the queue, then check, then `await`. Each
+    /// wake-up rebuilds + re-enables before the next queue check.
     pub async fn wait_for(
         &self,
         pane_id: &str,
@@ -174,26 +191,27 @@ impl SignalRegistry {
         total_timeout: Duration,
     ) -> Option<Signal> {
         let deadline = tokio::time::Instant::now() + total_timeout;
+        let notify = self.notify_handle(pane_id);
+        let mut notified = Box::pin(notify.notified());
+        // Register before the first queue check so enqueues racing with
+        // us don't drop their wake-up.
+        notified.as_mut().enable();
         loop {
-            // Fast path: a matching signal is already queued.
             if let Some(s) = self.try_pop_named(pane_id, name) {
                 return Some(s);
             }
-            let notify = self.notify_handle(pane_id);
-            // We must register `notified()` BEFORE re-checking the queue
-            // (next iteration) to avoid a lost wake-up. `Notify` makes
-            // that work via its register/await split — `notified()`
-            // returns a future that, once polled, records the listener
-            // before sleeping.
-            let notified = notify.notified();
-            tokio::pin!(notified);
-
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
                 return None;
             }
-            match timeout(remaining, &mut notified).await {
-                Ok(()) => continue, // someone enqueued — loop and re-check.
+            match timeout(remaining, notified.as_mut()).await {
+                Ok(()) => {
+                    // Rearm: a fresh `notified()` future, registered
+                    // again before we go back to checking the queue.
+                    notified.set(notify.notified());
+                    notified.as_mut().enable();
+                    continue;
+                }
                 Err(_) => return None,
             }
         }
@@ -348,6 +366,36 @@ mod tests {
         r.enqueue("t", mk("wanted", "s"));
         let got = task.await.unwrap().unwrap();
         assert_eq!(got.name, "wanted");
+    }
+
+    #[tokio::test]
+    async fn wait_for_does_not_miss_wakeups_from_a_tight_race() {
+        // Regression test for the "Notify listener not registered before
+        // queue check" race: `Notify::notify_waiters()` only wakes
+        // already-registered listeners, so if `enqueue` fires in the
+        // gap between the wait's queue check and its first poll of the
+        // `notified()` future, the wake-up is dropped.
+        //
+        // Loop many iterations to catch the race even when the
+        // scheduler hides it on a single run.
+        let r = Arc::new(SignalRegistry::new());
+        for i in 0..200 {
+            let r2 = r.clone();
+            let task = tokio::spawn(async move {
+                r2.wait_for("t", "race", Duration::from_millis(500)).await
+            });
+            // Yield once so the spawned task gets scheduled; if the
+            // implementation registers before checking the queue, this
+            // race is impossible. Tight loop without sleeps so the
+            // window is as small as the scheduler allows.
+            tokio::task::yield_now().await;
+            r.enqueue(
+                "t",
+                mk("race", "sender"),
+            );
+            let got = task.await.unwrap();
+            assert!(got.is_some(), "iteration {i} missed the wake-up");
+        }
     }
 
     #[tokio::test]
