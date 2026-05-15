@@ -38,6 +38,7 @@
       "icons/icon.ico"
     ],
     "resources": {
+      "../target/release/kiri-cli": "kiri-cli",
       "../resources/skills/kiri-cli/SKILL.md": "skills/kiri-cli/SKILL.md"
     }
   }

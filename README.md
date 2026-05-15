@@ -151,10 +151,11 @@ git clone https://github.com/t09tanaka/kiri.git
 cd kiri
 npm install
 npm run tauri dev    # development
-npm run tauri build  # production bundle
+npm run build:app    # production bundle, including the in-terminal CLI
+npm run install:app  # build and replace /Applications/kiri.app locally
 ```
 
-The kiri CLI binary is built as part of the Cargo workspace and installed into `~/.kiri/bin/` the first time the app launches.
+The production build command first builds `kiri-cli`, bundles it into the app, and then the app installs or updates `~/.kiri/bin/kiri` on launch.
 
 ## Architecture
 
@@ -192,6 +193,8 @@ Issues and PRs welcome. Useful commands during development:
 | Command | Description |
 |---------|-------------|
 | `npm run tauri dev` | Run the app in dev mode |
+| `npm run build:app` | Build the production app bundle with the bundled CLI |
+| `npm run install:app` | Build and install the local macOS app into `/Applications` |
 | `npm run test` | Frontend unit tests |
 | `npm run test:rust` | Rust tests |
 | `npm run lint` / `lint:fix` | ESLint + Svelte check |

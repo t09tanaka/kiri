@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:cli": "cargo build -p kiri-cli --release",
+    "build:app": "npm run build:cli && npm run tauri -- build --bundles app",
+    "install:app": "npm run build:app && tsx scripts/install-local-app.ts",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "lint": "eslint .",
