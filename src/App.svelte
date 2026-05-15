@@ -535,11 +535,15 @@
       });
     }
 
-    // Listen for menu-open-recent event from Rust menu handler
+    // Listen for menu-open-recent event from Rust menu handler.
+    // Bump the recent timestamp before delegating to focus_or_create_window
+    // because that command only focuses an existing window without calling
+    // openProject — so the lastOpened wouldn't update otherwise.
     const unlistenOpenRecent = await listen<string>('menu-open-recent', async (event) => {
       const path = event.payload;
       if (path) {
         try {
+          await projectStore.bumpRecentTimestamp(path);
           await invoke('focus_or_create_window', { projectPath: path });
         } catch (error) {
           console.error('Failed to open recent project:', error);

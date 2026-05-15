@@ -104,32 +104,30 @@ function createProjectStore() {
         gitBranch,
       };
 
-      let updatedProjects: RecentProject[] = [];
+      // Re-read from disk before computing the new list so concurrent updates
+      // from other windows aren't clobbered by this window's stale in-memory
+      // copy.
+      const latestProjects = await loadRecentProjects();
+      const existingIndex = latestProjects.findIndex((p) => p.path === path);
+      const merged =
+        existingIndex >= 0
+          ? [
+              newProject,
+              ...latestProjects.slice(0, existingIndex),
+              ...latestProjects.slice(existingIndex + 1),
+            ]
+          : [newProject, ...latestProjects];
+      const updatedProjects = merged.slice(0, MAX_RECENT_PROJECTS);
 
-      update((state) => {
-        const existingIndex = state.recentProjects.findIndex((p) => p.path === path);
+      update((state) => ({
+        ...state,
+        currentPath: path,
+        recentProjects: updatedProjects,
+      }));
 
-        if (existingIndex >= 0) {
-          updatedProjects = [
-            newProject,
-            ...state.recentProjects.slice(0, existingIndex),
-            ...state.recentProjects.slice(existingIndex + 1),
-          ];
-        } else {
-          updatedProjects = [newProject, ...state.recentProjects];
-        }
-
-        updatedProjects = updatedProjects.slice(0, MAX_RECENT_PROJECTS);
-
-        saveRecentProjects(updatedProjects);
-
-        return {
-          ...state,
-          currentPath: path,
-          recentProjects: updatedProjects,
-        };
-      });
-
+      // Await the save so silent failures surface in logs and so the next
+      // operation observes the disk state we just wrote.
+      await saveRecentProjects(updatedProjects);
       await emitRecentMenuUpdate(updatedProjects);
 
       // Resize window to main editor size when opening a project
@@ -138,6 +136,36 @@ function createProjectStore() {
       } catch (error) {
         console.error('Failed to resize window:', error);
       }
+    },
+
+    /**
+     * Update the lastOpened timestamp for a project without changing the
+     * current window's currentPath. Used when the user opens a project via
+     * the "Open Recent" menu and the target window already exists (so
+     * openProject() is never called by that window).
+     */
+    async bumpRecentTimestamp(path: string) {
+      const latestProjects = await loadRecentProjects();
+      const existingIndex = latestProjects.findIndex((p) => p.path === path);
+      if (existingIndex < 0) return;
+
+      const bumped: RecentProject = {
+        ...latestProjects[existingIndex],
+        lastOpened: Date.now(),
+      };
+      const updatedProjects = [
+        bumped,
+        ...latestProjects.slice(0, existingIndex),
+        ...latestProjects.slice(existingIndex + 1),
+      ].slice(0, MAX_RECENT_PROJECTS);
+
+      update((state) => ({
+        ...state,
+        recentProjects: updatedProjects,
+      }));
+
+      await saveRecentProjects(updatedProjects);
+      await emitRecentMenuUpdate(updatedProjects);
     },
 
     async closeProject() {
@@ -191,29 +219,25 @@ function createProjectStore() {
     },
 
     async removeProject(path: string) {
-      let updatedProjects: RecentProject[] = [];
+      const latestProjects = await loadRecentProjects();
+      const updatedProjects = latestProjects.filter((p) => p.path !== path);
 
-      update((state) => {
-        updatedProjects = state.recentProjects.filter((p) => p.path !== path);
-        saveRecentProjects(updatedProjects);
-        return {
-          ...state,
-          recentProjects: updatedProjects,
-        };
-      });
+      update((state) => ({
+        ...state,
+        recentProjects: updatedProjects,
+      }));
 
+      await saveRecentProjects(updatedProjects);
       await emitRecentMenuUpdate(updatedProjects);
     },
 
     async clearRecentProjects() {
-      update((state) => {
-        saveRecentProjects([]);
-        return {
-          ...state,
-          recentProjects: [],
-        };
-      });
+      update((state) => ({
+        ...state,
+        recentProjects: [],
+      }));
 
+      await saveRecentProjects([]);
       await emitRecentMenuUpdate([]);
     },
 

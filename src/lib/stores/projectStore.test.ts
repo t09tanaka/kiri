@@ -401,6 +401,70 @@ describe('projectStore', () => {
     });
   });
 
+  describe('bumpRecentTimestamp', () => {
+    it('should update lastOpened and move the project to the front without changing currentPath', async () => {
+      const before = Date.now() - 1000;
+      mockStoreInstance.get.mockResolvedValue([
+        { path: '/first', name: 'first', lastOpened: before },
+        { path: '/second', name: 'second', lastOpened: before - 100 },
+      ]);
+
+      const { projectStore, recentProjects, currentProjectPath } = await import('./projectStore');
+      await projectStore.init();
+
+      await projectStore.bumpRecentTimestamp('/second');
+
+      const projects = get(recentProjects);
+      expect(projects[0].path).toBe('/second');
+      expect(projects[0].lastOpened).toBeGreaterThan(before);
+      expect(projects[1].path).toBe('/first');
+      // bumpRecentTimestamp must not change the open project.
+      expect(get(currentProjectPath)).toBeNull();
+      expect(mockStoreInstance.set).toHaveBeenCalledWith(
+        'recentProjects',
+        expect.arrayContaining([expect.objectContaining({ path: '/second' })])
+      );
+    });
+
+    it('should do nothing when the path is not in the recent list', async () => {
+      mockStoreInstance.get.mockResolvedValue([{ path: '/a', name: 'a', lastOpened: 1 }]);
+
+      const { projectStore, recentProjects } = await import('./projectStore');
+      await projectStore.init();
+      mockStoreInstance.set.mockClear();
+      mockStoreInstance.save.mockClear();
+
+      await projectStore.bumpRecentTimestamp('/missing');
+
+      expect(get(recentProjects).map((p) => p.path)).toEqual(['/a']);
+      expect(mockStoreInstance.set).not.toHaveBeenCalled();
+      expect(mockStoreInstance.save).not.toHaveBeenCalled();
+    });
+
+    it('should reload from disk so concurrent writes from other windows are picked up', async () => {
+      // Initial state: only /a is on disk.
+      mockStoreInstance.get.mockResolvedValueOnce([{ path: '/a', name: 'a', lastOpened: 1 }]);
+
+      const { projectStore } = await import('./projectStore');
+      await projectStore.init();
+
+      // Simulate another window having written a new entry between init and bump.
+      mockStoreInstance.get.mockResolvedValueOnce([
+        { path: '/a', name: 'a', lastOpened: 1 },
+        { path: '/b', name: 'b', lastOpened: 2 },
+      ]);
+
+      await projectStore.bumpRecentTimestamp('/b');
+
+      // The saved list must include /b even though it was never in this window's
+      // in-memory state.
+      const setCall = mockStoreInstance.set.mock.calls.find((c) => c[0] === 'recentProjects');
+      expect(setCall).toBeDefined();
+      const savedList = setCall![1] as Array<{ path: string }>;
+      expect(savedList.map((p) => p.path)).toContain('/b');
+    });
+  });
+
   describe('getCurrentPath', () => {
     it('should return null when no project is open', async () => {
       mockStoreInstance.get.mockResolvedValue([]);
