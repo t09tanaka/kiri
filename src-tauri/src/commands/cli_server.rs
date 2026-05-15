@@ -32,6 +32,7 @@ pub struct CliServerHandle {
     stop: Mutex<Option<oneshot::Sender<()>>>,
     pub pending: Arc<frontend_bridge::PendingReplies>,
     pub pane_map: Arc<pane_map::PaneMap>,
+    pub buffers: Arc<dispatch::TerminalBuffers>,
     pub signals: Arc<signals::SignalRegistry>,
 }
 
@@ -118,7 +119,7 @@ pub fn spawn_for_window(
         bus,
         pane_map: pane_map.clone(),
         pending: pending.clone(),
-        buffers,
+        buffers: buffers.clone(),
         signals: signals.clone(),
     };
 
@@ -161,6 +162,7 @@ pub fn spawn_for_window(
         stop: Mutex::new(Some(stop_tx)),
         pending,
         pane_map,
+        buffers,
         signals,
     })
 }
@@ -224,7 +226,10 @@ pub fn cli_update_pane_map(
     // which then calls back into this command with the new layout).
     let known: std::collections::HashSet<String> =
         panes.iter().map(|p| p.pane_id.clone()).collect();
+    let known_terminal_ids: std::collections::HashSet<u32> =
+        panes.iter().map(|p| p.terminal_id).collect();
     handle.pane_map.replace(panes);
+    handle.buffers.retain_terminal_ids(&known_terminal_ids);
     handle.signals.retain(&known);
     Ok(())
 }

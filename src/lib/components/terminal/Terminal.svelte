@@ -83,6 +83,11 @@
   // See: https://github.com/vadimdemedes/ink/issues/450
   // When Ink renders at exactly terminal height, unintended scrolling occurs
   const PTY_ROW_MARGIN = 1;
+  const TERMINAL_SCROLLBACK_LINES = 3000;
+  const PROCESS_POLL_INTERVAL_MS = 5000;
+  const CWD_POLL_INTERVAL_MS = 15000;
+  const MAX_SYNC_BUFFER_CHARS = 512 * 1024;
+  const MAX_PENDING_WRITE_CHARS = 512 * 1024;
 
   // Resize stability: drop output during resize to prevent partial frame rendering
   // This acts as an additional sync layer on top of Mode 2026
@@ -248,14 +253,12 @@
     }
 
     // Dynamic imports for xterm modules
-    const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { CanvasAddon }, { WebglAddon }] =
-      await Promise.all([
-        import('@xterm/xterm'),
-        import('@xterm/addon-fit'),
-        import('@xterm/addon-web-links'),
-        import('@xterm/addon-canvas'),
-        import('@xterm/addon-webgl'),
-      ]);
+    const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { CanvasAddon }] = await Promise.all([
+      import('@xterm/xterm'),
+      import('@xterm/addon-fit'),
+      import('@xterm/addon-web-links'),
+      import('@xterm/addon-canvas'),
+    ]);
 
     // Get current font size from store
     const currentFontSize = get(fontSize);
@@ -272,7 +275,7 @@
       letterSpacing: 0,
       allowTransparency: true,
       theme: mistTheme,
-      scrollback: 10000,
+      scrollback: TERMINAL_SCROLLBACK_LINES,
       smoothScrollDuration: 150,
       macOptionIsMeta: true,
       altClickMovesCursor: true,
@@ -311,22 +314,9 @@
       })
     );
 
-    // Try WebGL first for GPU-accelerated rendering (better performance)
-    // Fall back to Canvas if WebGL is not available or fails
-    let webglAddon: InstanceType<typeof WebglAddon> | null = null;
-    try {
-      webglAddon = new WebglAddon();
-      // Handle WebGL context loss - browser may drop context for various reasons (OOM, suspend, etc.)
-      webglAddon.onContextLoss(() => {
-        console.warn('[Terminal] WebGL context lost, falling back to Canvas renderer');
-        webglAddon?.dispose();
-        terminal.loadAddon(new CanvasAddon());
-      });
-      terminal.loadAddon(webglAddon);
-    } catch (e) {
-      console.warn('[Terminal] WebGL not available, using Canvas renderer:', e);
-      terminal.loadAddon(new CanvasAddon());
-    }
+    // Canvas avoids one WebGL context per pane, which keeps multi-agent memory
+    // and GPU resource use lower.
+    terminal.loadAddon(new CanvasAddon());
 
     // Register file path link provider for peek editor
     terminal.registerLinkProvider(
@@ -451,6 +441,13 @@
       // Debug flag - set to true to enable sync mode logging
       const DEBUG_SYNC_MODE = false;
 
+      const appendCapped = (current: string, next: string, maxChars: number): string => {
+        if (!next) return current;
+        const combined = current + next;
+        if (combined.length <= maxChars) return combined;
+        return combined.slice(combined.length - maxChars);
+      };
+
       // Flush all pending writes in a single animation frame
       const flushWrites = () => {
         if (pendingWrite && terminal) {
@@ -476,7 +473,7 @@
         if (isResizing && initialSetupComplete) {
           return;
         }
-        pendingWrite += data;
+        pendingWrite = appendCapped(pendingWrite, data, MAX_PENDING_WRITE_CHARS);
         if (!writeScheduled) {
           writeScheduled = true;
           requestAnimationFrame(flushWrites);
@@ -508,7 +505,11 @@
               const endIndex = data.indexOf(SYNC_END);
               if (endIndex !== -1) {
                 // Add content before end marker to buffer
-                syncBuffer += data.substring(0, endIndex);
+                syncBuffer = appendCapped(
+                  syncBuffer,
+                  data.substring(0, endIndex),
+                  MAX_SYNC_BUFFER_CHARS
+                );
                 // Schedule the entire buffered frame for next animation frame
                 scheduleWrite(syncBuffer);
                 syncFrameCount++;
@@ -523,7 +524,7 @@
                 data = data.substring(endIndex + SYNC_END.length);
               } else {
                 // No end marker yet, buffer entire chunk
-                syncBuffer += data;
+                syncBuffer = appendCapped(syncBuffer, data, MAX_SYNC_BUFFER_CHARS);
                 data = '';
               }
             } else {
@@ -743,6 +744,7 @@
 
   // Poll foreground process name to drive the AI shortcut bar
   let processPollInterval: ReturnType<typeof setInterval> | null = null;
+  let lastCwdPollAt = 0;
 
   async function updateProcessInfo() {
     if (terminalId === null) return;
@@ -750,10 +752,14 @@
       const info = await terminalService.getProcessInfo(terminalId);
       processName = info.name;
 
-      const cwd = await terminalService.getCwd(terminalId);
-      if (cwd !== lastCwd) {
-        lastCwd = cwd;
-        worktreeInfo = cwd ? await gitService.getWorktreeInfo(cwd) : null;
+      const now = Date.now();
+      if (now - lastCwdPollAt >= CWD_POLL_INTERVAL_MS) {
+        lastCwdPollAt = now;
+        const cwd = await terminalService.getCwd(terminalId);
+        if (cwd !== lastCwd) {
+          lastCwd = cwd;
+          worktreeInfo = cwd ? await gitService.getWorktreeInfo(cwd) : null;
+        }
       }
     } catch {
       // Terminal may have been closed
@@ -817,7 +823,7 @@
     // Start process info polling after terminal initializes
     setTimeout(() => {
       updateProcessInfo();
-      processPollInterval = setInterval(updateProcessInfo, 2000);
+      processPollInterval = setInterval(updateProcessInfo, PROCESS_POLL_INTERVAL_MS);
     }, 1500);
 
     // Subscribe to font size changes and update terminal

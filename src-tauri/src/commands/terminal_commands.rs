@@ -7,11 +7,97 @@ use super::terminal::{
     resolve_terminal_size, CliEnv, PtyInstance, TerminalOutput, TerminalOutputBusState,
     TerminalState,
 };
+use lazy_static::lazy_static;
 use serde::Serialize;
 use std::io::{Read, Write};
 use std::str;
+use std::sync::Mutex;
 use std::thread;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
+
+const PROCESS_SNAPSHOT_TTL: Duration = Duration::from_millis(1500);
+
+/// Process info returned by get_terminal_process_info
+#[derive(Debug, Clone, Serialize)]
+pub struct TerminalProcessInfo {
+    pub name: String,
+    pub memory_bytes: u64,
+}
+
+#[derive(Clone)]
+struct ProcessRecord {
+    pid: u32,
+    parent_pid: Option<u32>,
+    name: String,
+    memory_bytes: u64,
+}
+
+#[derive(Default)]
+struct ProcessSnapshotCache {
+    refreshed_at: Option<Instant>,
+    records: Vec<ProcessRecord>,
+}
+
+lazy_static! {
+    static ref PROCESS_SNAPSHOT_CACHE: Mutex<ProcessSnapshotCache> =
+        Mutex::new(ProcessSnapshotCache::default());
+}
+
+fn process_snapshot_records() -> Vec<ProcessRecord> {
+    let mut cache = PROCESS_SNAPSHOT_CACHE
+        .lock()
+        .expect("process snapshot cache mutex poisoned");
+    if cache
+        .refreshed_at
+        .map(|t| t.elapsed() < PROCESS_SNAPSHOT_TTL)
+        .unwrap_or(false)
+    {
+        return cache.records.clone();
+    }
+
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    let records = sys
+        .processes()
+        .iter()
+        .map(|(pid, proc)| ProcessRecord {
+            pid: pid.as_u32(),
+            parent_pid: proc.parent().map(|p| p.as_u32()),
+            name: proc.name().to_string_lossy().to_string(),
+            memory_bytes: proc.memory(),
+        })
+        .collect::<Vec<_>>();
+
+    cache.refreshed_at = Some(Instant::now());
+    cache.records = records.clone();
+    records
+}
+
+pub fn process_info_for_shell_pid(shell_pid: u32) -> TerminalProcessInfo {
+    let records = process_snapshot_records();
+    let shell = records.iter().find(|p| p.pid == shell_pid);
+    let children = records
+        .iter()
+        .filter(|p| p.parent_pid == Some(shell_pid))
+        .collect::<Vec<_>>();
+
+    let memory_bytes = shell.map(|p| p.memory_bytes).unwrap_or(0)
+        + children.iter().map(|p| p.memory_bytes).sum::<u64>();
+    let name = children
+        .first()
+        .map(|p| p.name.clone())
+        .or_else(|| shell.map(|p| p.name.clone()))
+        .unwrap_or_else(|| "Terminal".to_string());
+
+    TerminalProcessInfo { name, memory_bytes }
+}
+
+pub fn shell_has_child_process(shell_pid: u32) -> bool {
+    process_snapshot_records()
+        .iter()
+        .any(|p| p.parent_pid == Some(shell_pid))
+}
 
 /// Build the per-PTY CLI env (PATH + KIRI_SOCKET + KIRI_WINDOW_LABEL) for
 /// the given window label. Returns `None` when the home directory can't
@@ -198,19 +284,17 @@ pub fn close_terminal(
 ) -> Result<(), String> {
     let mut manager = state.lock().map_err(|e| e.to_string())?;
 
-    if manager.instances.remove(&id).is_some() {
+    if let Some(mut instance) = manager.instances.remove(&id) {
         bus.close(id);
+        drop(manager);
+        thread::spawn(move || {
+            let _ = instance.child.kill();
+            let _ = instance.child.wait();
+        });
         Ok(())
     } else {
         Err(format!("Terminal {} not found", id))
     }
-}
-
-/// Process info returned by get_terminal_process_info
-#[derive(Debug, Clone, Serialize)]
-pub struct TerminalProcessInfo {
-    pub name: String,
-    pub memory_bytes: u64,
 }
 
 /// Get the foreground process name and total memory usage for a terminal
@@ -225,64 +309,22 @@ pub fn get_terminal_process_info(
         memory_bytes: 0,
     };
 
-    let mut manager = state.lock().map_err(|e| e.to_string())?;
-
-    if let Some(instance) = manager.instances.get_mut(&id) {
-        // Check if shell has exited
+    let shell_pid = {
+        let mut manager = state.lock().map_err(|e| e.to_string())?;
+        let Some(instance) = manager.instances.get_mut(&id) else {
+            return Ok(default_info);
+        };
         match instance.child.try_wait() {
             Ok(Some(_)) => return Ok(default_info),
             Ok(None) => {}
             Err(_) => return Ok(default_info),
         }
+        instance.shell_pid
+    };
 
-        if let Some(shell_pid) = instance.shell_pid {
-            use sysinfo::System;
-
-            let mut sys = System::new();
-            sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
-
-            // Collect memory from shell + all descendants
-            let mut total_memory: u64 = 0;
-
-            // Add shell process memory
-            if let Some(shell_proc) = sys.process(sysinfo::Pid::from_u32(shell_pid)) {
-                total_memory += shell_proc.memory();
-            }
-
-            // Find child processes and sum their memory
-            let child_processes: Vec<_> = sys
-                .processes()
-                .values()
-                .filter(|proc| {
-                    proc.parent()
-                        .map(|parent_pid| parent_pid.as_u32() == shell_pid)
-                        .unwrap_or(false)
-                })
-                .collect();
-
-            for child in &child_processes {
-                total_memory += child.memory();
-            }
-
-            // Determine the display name
-            let name = if let Some(child) = child_processes.first() {
-                child.name().to_string_lossy().to_string()
-            } else if let Some(shell_proc) = sys.process(sysinfo::Pid::from_u32(shell_pid)) {
-                shell_proc.name().to_string_lossy().to_string()
-            } else {
-                "Terminal".to_string()
-            };
-
-            Ok(TerminalProcessInfo {
-                name,
-                memory_bytes: total_memory,
-            })
-        } else {
-            Ok(default_info)
-        }
-    } else {
-        Ok(default_info)
-    }
+    Ok(shell_pid
+        .map(process_info_for_shell_pid)
+        .unwrap_or(default_info))
 }
 
 /// Get the name of the foreground process running in a terminal
@@ -326,37 +368,18 @@ pub fn get_terminal_cwd(
 /// false if the shell is idle (waiting at prompt)
 #[tauri::command]
 pub fn is_terminal_alive(state: tauri::State<'_, TerminalState>, id: u32) -> Result<bool, String> {
-    let mut manager = state.lock().map_err(|e| e.to_string())?;
-
-    if let Some(instance) = manager.instances.get_mut(&id) {
-        // First check if shell itself has exited
+    let shell_pid = {
+        let mut manager = state.lock().map_err(|e| e.to_string())?;
+        let Some(instance) = manager.instances.get_mut(&id) else {
+            return Ok(false);
+        };
         match instance.child.try_wait() {
-            Ok(Some(_)) => return Ok(false), // Shell has exited, no foreground process
-            Ok(None) => {}                   // Shell is running, continue to check children
+            Ok(Some(_)) => return Ok(false),
+            Ok(None) => {}
             Err(e) => return Err(format!("Failed to check terminal status: {}", e)),
         }
+        instance.shell_pid
+    };
 
-        // Check if shell has any child processes (foreground process)
-        if let Some(shell_pid) = instance.shell_pid {
-            use sysinfo::System;
-
-            let mut sys = System::new();
-            sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
-
-            // Look for any process whose parent is the shell
-            let has_child = sys.processes().values().any(|proc| {
-                proc.parent()
-                    .map(|parent_pid| parent_pid.as_u32() == shell_pid)
-                    .unwrap_or(false)
-            });
-
-            Ok(has_child)
-        } else {
-            // No PID available, assume no foreground process
-            Ok(false)
-        }
-    } else {
-        // Terminal not found
-        Ok(false)
-    }
+    Ok(shell_pid.map(shell_has_child_process).unwrap_or(false))
 }
