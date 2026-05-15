@@ -21,6 +21,9 @@ pub enum SignalTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Request {
+    /// Ask the server which window/project this socket belongs to.
+    /// Used by the CLI to refuse acting on a different project's window.
+    WhoAmI,
     Ls,
     Run {
         pane: PaneRef,
@@ -153,6 +156,11 @@ pub struct SignalEntry {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {
+    WhoAmI {
+        window_label: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project_path: Option<String>,
+    },
     Ls {
         panes: Vec<PaneInfo>,
     },
@@ -471,6 +479,33 @@ mod tests {
             color: None,
             minimized: true,
         });
+    }
+
+    #[test]
+    fn request_whoami_serializes() {
+        let v = serde_json::to_value(Request::WhoAmI).unwrap();
+        assert_eq!(v, serde_json::json!({ "type": "who_am_i" }));
+        roundtrip(&Request::WhoAmI);
+    }
+
+    #[test]
+    fn response_whoami_with_project_round_trip() {
+        roundtrip(&Response::WhoAmI {
+            window_label: "window-1".into(),
+            project_path: Some("/Users/u/projects/kiri".into()),
+        });
+    }
+
+    #[test]
+    fn response_whoami_without_project_omits_field() {
+        let v = serde_json::to_value(Response::WhoAmI {
+            window_label: "window-2".into(),
+            project_path: None,
+        })
+        .unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("project_path"));
+        assert_eq!(obj.get("window_label").unwrap(), "window-2");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use clap::Parser;
 use cli::{Cli, SignalCmd, SignalTargetArg, TermCmd, Top};
 use kiri_cli_proto::{PaneColor, Request, Response, SignalTarget, SplitDirection};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
@@ -66,12 +66,13 @@ async fn run() -> Result<i32> {
 /// Resolve the kiri socket to use, in priority order:
 ///
 /// 1. `$KIRI_SOCKET` — if set AND the socket file exists AND a connection
-///    succeeds. This is the happy path inside a live kiri terminal.
-/// 2. Discovery — scan `~/.kiri/instances/*.sock` and pick the one that
-///    accepts a connection. This rescues stale-env situations (the
-///    original kiri instance died, leaving `KIRI_SOCKET` pointing at a
-///    deleted file) and stale-file situations (the socket file remains
-///    on disk but no listener is bound).
+///    succeeds. Trusted as-is: inside a kiri terminal the env var points
+///    to that terminal's own window.
+/// 2. Discovery — scan `~/.kiri/instances/*.sock` for live sockets. When
+///    the current working directory is inside a project, only sockets
+///    whose window has that same project open are considered. This
+///    prevents the CLI from silently opening panes in a different
+///    project's window when `KIRI_SOCKET` is stale or unset.
 async fn resolve_socket() -> Result<PathBuf> {
     if let Ok(value) = std::env::var("KIRI_SOCKET") {
         if !value.is_empty() {
@@ -80,7 +81,7 @@ async fn resolve_socket() -> Result<PathBuf> {
                 return Ok(p);
             }
             eprintln!(
-                "warning: KIRI_SOCKET={} is stale — searching for an active kiri window",
+                "warning: KIRI_SOCKET={} is stale — searching for a kiri window for the current project",
                 p.display()
             );
         }
@@ -99,8 +100,8 @@ async fn resolve_socket() -> Result<PathBuf> {
         }
     };
 
-    let mut alive = Vec::new();
-    let mut stale = Vec::new();
+    let mut alive: Vec<PathBuf> = Vec::new();
+    let mut stale: Vec<PathBuf> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("sock") {
@@ -113,21 +114,107 @@ async fn resolve_socket() -> Result<PathBuf> {
         }
     }
 
+    if alive.is_empty() {
+        return if stale.is_empty() {
+            Err(anyhow!(
+                "no kiri windows are running — open a project window in kiri first"
+            ))
+        } else {
+            Err(anyhow!(
+                "found {} stale socket file(s) but no live kiri window: {:?}",
+                stale.len(),
+                stale
+            ))
+        };
+    }
+
+    let cwd = std::env::current_dir().ok();
+    let cwd_project = cwd.as_deref().and_then(current_project_root);
+
+    if let Some(project) = cwd_project.as_deref() {
+        let mut matches: Vec<PathBuf> = Vec::new();
+        for sock in &alive {
+            if let Some(window_project) = query_window_project(sock).await {
+                if is_same_or_within_project(&window_project, project) {
+                    matches.push(sock.clone());
+                }
+            }
+        }
+        return match matches.len() {
+            1 => Ok(matches.into_iter().next().unwrap()),
+            0 => Err(anyhow!(
+                "no kiri window is open for the current project ({}). Open it in kiri, or run from a directory inside the project you want to target.",
+                project.display()
+            )),
+            _ => Err(anyhow!(
+                "multiple kiri windows are open for the current project — set KIRI_SOCKET explicitly to one of: {:?}",
+                matches
+            )),
+        };
+    }
+
+    // No project context (cwd is outside any git repo): preserve the
+    // legacy behaviour of "use the only live window, or refuse if there
+    // are several".
     match alive.len() {
-        0 if stale.is_empty() => Err(anyhow!(
-            "no kiri windows are running — open a project window in kiri first"
-        )),
-        0 => Err(anyhow!(
-            "found {} stale socket file(s) but no live kiri window: {:?}",
-            stale.len(),
-            stale
-        )),
         1 => Ok(alive.into_iter().next().unwrap()),
         _ => Err(anyhow!(
-            "multiple kiri windows are running — set KIRI_SOCKET explicitly to one of: {:?}",
+            "multiple kiri windows are running and no project context is available — \
+             set KIRI_SOCKET explicitly to one of: {:?}",
             alive
         )),
     }
+}
+
+/// Walk up from `start` looking for a `.git` entry (directory or file).
+/// Returns the directory that contains `.git`, i.e. the project root.
+///
+/// Worktree checkouts have `.git` as a file rather than a directory, but
+/// either form marks the worktree's own root — that's what we want, so
+/// the same parallel/worktree branch inside the project still resolves
+/// to a path covered by the kiri window's project root via
+/// [`is_same_or_within_project`].
+pub(crate) fn current_project_root(start: &Path) -> Option<PathBuf> {
+    let mut cur: &Path = start;
+    loop {
+        if cur.join(".git").exists() {
+            return Some(cur.to_path_buf());
+        }
+        match cur.parent() {
+            Some(p) if p != cur => cur = p,
+            _ => return None,
+        }
+    }
+}
+
+/// Does `cwd_project` live inside (or equal) the window's `project`?
+///
+/// Used to allow a `kiri term split` from a worktree subdirectory of a
+/// project to still resolve to the kiri window that has the project
+/// open. Paths are canonicalised before comparison so symlinks don't
+/// hide a match.
+pub(crate) fn is_same_or_within_project(window_project: &Path, cwd_project: &Path) -> bool {
+    let a = window_project
+        .canonicalize()
+        .unwrap_or_else(|_| window_project.to_path_buf());
+    let b = cwd_project
+        .canonicalize()
+        .unwrap_or_else(|_| cwd_project.to_path_buf());
+    b.starts_with(&a)
+}
+
+/// Ask the kiri server on `sock` which project is open. Returns `None`
+/// on transport/protocol error or if the window has no project
+/// registered. Errors are swallowed so one bad socket does not abort
+/// discovery of the others.
+async fn query_window_project(sock: &Path) -> Option<PathBuf> {
+    let responses = transport::send(sock, &Request::WhoAmI).await.ok()?;
+    for resp in responses {
+        if let Response::WhoAmI { project_path, .. } = resp {
+            return project_path.map(PathBuf::from);
+        }
+    }
+    None
 }
 
 /// Cheap liveness probe: try to connect, drop the connection immediately.
@@ -227,6 +314,8 @@ fn build_request(cmd: TermCmd) -> Result<Request> {
 mod tests {
     use super::*;
     use clap::Parser;
+    use std::fs;
+    use std::path::Path;
 
     fn parse_term(args: &[&str]) -> TermCmd {
         let cli = Cli::try_parse_from(args).unwrap();
@@ -287,5 +376,73 @@ mod tests {
     fn build_request_set_label_rejects_empty_update() {
         let err = build_request(parse_term(&["kiri", "term", "set-label"]));
         assert!(err.is_err(), "empty set-label should be rejected");
+    }
+
+    #[test]
+    fn current_project_root_finds_git_directory_in_self() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        let found = current_project_root(tmp.path()).expect("project root");
+        assert_eq!(found, tmp.path());
+    }
+
+    #[test]
+    fn current_project_root_walks_up_to_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        let sub = tmp.path().join("a/b/c");
+        fs::create_dir_all(&sub).unwrap();
+        let found = current_project_root(&sub).expect("project root");
+        assert_eq!(found, tmp.path());
+    }
+
+    #[test]
+    fn current_project_root_returns_none_outside_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("no/git/here");
+        fs::create_dir_all(&sub).unwrap();
+        assert!(current_project_root(&sub).is_none());
+    }
+
+    #[test]
+    fn current_project_root_handles_git_file_for_worktrees() {
+        // git worktrees place a `.git` *file* (not directory) at the
+        // worktree root pointing at the parent repo's gitdir.
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join(".git"), "gitdir: /elsewhere\n").unwrap();
+        let found = current_project_root(tmp.path()).expect("project root");
+        assert_eq!(found, tmp.path());
+    }
+
+    #[test]
+    fn same_or_within_matches_equal_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(is_same_or_within_project(tmp.path(), tmp.path()));
+    }
+
+    #[test]
+    fn same_or_within_matches_subdirectory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("src/x");
+        fs::create_dir_all(&sub).unwrap();
+        assert!(is_same_or_within_project(tmp.path(), &sub));
+    }
+
+    #[test]
+    fn same_or_within_rejects_siblings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let a = tmp.path().join("a");
+        let b = tmp.path().join("b");
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        assert!(!is_same_or_within_project(&a, &b));
+    }
+
+    #[test]
+    fn same_or_within_handles_nonexistent_paths() {
+        // The CLI may have to compare against a window's project path
+        // that has since been removed from disk; this must not panic.
+        let phantom = Path::new("/this/path/does/not/exist/anywhere");
+        assert!(is_same_or_within_project(phantom, phantom));
     }
 }
