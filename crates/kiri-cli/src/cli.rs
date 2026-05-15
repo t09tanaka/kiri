@@ -186,6 +186,14 @@ pub struct SendArgs {
     /// Bytes to send. Multiple positional words are joined with a space.
     #[arg(num_args = 1.., required = true)]
     pub data: Vec<String>,
+    /// Skip the automatic submit (`\r`) that is appended when the target
+    /// pane is running an interactive AI assistant (claude / codex).
+    /// Use this to leave the data in the AI's input box without pressing
+    /// Enter — e.g. when building up multi-step input over several
+    /// `send` invocations. Non-AI panes never receive an auto-submit, so
+    /// this flag is a no-op for them.
+    #[arg(long = "no-submit")]
+    pub no_submit: bool,
 }
 
 #[derive(Args, Debug)]
@@ -580,6 +588,29 @@ mod tests {
                 assert_eq!(a.name, "build.done-1_step");
             }
             _ => panic!("expected signal send"),
+        }
+    }
+
+    #[test]
+    fn parse_term_send_defaults_to_auto_submit() {
+        let cli = Cli::try_parse_from(["kiri", "term", "send", "hello world"]).unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Send(a)) => {
+                assert_eq!(a.data, vec!["hello world".to_string()]);
+                assert!(!a.no_submit, "auto-submit must be the default");
+            }
+            _ => panic!("expected term send"),
+        }
+    }
+
+    #[test]
+    fn parse_term_send_no_submit_opt_out() {
+        let cli = Cli::try_parse_from(["kiri", "term", "send", "--no-submit", "draft"]).unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Send(a)) => {
+                assert!(a.no_submit);
+            }
+            _ => panic!("expected term send"),
         }
     }
 

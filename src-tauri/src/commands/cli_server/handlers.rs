@@ -14,7 +14,7 @@ pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
     match req {
         Request::WhoAmI => vec![whoami(ctx).await],
         Request::Ls => vec![ls(ctx).await],
-        Request::Send { pane, data } => vec![send(ctx, pane, data).await],
+        Request::Send { pane, data, submit } => vec![send(ctx, pane, data, submit).await],
         Request::Read { pane, since, tail } => vec![read(ctx, pane, since, tail).await],
         Request::Cancel { pane } => vec![cancel(ctx, pane).await],
         Request::Run {
@@ -150,30 +150,69 @@ fn cwd_for(state: &crate::commands::terminal::TerminalState, id: u32) -> Option<
     crate::commands::terminal::get_process_cwd(pid)
 }
 
-async fn send(ctx: &DispatchContext, p: PaneRef, data: String) -> Response {
+async fn send(ctx: &DispatchContext, p: PaneRef, data: String, submit: bool) -> Response {
     let Some(pane) = ctx.pane_map.resolve(&p) else {
         return pane_not_found(p);
     };
+    // Snapshot the shell pid while we hold the manager lock just long
+    // enough to write `data`. The auto-submit check below talks to
+    // sysinfo, which is slow, so release the lock before that.
+    let shell_pid = {
+        let mut manager = match ctx.terminals.lock() {
+            Ok(g) => g,
+            Err(_) => return internal("terminal state poisoned"),
+        };
+        let Some(instance) = manager.instances.get_mut(&pane.terminal_id) else {
+            return pane_not_found(p);
+        };
+        use std::io::Write;
+        if let Err(e) = instance.writer.write_all(data.as_bytes()) {
+            return pty_error(format!("write failed: {e}"));
+        }
+        if let Err(e) = instance.writer.flush() {
+            return pty_error(format!("flush failed: {e}"));
+        }
+        instance.shell_pid
+    };
+
+    let submitted = submit
+        && shell_pid
+            .map(is_ai_process_for_shell_pid)
+            .unwrap_or(false)
+        && write_submit_sequence(ctx, pane.terminal_id);
+    Response::Send { submitted }
+}
+
+/// True when the foreground process under `shell_pid` is an interactive
+/// AI assistant whose input box accepts a single `\r` as submit. Kept in
+/// sync with the frontend's `isAiProcess` allow list — claude / codex.
+fn is_ai_process_for_shell_pid(shell_pid: u32) -> bool {
+    let info = crate::commands::terminal_commands::process_info_for_shell_pid(shell_pid);
+    matches!(info.name.to_lowercase().as_str(), "claude" | "codex")
+}
+
+/// Append `\r` to the PTY identified by `terminal_id`. Returns true on
+/// success — a write or flush failure is logged but doesn't fail the
+/// surrounding `send` (the data itself has already been delivered).
+fn write_submit_sequence(ctx: &DispatchContext, terminal_id: u32) -> bool {
     let mut manager = match ctx.terminals.lock() {
         Ok(g) => g,
-        Err(_) => return internal("terminal state poisoned"),
+        Err(_) => return false,
     };
-    let Some(instance) = manager.instances.get_mut(&pane.terminal_id) else {
-        return pane_not_found(p);
+    let Some(instance) = manager.instances.get_mut(&terminal_id) else {
+        return false;
     };
     use std::io::Write;
-    if let Err(e) = instance.writer.write_all(data.as_bytes()) {
-        return pty_error(format!("write failed: {e}"));
+    if instance.writer.write_all(b"\r").is_err() {
+        return false;
     }
-    if let Err(e) = instance.writer.flush() {
-        return pty_error(format!("flush failed: {e}"));
-    }
-    Response::Send
+    instance.writer.flush().is_ok()
 }
 
 async fn cancel(ctx: &DispatchContext, p: PaneRef) -> Response {
-    match send(ctx, p, "\x03".into()).await {
-        Response::Send => Response::Cancel,
+    // Cancel always sends a raw Ctrl-C, never auto-submits.
+    match send(ctx, p, "\x03".into(), false).await {
+        Response::Send { .. } => Response::Cancel,
         other => other,
     }
 }
@@ -1131,7 +1170,7 @@ mod tests {
     #[tokio::test]
     async fn send_to_unknown_pane_returns_pane_not_found() {
         let (ctx, _bus) = make_ctx(vec![]);
-        let resp = send(&ctx, PaneRef::Index(99), "data".into()).await;
+        let resp = send(&ctx, PaneRef::Index(99), "data".into(), false).await;
         match resp {
             Response::Error { code, .. } => assert_eq!(code, ErrorCode::PaneNotFound),
             other => panic!("expected Error, got {other:?}"),
