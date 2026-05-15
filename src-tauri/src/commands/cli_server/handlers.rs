@@ -8,6 +8,8 @@ use tauri::Emitter;
 use tokio::sync::broadcast;
 use tokio::time::{timeout, Duration};
 
+const MAX_RUN_CAPTURE_BYTES: usize = 8 * 1024 * 1024;
+
 pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
     match req {
         Request::WhoAmI => vec![whoami(ctx).await],
@@ -83,8 +85,7 @@ async fn ls(ctx: &DispatchContext) -> Response {
     let entries = ctx.pane_map.snapshot();
     let mut panes = Vec::with_capacity(entries.len());
     for e in entries {
-        let (process_name, memory_bytes, running) =
-            process_info_for(&ctx.terminals, e.terminal_id);
+        let (process_name, memory_bytes, running) = process_info_for(&ctx.terminals, e.terminal_id);
         let cwd = cwd_for(&ctx.terminals, e.terminal_id);
         panes.push(kiri_cli_proto::PaneInfo {
             index: e.index,
@@ -107,8 +108,6 @@ fn process_info_for(
     state: &crate::commands::terminal::TerminalState,
     id: u32,
 ) -> (String, u64, bool) {
-    use sysinfo::{Pid, ProcessesToUpdate, System};
-
     // Phase 1: hold the TerminalState mutex only for the cheap lookup.
     // Sysinfo's full process scan is slow (50–200ms on macOS) and we
     // must not block create_terminal/write_terminal/etc. for that long.
@@ -129,33 +128,11 @@ fn process_info_for(
         }
     };
 
-    // Phase 2: sysinfo scan happens with no kiri locks held.
-    let mut sys = System::new();
-    sys.refresh_processes(ProcessesToUpdate::All);
-    let mut total: u64 = 0;
-    if let Some(p) = sys.process(Pid::from_u32(shell_pid)) {
-        total += p.memory();
-    }
-    let children: Vec<_> = sys
-        .processes()
-        .values()
-        .filter(|p| {
-            p.parent()
-                .map(|pp| pp.as_u32() == shell_pid)
-                .unwrap_or(false)
-        })
-        .collect();
-    for c in &children {
-        total += c.memory();
-    }
-    let name = if let Some(c) = children.first() {
-        c.name().to_string_lossy().to_string()
-    } else if let Some(p) = sys.process(Pid::from_u32(shell_pid)) {
-        p.name().to_string_lossy().to_string()
-    } else {
-        "Terminal".to_string()
-    };
-    (name, total, !children.is_empty())
+    // Phase 2: process snapshot is shared with the frontend polling path,
+    // so multiple panes sampled together do not each refresh the full table.
+    let info = crate::commands::terminal_commands::process_info_for_shell_pid(shell_pid);
+    let running = crate::commands::terminal_commands::shell_has_child_process(shell_pid);
+    (info.name, info.memory_bytes, running)
 }
 
 fn cwd_for(state: &crate::commands::terminal::TerminalState, id: u32) -> Option<String> {
@@ -260,7 +237,6 @@ async fn run(
 
     // Busy-check: if the shell currently has child processes, refuse.
     {
-        use sysinfo::{ProcessesToUpdate, System};
         let pid_opt = {
             let mut manager = match ctx.terminals.lock() {
                 Ok(g) => g,
@@ -275,28 +251,13 @@ async fn run(
             instance.shell_pid
         };
         if let Some(pid) = pid_opt {
-            let mut sys = System::new();
-            sys.refresh_processes(ProcessesToUpdate::All);
-            let mut name: Option<String> = None;
-            let busy = sys.processes().values().any(|proc| {
-                let is_child = proc
-                    .parent()
-                    .map(|pp| pp.as_u32() == pid)
-                    .unwrap_or(false);
-                if is_child && name.is_none() {
-                    name = Some(proc.name().to_string_lossy().to_string());
-                }
-                is_child
-            });
+            let busy = crate::commands::terminal_commands::shell_has_child_process(pid);
             if busy {
+                let info = crate::commands::terminal_commands::process_info_for_shell_pid(pid);
                 return Response::Error {
                     code: ErrorCode::PaneBusy,
-                    message: format!(
-                        "pane {} is running '{}'",
-                        pane.index,
-                        name.clone().unwrap_or_else(|| "unknown".into())
-                    ),
-                    detail: Some(serde_json::json!({ "process": name })),
+                    message: format!("pane {} is running '{}'", pane.index, info.name),
+                    detail: Some(serde_json::json!({ "process": info.name })),
                 };
             }
         }
@@ -326,27 +287,37 @@ async fn run(
 
     let collect = async {
         let mut acc: Vec<u8> = Vec::new();
+        let mut capture_truncated = false;
         loop {
             match rx.recv().await {
                 Ok(chunk) => {
                     acc.extend_from_slice(&chunk);
+                    if acc.len() > MAX_RUN_CAPTURE_BYTES {
+                        let overflow = acc.len() - MAX_RUN_CAPTURE_BYTES;
+                        acc.drain(0..overflow);
+                        capture_truncated = true;
+                    }
                     if let Some((exit, start, end)) = sentinel.find(&acc) {
                         let text = extract_output(&acc, &cmd, start, end);
-                        return (Some(exit), text);
+                        return (Some(exit), text, capture_truncated);
                     }
                 }
                 Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => {
-                    return (None, String::from_utf8_lossy(&acc).into_owned());
+                    return (
+                        None,
+                        String::from_utf8_lossy(&acc).into_owned(),
+                        capture_truncated,
+                    );
                 }
             }
         }
     };
 
-    let (exit_code, text, timed_out) =
+    let (exit_code, text, timed_out, capture_truncated) =
         match timeout(Duration::from_secs(timeout_secs), collect).await {
-            Ok((exit, text)) => (exit, text, false),
-            Err(_) => (None, String::new(), true),
+            Ok((exit, text, capture_truncated)) => (exit, text, false, capture_truncated),
+            Err(_) => (None, String::new(), true, false),
         };
 
     let cursor = ctx
@@ -355,11 +326,14 @@ async fn run(
         .map(|b| b.lock().expect("rb").cursor())
         .unwrap_or(0);
 
-    let (final_text, lines_omitted) = if full_output {
+    let (final_text, mut lines_omitted) = if full_output {
         (text, 0)
     } else {
         tail_lines(&text, 1000)
     };
+    if capture_truncated && lines_omitted == 0 {
+        lines_omitted = 1;
+    }
 
     Response::Run {
         exit_code,
@@ -840,13 +814,13 @@ mod tests {
     use super::super::pane_map::{PaneEntry, PaneMap};
     use super::super::signals::SignalRegistry;
     use super::*;
-    use crate::commands::terminal::{TerminalManager, TerminalOutputBus, TerminalOutputBusState, TerminalState};
+    use crate::commands::terminal::{
+        TerminalManager, TerminalOutputBus, TerminalOutputBusState, TerminalState,
+    };
     use std::sync::{Arc, Mutex as StdMutex};
     use std::time::Duration;
 
-    fn make_ctx(
-        pane_entries: Vec<PaneEntry>,
-    ) -> (DispatchContext, TerminalOutputBusState) {
+    fn make_ctx(pane_entries: Vec<PaneEntry>) -> (DispatchContext, TerminalOutputBusState) {
         let terminals: TerminalState = Arc::new(StdMutex::new(TerminalManager::new()));
         let bus: TerminalOutputBusState = Arc::new(TerminalOutputBus::new());
         let pane_map = Arc::new(PaneMap::new());
@@ -1179,8 +1153,10 @@ mod tests {
 
     #[tokio::test]
     async fn signal_send_to_specific_pane_enqueues_one() {
-        let (ctx, _bus) =
-            make_ctx(vec![pane_entry(0, "p-0", 1, true), pane_entry(1, "p-1", 2, false)]);
+        let (ctx, _bus) = make_ctx(vec![
+            pane_entry(0, "p-0", 1, true),
+            pane_entry(1, "p-1", 2, false),
+        ]);
         let resp = signal_send(
             &ctx,
             PaneRef::Id("p-0".into()),
@@ -1201,8 +1177,10 @@ mod tests {
 
     #[tokio::test]
     async fn signal_send_target_parent_uses_registered_parent() {
-        let (ctx, _bus) =
-            make_ctx(vec![pane_entry(0, "parent-0", 1, false), pane_entry(1, "child-1", 2, true)]);
+        let (ctx, _bus) = make_ctx(vec![
+            pane_entry(0, "parent-0", 1, false),
+            pane_entry(1, "child-1", 2, true),
+        ]);
         ctx.signals
             .register_parent("parent-0".into(), "child-1".into());
 
@@ -1447,8 +1425,7 @@ mod tests {
             pane_entry(0, "parent", 1, true),
             pane_entry(1, "child", 2, false),
         ]);
-        ctx.signals
-            .register_parent("parent".into(), "child".into());
+        ctx.signals.register_parent("parent".into(), "child".into());
 
         // Spawn the wait first so we exercise the Notify path rather
         // than the fast-path pop.

@@ -52,7 +52,7 @@ pub struct TerminalOutputBus {
     senders: Mutex<HashMap<u32, tokio::sync::broadcast::Sender<Vec<u8>>>>,
 }
 
-const TERMINAL_BUS_CAPACITY: usize = 512;
+const TERMINAL_BUS_CAPACITY: usize = 128;
 
 impl TerminalOutputBus {
     pub fn new() -> Self {

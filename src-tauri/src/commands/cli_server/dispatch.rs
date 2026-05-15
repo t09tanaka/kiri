@@ -13,14 +13,14 @@ use super::ring_buffer::RingBuffer;
 use super::signals::SignalRegistry;
 use crate::commands::terminal::{TerminalOutputBus, TerminalOutputBusState, TerminalState};
 use kiri_cli_proto::{ErrorCode, Request, Response};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
 pub type SharedRingBuffer = Arc<Mutex<RingBuffer>>;
 
-/// 1 MiB per-terminal scrollback retained for `Read` / `Follow`.
-const RING_BUFFER_CAP: usize = 1024 * 1024;
+/// Per-terminal scrollback retained for `Read` / `Follow`.
+const RING_BUFFER_CAP: usize = 256 * 1024;
 
 #[derive(Default)]
 pub struct TerminalBuffers {
@@ -36,11 +36,7 @@ impl TerminalBuffers {
     /// given `terminal_id` spawns a tokio task that subscribes to the
     /// bus and pushes every chunk into the buffer. Subsequent calls
     /// return the same `Arc`.
-    pub fn ensure_subscribed(
-        &self,
-        terminal_id: u32,
-        bus: &TerminalOutputBus,
-    ) -> SharedRingBuffer {
+    pub fn ensure_subscribed(&self, terminal_id: u32, bus: &TerminalOutputBus) -> SharedRingBuffer {
         let mut map = self.inner.lock().expect("buffers mutex poisoned");
         if let Some(rb) = map.get(&terminal_id) {
             return rb.clone();
@@ -72,6 +68,11 @@ impl TerminalBuffers {
     pub fn get(&self, terminal_id: u32) -> Option<SharedRingBuffer> {
         let map = self.inner.lock().expect("buffers mutex poisoned");
         map.get(&terminal_id).cloned()
+    }
+
+    pub fn retain_terminal_ids(&self, known: &HashSet<u32>) {
+        let mut map = self.inner.lock().expect("buffers mutex poisoned");
+        map.retain(|terminal_id, _| known.contains(terminal_id));
     }
 }
 
@@ -111,10 +112,7 @@ mod tests {
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
-    fn make_ctx(
-        terminals: TerminalState,
-        bus: TerminalOutputBusState,
-    ) -> DispatchContext {
+    fn make_ctx(terminals: TerminalState, bus: TerminalOutputBusState) -> DispatchContext {
         DispatchContext {
             label: "test".into(),
             app: None,
@@ -148,5 +146,18 @@ mod tests {
         let (bytes, dropped) = guard.read_since(0);
         assert_eq!(bytes, b"abc");
         assert_eq!(dropped, 0);
+    }
+
+    #[tokio::test]
+    async fn retain_terminal_ids_drops_closed_terminal_buffers() {
+        let buffers = TerminalBuffers::new();
+        let bus: TerminalOutputBusState = Arc::new(TerminalOutputBus::new());
+        buffers.ensure_subscribed(1, &bus);
+        buffers.ensure_subscribed(2, &bus);
+
+        buffers.retain_terminal_ids(&HashSet::from([2]));
+
+        assert!(buffers.get(1).is_none());
+        assert!(buffers.get(2).is_some());
     }
 }
