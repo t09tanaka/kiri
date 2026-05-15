@@ -11,6 +11,7 @@ pub mod handlers;
 pub mod pane_map;
 pub mod ring_buffer;
 pub mod run_logic;
+pub mod signals;
 
 use crate::commands::cli_install;
 use crate::commands::terminal::{TerminalOutputBusState, TerminalState};
@@ -31,6 +32,7 @@ pub struct CliServerHandle {
     stop: Mutex<Option<oneshot::Sender<()>>>,
     pub pending: Arc<frontend_bridge::PendingReplies>,
     pub pane_map: Arc<pane_map::PaneMap>,
+    pub signals: Arc<signals::SignalRegistry>,
 }
 
 impl CliServerHandle {
@@ -107,6 +109,7 @@ pub fn spawn_for_window(
     let pane_map = Arc::new(pane_map::PaneMap::new());
     let pending = Arc::new(frontend_bridge::PendingReplies::new());
     let buffers = Arc::new(dispatch::TerminalBuffers::new());
+    let signals = Arc::new(signals::SignalRegistry::new());
 
     let ctx = dispatch::DispatchContext {
         label: label.clone(),
@@ -116,6 +119,7 @@ pub fn spawn_for_window(
         pane_map: pane_map.clone(),
         pending: pending.clone(),
         buffers,
+        signals: signals.clone(),
     };
 
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
@@ -157,6 +161,7 @@ pub fn spawn_for_window(
         stop: Mutex::new(Some(stop_tx)),
         pending,
         pane_map,
+        signals,
     })
 }
 
@@ -212,7 +217,15 @@ pub fn cli_update_pane_map(
     let handle = map
         .get(&label)
         .ok_or_else(|| format!("no server for {label}"))?;
+    // Snapshot the set of currently-live pane ids before replacing the
+    // pane map, then have the signal registry prune anything no longer
+    // present. This is the only path that learns about pane removals
+    // (the cli_server's `close` handler routes through the frontend,
+    // which then calls back into this command with the new layout).
+    let known: std::collections::HashSet<String> =
+        panes.iter().map(|p| p.pane_id.clone()).collect();
     handle.pane_map.replace(panes);
+    handle.signals.retain(&known);
     Ok(())
 }
 

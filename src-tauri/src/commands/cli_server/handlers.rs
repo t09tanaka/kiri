@@ -2,7 +2,8 @@
 
 use super::dispatch::DispatchContext;
 use super::run_logic::{extract_output, tail_lines, Sentinel};
-use kiri_cli_proto::{ErrorCode, PaneRef, Request, Response, SplitDirection};
+use super::signals::{now_ms, Signal, MAX_SIGNAL_WAIT_SECS};
+use kiri_cli_proto::{ErrorCode, PaneRef, Request, Response, SignalTarget, SplitDirection};
 use tauri::Emitter;
 use tokio::sync::broadcast;
 use tokio::time::{timeout, Duration};
@@ -37,6 +38,18 @@ pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
             set_color,
             clear_color,
         } => vec![set_label(ctx, pane, set_name, clear_name, set_color, clear_color).await],
+        Request::SignalSend {
+            from,
+            target,
+            name,
+            data,
+        } => vec![signal_send(ctx, from, target, name, data).await],
+        Request::SignalWait {
+            pane,
+            name,
+            timeout_secs,
+        } => vec![signal_wait(ctx, pane, name, timeout_secs).await],
+        Request::SignalList { pane } => vec![signal_list(ctx, pane).await],
     }
 }
 
@@ -412,6 +425,14 @@ async fn split(
                 .get("newPaneIndex")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32;
+            // Record the parent → child link so future
+            // `signal send --target parent|children` calls can route
+            // correctly. Skipped on empty pane id (defensive: shouldn't
+            // happen, but never insert a bogus key).
+            if !new_pane_id.is_empty() {
+                ctx.signals
+                    .register_parent(pane.pane_id.clone(), new_pane_id.clone());
+            }
             Response::Split {
                 new_pane_id,
                 new_pane_index,
@@ -633,6 +654,127 @@ async fn set_collapsed(ctx: &DispatchContext, p: PaneRef, minimized: bool) -> Re
     }
 }
 
+/// Validate a signal name received over the wire.
+///
+/// Mirrors the CLI's clap parser: 1–64 chars, `[a-zA-Z0-9_.-]` only.
+/// Defense-in-depth so raw-JSON clients can't inject odd characters
+/// into queue keys or output.
+fn validate_signal_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("name must not be empty");
+    }
+    if name.len() > 64 {
+        return Err("name must be 64 characters or fewer");
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+    {
+        return Err("name may only contain [a-zA-Z0-9_.-]");
+    }
+    Ok(())
+}
+
+async fn signal_send(
+    ctx: &DispatchContext,
+    from: PaneRef,
+    target: SignalTarget,
+    name: String,
+    data: Option<serde_json::Value>,
+) -> Response {
+    if let Err(reason) = validate_signal_name(&name) {
+        return Response::Error {
+            code: ErrorCode::InvalidArgument,
+            message: reason.into(),
+            detail: None,
+        };
+    }
+
+    let Some(sender) = ctx.pane_map.resolve(&from) else {
+        return pane_not_found(from);
+    };
+
+    let target_ids: Vec<String> = match target {
+        SignalTarget::Pane(ref pr) => {
+            let Some(entry) = ctx.pane_map.resolve(pr) else {
+                return pane_not_found(pr.clone());
+            };
+            vec![entry.pane_id]
+        }
+        SignalTarget::Parent => match ctx.signals.parent_of(&sender.pane_id) {
+            Some(p) => vec![p],
+            None => Vec::new(),
+        },
+        SignalTarget::Children => ctx.signals.children_of(&sender.pane_id),
+    };
+
+    let timestamp = now_ms();
+    let mut delivered: u32 = 0;
+    for target_id in target_ids {
+        let signal = Signal {
+            name: name.clone(),
+            data: data.clone(),
+            sender_pane_id: sender.pane_id.clone(),
+            sent_at_ms: timestamp,
+        };
+        ctx.signals.enqueue(&target_id, signal);
+        delivered += 1;
+    }
+    Response::SignalSend { delivered }
+}
+
+async fn signal_wait(
+    ctx: &DispatchContext,
+    p: PaneRef,
+    name: String,
+    timeout_secs: u64,
+) -> Response {
+    if let Err(reason) = validate_signal_name(&name) {
+        return Response::Error {
+            code: ErrorCode::InvalidArgument,
+            message: reason.into(),
+            detail: None,
+        };
+    }
+
+    let Some(pane) = ctx.pane_map.resolve(&p) else {
+        return pane_not_found(p);
+    };
+
+    // Clamp absurd timeouts before we hold the connection open. Raw
+    // JSON clients can bypass the CLI's parser, so this is the last
+    // line of defense.
+    let secs = timeout_secs.min(MAX_SIGNAL_WAIT_SECS);
+    let deadline = Duration::from_secs(secs);
+
+    match ctx.signals.wait_for(&pane.pane_id, &name, deadline).await {
+        Some(signal) => Response::SignalWait {
+            name: signal.name,
+            data: signal.data,
+            sender_pane_id: signal.sender_pane_id,
+            sent_at_ms: signal.sent_at_ms,
+        },
+        None => Response::Error {
+            code: ErrorCode::Timeout,
+            message: format!("no signal named '{name}' arrived within {secs}s"),
+            detail: Some(serde_json::json!({ "timeout_secs": secs, "name": name })),
+        },
+    }
+}
+
+async fn signal_list(ctx: &DispatchContext, p: PaneRef) -> Response {
+    let Some(pane) = ctx.pane_map.resolve(&p) else {
+        return pane_not_found(p);
+    };
+    let signals = ctx
+        .signals
+        .list(&pane.pane_id)
+        .into_iter()
+        .map(Into::into)
+        .collect();
+    Response::SignalList { signals }
+}
+
 fn pane_not_found(p: PaneRef) -> Response {
     Response::Error {
         code: ErrorCode::PaneNotFound,
@@ -670,6 +812,7 @@ mod tests {
     use super::super::dispatch::{DispatchContext, TerminalBuffers};
     use super::super::frontend_bridge::PendingReplies;
     use super::super::pane_map::{PaneEntry, PaneMap};
+    use super::super::signals::SignalRegistry;
     use super::*;
     use crate::commands::terminal::{TerminalManager, TerminalOutputBus, TerminalOutputBusState, TerminalState};
     use std::sync::{Arc, Mutex as StdMutex};
@@ -690,8 +833,21 @@ mod tests {
             pane_map,
             pending: Arc::new(PendingReplies::new()),
             buffers: Arc::new(TerminalBuffers::new()),
+            signals: Arc::new(SignalRegistry::new()),
         };
         (ctx, bus)
+    }
+
+    fn pane_entry(index: u32, id: &str, terminal_id: u32, focused: bool) -> PaneEntry {
+        PaneEntry {
+            index,
+            pane_id: id.into(),
+            terminal_id,
+            focused,
+            name: None,
+            color: None,
+            collapsed: false,
+        }
     }
 
     #[tokio::test]
@@ -953,5 +1109,348 @@ mod tests {
             Response::Error { code, .. } => assert_eq!(code, ErrorCode::PaneNotFound),
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    // --- signal_send / signal_wait / signal_list tests ---
+
+    #[test]
+    fn validate_signal_name_rules() {
+        assert!(validate_signal_name("").is_err());
+        assert!(validate_signal_name(&"a".repeat(65)).is_err());
+        assert!(validate_signal_name("bad name").is_err());
+        assert!(validate_signal_name("bad/name").is_err());
+        assert!(validate_signal_name("ok").is_ok());
+        assert!(validate_signal_name("build.done-1_step").is_ok());
+        assert!(validate_signal_name(&"a".repeat(64)).is_ok());
+    }
+
+    #[tokio::test]
+    async fn signal_send_to_specific_pane_enqueues_one() {
+        let (ctx, _bus) =
+            make_ctx(vec![pane_entry(0, "p-0", 1, true), pane_entry(1, "p-1", 2, false)]);
+        let resp = signal_send(
+            &ctx,
+            PaneRef::Id("p-0".into()),
+            SignalTarget::Pane(PaneRef::Id("p-1".into())),
+            "ready".into(),
+            Some(serde_json::json!({"v": 1})),
+        )
+        .await;
+        match resp {
+            Response::SignalSend { delivered } => assert_eq!(delivered, 1),
+            other => panic!("expected SignalSend, got {other:?}"),
+        }
+        let queued = ctx.signals.list("p-1");
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].name, "ready");
+        assert_eq!(queued[0].sender_pane_id, "p-0");
+    }
+
+    #[tokio::test]
+    async fn signal_send_target_parent_uses_registered_parent() {
+        let (ctx, _bus) =
+            make_ctx(vec![pane_entry(0, "parent-0", 1, false), pane_entry(1, "child-1", 2, true)]);
+        ctx.signals
+            .register_parent("parent-0".into(), "child-1".into());
+
+        // Child sends to parent.
+        let resp = signal_send(
+            &ctx,
+            PaneRef::Id("child-1".into()),
+            SignalTarget::Parent,
+            "done".into(),
+            None,
+        )
+        .await;
+        match resp {
+            Response::SignalSend { delivered } => assert_eq!(delivered, 1),
+            other => panic!("expected SignalSend, got {other:?}"),
+        }
+        let queued = ctx.signals.list("parent-0");
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].sender_pane_id, "child-1");
+    }
+
+    #[tokio::test]
+    async fn signal_send_target_parent_with_no_parent_delivers_zero() {
+        let (ctx, _bus) = make_ctx(vec![pane_entry(0, "root", 1, true)]);
+        let resp = signal_send(
+            &ctx,
+            PaneRef::Id("root".into()),
+            SignalTarget::Parent,
+            "orphan".into(),
+            None,
+        )
+        .await;
+        match resp {
+            Response::SignalSend { delivered } => assert_eq!(delivered, 0),
+            other => panic!("expected SignalSend, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn signal_send_target_children_fans_out() {
+        let (ctx, _bus) = make_ctx(vec![
+            pane_entry(0, "p", 1, true),
+            pane_entry(1, "c1", 2, false),
+            pane_entry(2, "c2", 3, false),
+        ]);
+        ctx.signals.register_parent("p".into(), "c1".into());
+        ctx.signals.register_parent("p".into(), "c2".into());
+
+        let resp = signal_send(
+            &ctx,
+            PaneRef::Id("p".into()),
+            SignalTarget::Children,
+            "shutdown".into(),
+            None,
+        )
+        .await;
+        match resp {
+            Response::SignalSend { delivered } => assert_eq!(delivered, 2),
+            other => panic!("expected SignalSend, got {other:?}"),
+        }
+        assert_eq!(ctx.signals.list("c1").len(), 1);
+        assert_eq!(ctx.signals.list("c2").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn signal_send_target_children_with_none_delivers_zero() {
+        let (ctx, _bus) = make_ctx(vec![pane_entry(0, "lone", 1, true)]);
+        let resp = signal_send(
+            &ctx,
+            PaneRef::Id("lone".into()),
+            SignalTarget::Children,
+            "broadcast".into(),
+            None,
+        )
+        .await;
+        match resp {
+            Response::SignalSend { delivered } => assert_eq!(delivered, 0),
+            other => panic!("expected SignalSend, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn signal_send_with_unknown_sender_returns_pane_not_found() {
+        let (ctx, _bus) = make_ctx(vec![]);
+        let resp = signal_send(
+            &ctx,
+            PaneRef::Id("nope".into()),
+            SignalTarget::Parent,
+            "x".into(),
+            None,
+        )
+        .await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::PaneNotFound),
+            other => panic!("expected pane_not_found, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn signal_send_with_unknown_target_pane_returns_pane_not_found() {
+        let (ctx, _bus) = make_ctx(vec![pane_entry(0, "p-0", 1, true)]);
+        let resp = signal_send(
+            &ctx,
+            PaneRef::Id("p-0".into()),
+            SignalTarget::Pane(PaneRef::Id("ghost".into())),
+            "x".into(),
+            None,
+        )
+        .await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::PaneNotFound),
+            other => panic!("expected pane_not_found, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn signal_send_rejects_invalid_name() {
+        let (ctx, _bus) = make_ctx(vec![pane_entry(0, "p-0", 1, true)]);
+        let resp = signal_send(
+            &ctx,
+            PaneRef::Id("p-0".into()),
+            SignalTarget::Pane(PaneRef::Id("p-0".into())),
+            "bad name".into(),
+            None,
+        )
+        .await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidArgument),
+            other => panic!("expected InvalidArgument, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn signal_wait_returns_already_queued() {
+        let (ctx, _bus) = make_ctx(vec![pane_entry(0, "p-0", 1, true)]);
+        ctx.signals.enqueue(
+            "p-0",
+            Signal {
+                name: "ready".into(),
+                data: Some(serde_json::json!({"step": 7})),
+                sender_pane_id: "other".into(),
+                sent_at_ms: 42,
+            },
+        );
+        let resp = signal_wait(&ctx, PaneRef::Id("p-0".into()), "ready".into(), 1).await;
+        match resp {
+            Response::SignalWait {
+                name,
+                data,
+                sender_pane_id,
+                sent_at_ms,
+            } => {
+                assert_eq!(name, "ready");
+                assert_eq!(data, Some(serde_json::json!({"step": 7})));
+                assert_eq!(sender_pane_id, "other");
+                assert_eq!(sent_at_ms, 42);
+            }
+            other => panic!("expected SignalWait, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn signal_wait_times_out_with_timeout_error() {
+        let (ctx, _bus) = make_ctx(vec![pane_entry(0, "p-0", 1, true)]);
+        let resp = signal_wait(&ctx, PaneRef::Id("p-0".into()), "never".into(), 1).await;
+        match resp {
+            Response::Error { code, message, .. } => {
+                assert_eq!(code, ErrorCode::Timeout);
+                assert!(message.contains("never"));
+            }
+            other => panic!("expected Timeout error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn signal_wait_unknown_pane_returns_pane_not_found() {
+        let (ctx, _bus) = make_ctx(vec![]);
+        let resp = signal_wait(&ctx, PaneRef::Id("ghost".into()), "ready".into(), 1).await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::PaneNotFound),
+            other => panic!("expected pane_not_found, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn signal_wait_rejects_invalid_name() {
+        let (ctx, _bus) = make_ctx(vec![pane_entry(0, "p-0", 1, true)]);
+        let resp = signal_wait(&ctx, PaneRef::Id("p-0".into()), "bad/name".into(), 1).await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::InvalidArgument),
+            other => panic!("expected InvalidArgument, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn signal_list_returns_queued_entries() {
+        let (ctx, _bus) = make_ctx(vec![pane_entry(0, "p-0", 1, true)]);
+        ctx.signals.enqueue(
+            "p-0",
+            Signal {
+                name: "a".into(),
+                data: None,
+                sender_pane_id: "x".into(),
+                sent_at_ms: 1,
+            },
+        );
+        ctx.signals.enqueue(
+            "p-0",
+            Signal {
+                name: "b".into(),
+                data: Some(serde_json::json!(5)),
+                sender_pane_id: "y".into(),
+                sent_at_ms: 2,
+            },
+        );
+        let resp = signal_list(&ctx, PaneRef::Id("p-0".into())).await;
+        match resp {
+            Response::SignalList { signals } => {
+                assert_eq!(signals.len(), 2);
+                assert_eq!(signals[0].name, "a");
+                assert_eq!(signals[1].name, "b");
+            }
+            other => panic!("expected SignalList, got {other:?}"),
+        }
+        // List does not consume.
+        assert_eq!(ctx.signals.list("p-0").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn signal_list_unknown_pane_returns_pane_not_found() {
+        let (ctx, _bus) = make_ctx(vec![]);
+        let resp = signal_list(&ctx, PaneRef::Id("ghost".into())).await;
+        match resp {
+            Response::Error { code, .. } => assert_eq!(code, ErrorCode::PaneNotFound),
+            other => panic!("expected pane_not_found, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn signal_send_then_wait_round_trip() {
+        let (ctx, _bus) = make_ctx(vec![
+            pane_entry(0, "parent", 1, true),
+            pane_entry(1, "child", 2, false),
+        ]);
+        ctx.signals
+            .register_parent("parent".into(), "child".into());
+
+        // Spawn the wait first so we exercise the Notify path rather
+        // than the fast-path pop.
+        let ctx_for_wait = ctx.clone();
+        let waiter = tokio::spawn(async move {
+            signal_wait(&ctx_for_wait, PaneRef::Id("child".into()), "go".into(), 5).await
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // Parent sends to children.
+        let send_resp = signal_send(
+            &ctx,
+            PaneRef::Id("parent".into()),
+            SignalTarget::Children,
+            "go".into(),
+            None,
+        )
+        .await;
+        assert!(matches!(send_resp, Response::SignalSend { delivered: 1 }));
+
+        let resp = waiter.await.unwrap();
+        match resp {
+            Response::SignalWait {
+                name,
+                sender_pane_id,
+                ..
+            } => {
+                assert_eq!(name, "go");
+                assert_eq!(sender_pane_id, "parent");
+            }
+            other => panic!("expected SignalWait, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn signal_state_pruned_when_pane_disappears_from_map() {
+        let (ctx, _bus) = make_ctx(vec![
+            pane_entry(0, "p", 1, true),
+            pane_entry(1, "c", 2, false),
+        ]);
+        ctx.signals.register_parent("p".into(), "c".into());
+        ctx.signals.enqueue(
+            "c",
+            Signal {
+                name: "x".into(),
+                data: None,
+                sender_pane_id: "p".into(),
+                sent_at_ms: 0,
+            },
+        );
+        // Child closes — pane map now only has the parent.
+        ctx.pane_map.replace(vec![pane_entry(0, "p", 1, true)]);
+        let known: std::collections::HashSet<String> = ["p".to_string()].into_iter().collect();
+        ctx.signals.retain(&known);
+        assert!(ctx.signals.list("c").is_empty());
+        assert!(ctx.signals.parent_of("c").is_none());
     }
 }

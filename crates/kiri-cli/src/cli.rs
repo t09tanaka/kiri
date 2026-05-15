@@ -5,7 +5,7 @@
 //! `KIRI_SOCKET`-driven env injection. Outside of a kiri terminal the
 //! command will report an error because `KIRI_SOCKET` is not set.
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use kiri_cli_proto::{PaneColor, PaneRef};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -32,7 +32,14 @@ impl From<PaneColorArg> for PaneColor {
     }
 }
 
-/// Clap value parser for `--name`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum SignalTargetArg {
+    Parent,
+    Children,
+}
+
+/// Clap value parser for `--name` on `term split`.
 ///
 /// Rules: non-empty, ≤32 chars (counting Unicode scalar values), no
 /// ASCII control characters (\x00–\x1f or \x7f). Newlines or NULs
@@ -48,6 +55,49 @@ fn parse_pane_name(s: &str) -> Result<String, String> {
         return Err("name must not contain control characters".into());
     }
     Ok(s.to_owned())
+}
+
+/// Clap value parser for `--name` on `term signal {send,wait}`.
+///
+/// Rules: 1–64 chars, only `[a-zA-Z0-9_.-]`. Signal names are used as
+/// queue keys and exposed verbatim in JSON output, so we keep the
+/// character set tight.
+fn parse_signal_name(s: &str) -> Result<String, String> {
+    if s.is_empty() {
+        return Err("name must not be empty".into());
+    }
+    if s.len() > 64 {
+        return Err("name must be 64 characters or fewer".into());
+    }
+    if !s
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+    {
+        return Err("name may only contain [a-zA-Z0-9_.-]".into());
+    }
+    Ok(s.to_owned())
+}
+
+/// Clap value parser for `--data` on `term signal send`.
+fn parse_signal_data(s: &str) -> Result<serde_json::Value, String> {
+    serde_json::from_str(s).map_err(|e| format!("invalid JSON for --data: {e}"))
+}
+
+/// Clap value parser for `--timeout` on `term signal wait`.
+///
+/// Server-side enforces an upper bound of 600 seconds; we reject larger
+/// values at the CLI boundary so the user sees the error immediately.
+fn parse_signal_timeout(s: &str) -> Result<u64, String> {
+    let v: u64 = s
+        .parse()
+        .map_err(|e| format!("--timeout must be a non-negative integer: {e}"))?;
+    if v == 0 {
+        return Err("--timeout must be at least 1 second".into());
+    }
+    if v > 600 {
+        return Err("--timeout must be 600 seconds or less".into());
+    }
+    Ok(v)
 }
 
 #[derive(Parser, Debug)]
@@ -99,6 +149,19 @@ pub enum TermCmd {
     Restore(PaneOpt),
     /// Rename and/or recolor an existing pane (including the focused one).
     SetLabel(SetLabelArgs),
+    /// Exchange named messages between this pane and its parent / children.
+    #[command(subcommand)]
+    Signal(SignalCmd),
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SignalCmd {
+    /// Send a named signal to a specific pane or to relatives.
+    Send(SignalSendArgs),
+    /// Block until a named signal arrives in this pane's queue.
+    Wait(SignalWaitArgs),
+    /// Print the signals currently queued on this pane.
+    List(SignalListArgs),
 }
 
 #[derive(Args, Debug)]
@@ -150,15 +213,69 @@ pub struct SplitArgs {
     /// Split direction: h (horizontal) or v (vertical).
     #[arg(long, default_value = "h")]
     pub dir: String,
-    /// Optional pane label shown in the terminal header (1–32 chars, no control characters).
-    #[arg(long, value_parser = parse_pane_name)]
-    pub name: Option<String>,
-    /// Optional pane color shown in the terminal header.
+    /// Pane label shown in the terminal header (1–32 chars, no control characters).
+    #[arg(long, value_parser = parse_pane_name, required = true)]
+    pub name: String,
+    /// Pane color shown in the terminal header.
+    #[arg(long, value_enum, required = true)]
+    pub color: PaneColorArg,
+    /// Create the new pane with its shortcut bar fully expanded.
+    ///
+    /// New panes are minimized by default — pass this flag for user-facing
+    /// side panes the user is expected to interact with.
+    #[arg(long = "no-minimized")]
+    pub no_minimized: bool,
+}
+
+#[derive(Args, Debug)]
+#[command(group(
+    ArgGroup::new("signal_send_target")
+        .required(true)
+        .args(["pane", "target"]),
+))]
+pub struct SignalSendArgs {
+    /// Target pane (index or id). Mutually exclusive with `--target`.
+    #[arg(long, value_name = "I_OR_ID")]
+    pub pane: Option<String>,
+    /// Send to the sender pane's parent or all of its children.
     #[arg(long, value_enum)]
-    pub color: Option<PaneColorArg>,
-    /// Create the new pane with its shortcut bar already minimized.
+    pub target: Option<SignalTargetArg>,
+    /// Override the sender pane. Defaults to the focused pane.
+    ///
+    /// Mostly useful when the sending pane is not focused — e.g. an
+    /// agent running inside a minimized side pane that wants its
+    /// `--target parent` resolution to use the side pane as the sender.
+    #[arg(long, value_name = "I_OR_ID")]
+    pub from: Option<String>,
+    /// Signal name (1–64 chars, [a-zA-Z0-9_.-] only).
+    #[arg(long, value_parser = parse_signal_name, required = true)]
+    pub name: String,
+    /// Optional JSON payload delivered alongside the signal.
+    #[arg(long, value_parser = parse_signal_data)]
+    pub data: Option<serde_json::Value>,
+}
+
+#[derive(Args, Debug)]
+pub struct SignalWaitArgs {
+    /// Pane whose queue to wait on (defaults to the focused pane).
+    #[arg(long, value_name = "I_OR_ID")]
+    pub pane: Option<String>,
+    /// Signal name to wait for.
+    #[arg(long, value_parser = parse_signal_name, required = true)]
+    pub name: String,
+    /// Max seconds to block before returning a `timeout` error.
+    #[arg(long, value_parser = parse_signal_timeout, default_value_t = 60)]
+    pub timeout: u64,
+    /// Print the signal's JSON `data` payload to stdout on success.
     #[arg(long)]
-    pub minimized: bool,
+    pub print_data: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct SignalListArgs {
+    /// Pane whose queue to inspect (defaults to the focused pane).
+    #[arg(long, value_name = "I_OR_ID")]
+    pub pane: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -199,6 +316,17 @@ pub fn parse_pane(opt: &PaneOpt) -> PaneRef {
     }
 }
 
+/// Translate an optional `--pane` / `--from` string into a `PaneRef`.
+pub fn parse_pane_string(opt: &Option<String>) -> PaneRef {
+    match opt {
+        None => PaneRef::Id(PaneRef::FOCUSED_SENTINEL.to_string()),
+        Some(s) => match s.parse::<u32>() {
+            Ok(i) => PaneRef::Index(i),
+            Err(_) => PaneRef::Id(s.clone()),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,57 +353,106 @@ mod tests {
         assert_eq!(r, PaneRef::Id("abc".into()));
     }
 
+    fn split_args<'a>(extra: &'a [&'a str]) -> Vec<&'a str> {
+        // Default `--name`/`--color` are now required for `term split`.
+        let mut v = vec!["kiri", "term", "split", "--name", "build", "--color", "coral"];
+        v.extend_from_slice(extra);
+        v
+    }
+
     #[test]
     fn parses_valid_color() {
-        let cli = Cli::try_parse_from(["kiri", "term", "split", "--color", "coral"]).unwrap();
+        let cli = Cli::try_parse_from(split_args(&[])).unwrap();
         let Top::Term(TermCmd::Split(a)) = cli.command else {
             panic!("expected split");
         };
-        assert_eq!(a.color, Some(PaneColorArg::Coral));
+        assert_eq!(a.color, PaneColorArg::Coral);
     }
 
     #[test]
     fn rejects_unknown_color() {
-        let err = Cli::try_parse_from(["kiri", "term", "split", "--color", "magenta"]);
+        let err = Cli::try_parse_from([
+            "kiri", "term", "split", "--name", "build", "--color", "magenta",
+        ]);
         assert!(err.is_err(), "should reject unknown color");
     }
 
     #[test]
     fn parses_valid_name() {
-        let cli = Cli::try_parse_from(["kiri", "term", "split", "--name", "build"]).unwrap();
+        let cli = Cli::try_parse_from(split_args(&[])).unwrap();
         let Top::Term(TermCmd::Split(a)) = cli.command else {
             panic!("expected split");
         };
-        assert_eq!(a.name.as_deref(), Some("build"));
+        assert_eq!(a.name, "build");
     }
 
     #[test]
     fn rejects_empty_name() {
-        let err = Cli::try_parse_from(["kiri", "term", "split", "--name", ""]);
+        let err = Cli::try_parse_from([
+            "kiri", "term", "split", "--name", "", "--color", "coral",
+        ]);
         assert!(err.is_err(), "should reject empty name");
     }
 
     #[test]
     fn rejects_name_over_32_chars() {
         let long = "a".repeat(33);
-        let err = Cli::try_parse_from(["kiri", "term", "split", "--name", &long]);
+        let err = Cli::try_parse_from([
+            "kiri", "term", "split", "--name", &long, "--color", "coral",
+        ]);
         assert!(err.is_err(), "should reject 33-char name");
     }
 
     #[test]
     fn accepts_name_at_32_chars() {
         let edge = "a".repeat(32);
-        let cli = Cli::try_parse_from(["kiri", "term", "split", "--name", &edge]).unwrap();
+        let cli = Cli::try_parse_from([
+            "kiri", "term", "split", "--name", &edge, "--color", "coral",
+        ])
+        .unwrap();
         let Top::Term(TermCmd::Split(a)) = cli.command else {
             panic!("expected split");
         };
-        assert_eq!(a.name.as_ref().unwrap().chars().count(), 32);
+        assert_eq!(a.name.chars().count(), 32);
     }
 
     #[test]
     fn rejects_control_char_name() {
-        let err = Cli::try_parse_from(["kiri", "term", "split", "--name", "ab\nc"]);
+        let err = Cli::try_parse_from([
+            "kiri", "term", "split", "--name", "ab\nc", "--color", "coral",
+        ]);
         assert!(err.is_err(), "should reject name with newline");
+    }
+
+    #[test]
+    fn split_rejects_missing_name() {
+        let err = Cli::try_parse_from(["kiri", "term", "split", "--color", "coral"]);
+        assert!(err.is_err(), "should reject split missing --name");
+    }
+
+    #[test]
+    fn split_rejects_missing_color() {
+        let err = Cli::try_parse_from(["kiri", "term", "split", "--name", "build"]);
+        assert!(err.is_err(), "should reject split missing --color");
+    }
+
+    #[test]
+    fn parse_split_default_no_minimized_is_false() {
+        // Default is minimized=true (i.e. no_minimized=false).
+        let cli = Cli::try_parse_from(split_args(&[])).unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Split(args)) => assert!(!args.no_minimized),
+            _ => panic!("expected split"),
+        }
+    }
+
+    #[test]
+    fn parse_split_no_minimized_flag_present() {
+        let cli = Cli::try_parse_from(split_args(&["--no-minimized"])).unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Split(args)) => assert!(args.no_minimized),
+            _ => panic!("expected split"),
+        }
     }
 
     #[test]
@@ -300,21 +477,187 @@ mod tests {
         }
     }
 
+    // --- signal subcommand tests ---
+
     #[test]
-    fn parse_split_minimized_flag() {
-        let cli = Cli::try_parse_from(["kiri", "term", "split", "--minimized"]).unwrap();
+    fn parse_signal_send_with_pane_target() {
+        let cli = Cli::try_parse_from([
+            "kiri", "term", "signal", "send", "--pane", "pane-2", "--name", "ready",
+        ])
+        .unwrap();
         match cli.command {
-            Top::Term(TermCmd::Split(args)) => assert!(args.minimized),
-            _ => panic!("expected split"),
+            Top::Term(TermCmd::Signal(SignalCmd::Send(a))) => {
+                assert_eq!(a.pane.as_deref(), Some("pane-2"));
+                assert!(a.target.is_none());
+                assert_eq!(a.name, "ready");
+                assert!(a.data.is_none());
+            }
+            _ => panic!("expected signal send"),
         }
     }
 
     #[test]
-    fn parse_split_default_minimized_false() {
-        let cli = Cli::try_parse_from(["kiri", "term", "split"]).unwrap();
+    fn parse_signal_send_with_parent_target_and_data() {
+        let cli = Cli::try_parse_from([
+            "kiri", "term", "signal", "send", "--target", "parent", "--name", "done", "--data",
+            "{\"ok\":true}",
+        ])
+        .unwrap();
         match cli.command {
-            Top::Term(TermCmd::Split(args)) => assert!(!args.minimized),
-            _ => panic!("expected split"),
+            Top::Term(TermCmd::Signal(SignalCmd::Send(a))) => {
+                assert_eq!(a.target, Some(SignalTargetArg::Parent));
+                assert!(a.pane.is_none());
+                assert_eq!(a.name, "done");
+                assert_eq!(
+                    a.data.unwrap(),
+                    serde_json::json!({ "ok": true })
+                );
+            }
+            _ => panic!("expected signal send"),
+        }
+    }
+
+    #[test]
+    fn parse_signal_send_with_children_target() {
+        let cli = Cli::try_parse_from([
+            "kiri", "term", "signal", "send", "--target", "children", "--name", "shutdown",
+        ])
+        .unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Signal(SignalCmd::Send(a))) => {
+                assert_eq!(a.target, Some(SignalTargetArg::Children));
+            }
+            _ => panic!("expected signal send"),
+        }
+    }
+
+    #[test]
+    fn signal_send_requires_target_or_pane() {
+        let err = Cli::try_parse_from(["kiri", "term", "signal", "send", "--name", "n"]);
+        assert!(err.is_err(), "must specify --pane or --target");
+    }
+
+    #[test]
+    fn signal_send_rejects_pane_and_target_together() {
+        let err = Cli::try_parse_from([
+            "kiri", "term", "signal", "send", "--pane", "0", "--target", "parent", "--name", "n",
+        ]);
+        assert!(err.is_err(), "must not allow --pane and --target together");
+    }
+
+    #[test]
+    fn signal_send_rejects_invalid_data_json() {
+        let err = Cli::try_parse_from([
+            "kiri", "term", "signal", "send", "--target", "parent", "--name", "n", "--data",
+            "not-json",
+        ]);
+        assert!(err.is_err(), "should reject invalid JSON for --data");
+    }
+
+    #[test]
+    fn signal_send_rejects_invalid_name_char() {
+        let err = Cli::try_parse_from([
+            "kiri", "term", "signal", "send", "--target", "parent", "--name", "bad name",
+        ]);
+        assert!(err.is_err(), "should reject name with space");
+    }
+
+    #[test]
+    fn signal_send_accepts_dot_dash_underscore_in_name() {
+        let cli = Cli::try_parse_from([
+            "kiri",
+            "term",
+            "signal",
+            "send",
+            "--target",
+            "parent",
+            "--name",
+            "build.done-1_step",
+        ])
+        .unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Signal(SignalCmd::Send(a))) => {
+                assert_eq!(a.name, "build.done-1_step");
+            }
+            _ => panic!("expected signal send"),
+        }
+    }
+
+    #[test]
+    fn parse_signal_wait_with_default_timeout() {
+        let cli =
+            Cli::try_parse_from(["kiri", "term", "signal", "wait", "--name", "ready"]).unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Signal(SignalCmd::Wait(a))) => {
+                assert_eq!(a.name, "ready");
+                assert_eq!(a.timeout, 60);
+                assert!(!a.print_data);
+            }
+            _ => panic!("expected signal wait"),
+        }
+    }
+
+    #[test]
+    fn parse_signal_wait_print_data_and_custom_timeout() {
+        let cli = Cli::try_parse_from([
+            "kiri",
+            "term",
+            "signal",
+            "wait",
+            "--name",
+            "ready",
+            "--timeout",
+            "120",
+            "--print-data",
+        ])
+        .unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Signal(SignalCmd::Wait(a))) => {
+                assert_eq!(a.timeout, 120);
+                assert!(a.print_data);
+            }
+            _ => panic!("expected signal wait"),
+        }
+    }
+
+    #[test]
+    fn signal_wait_rejects_zero_timeout() {
+        let err = Cli::try_parse_from([
+            "kiri", "term", "signal", "wait", "--name", "ready", "--timeout", "0",
+        ]);
+        assert!(err.is_err(), "timeout=0 should be rejected");
+    }
+
+    #[test]
+    fn signal_wait_rejects_timeout_over_600() {
+        let err = Cli::try_parse_from([
+            "kiri", "term", "signal", "wait", "--name", "ready", "--timeout", "601",
+        ]);
+        assert!(err.is_err(), "timeout>600 should be rejected");
+    }
+
+    #[test]
+    fn parse_signal_list_default_pane() {
+        let cli = Cli::try_parse_from(["kiri", "term", "signal", "list"]).unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Signal(SignalCmd::List(a))) => {
+                assert!(a.pane.is_none());
+            }
+            _ => panic!("expected signal list"),
+        }
+    }
+
+    #[test]
+    fn parse_signal_list_with_pane() {
+        let cli = Cli::try_parse_from([
+            "kiri", "term", "signal", "list", "--pane", "pane-3",
+        ])
+        .unwrap();
+        match cli.command {
+            Top::Term(TermCmd::Signal(SignalCmd::List(a))) => {
+                assert_eq!(a.pane.as_deref(), Some("pane-3"));
+            }
+            _ => panic!("expected signal list"),
         }
     }
 
