@@ -339,7 +339,14 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
                 if let Ok(index) = id.strip_prefix("recent_").unwrap().parse::<usize>() {
                     if let Ok(paths) = recent_paths_for_events.lock() {
                         if let Some(path) = paths.get(index) {
-                            let _ = app_handle.emit("menu-open-recent", path.clone());
+                            // Route to the focused window only — otherwise every
+                            // window's listener fires and they race on the
+                            // recentProjects bump + focus_or_create_window call.
+                            let _ = emit_to_focused_window(
+                                app_handle,
+                                "menu-open-recent",
+                                path.clone(),
+                            );
                         }
                     }
                 }
