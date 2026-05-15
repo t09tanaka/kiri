@@ -1,7 +1,7 @@
 pub mod commands;
 
 use commands::{
-    check_gh_cli, clear_performance_timings, cli_resolve_pending, cli_update_pane_map,
+    clear_performance_timings, cli_resolve_pending, cli_update_pane_map,
     close_terminal,
     get_foreground_process_name, get_terminal_cwd, get_terminal_process_info,
     copy_paths_to_directory, create_directory, move_path,
@@ -9,10 +9,10 @@ use commands::{
     focus_or_create_window, generate_remote_qr_code, get_all_git_diffs, get_behind_ahead_count,
     get_branch_ahead_count, get_commit_diff, get_commit_log, get_git_diff, get_git_file_status,
     get_git_status, get_home_directory, get_memory_metrics, get_performance_report, get_worktree_info,
-    install_kiri_skill, is_terminal_alive, kiri_skill_status, list_pull_requests, pull_commits,
+    install_kiri_skill, is_terminal_alive, kiri_skill_status, pull_commits,
     push_commits, read_directory, read_file, read_file_as_base64, record_command_timing,
     regenerate_remote_token, register_window, resize_terminal, reveal_in_finder,
-    get_pull_request_detail, search_content, search_files, setup_menu, start_watching, stop_all_watching,
+    search_content, search_files, setup_menu, start_watching, stop_all_watching,
     is_cloudflared_available, start_cloudflare_tunnel, start_remote_server,
     stop_cloudflare_tunnel, stop_remote_server, is_remote_server_running,
     stop_watching, unregister_window, write_terminal, CliServerRegistry, CliServerRegistryState,
@@ -116,10 +116,6 @@ pub fn run() {
             is_cloudflared_available,
             start_cloudflare_tunnel,
             stop_cloudflare_tunnel,
-            // GitHub PR
-            check_gh_cli,
-            list_pull_requests,
-            get_pull_request_detail,
             // CLI server (per-window socket)
             cli_resolve_pending,
             cli_update_pane_map,

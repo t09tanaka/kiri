@@ -11,9 +11,6 @@
   import ToastContainer from '@/lib/components/ui/ToastContainer.svelte';
   import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
   import CommitHistoryModal from '@/lib/components/git/CommitHistoryModal.svelte';
-  import PrPanel from '@/lib/components/pr/PrPanel.svelte';
-  import { prViewStore } from '@/lib/stores/prViewStore';
-  import { prStore } from '@/lib/stores/prStore';
   import RemoteAccessSettings from '@/lib/components/settings/RemoteAccessSettings.svelte';
   import QrCodeModal from '@/lib/components/remote/QrCodeModal.svelte';
   import EditorModal from '@/lib/components/editor/EditorModal.svelte';
@@ -304,20 +301,6 @@
       return;
     }
 
-    // Cmd+Shift+P: Toggle PR panel (only when project is open)
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'p' && $isProjectOpen) {
-      e.preventDefault();
-      const path = projectStore.getCurrentPath();
-      if (path) {
-        if ($prViewStore.isOpen) {
-          prViewStore.close();
-        } else {
-          prViewStore.open(path);
-        }
-      }
-      return;
-    }
-
     // Cmd+Shift+R: Toggle Remote Access Settings
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'r') {
       e.preventDefault();
@@ -442,14 +425,12 @@
 
     window.addEventListener('keydown', handleKeyDown);
 
-    // Update window title, refresh PR list, and drive CLI server lifecycle
-    // when the project changes. The CLI register/unregister is reactive to
-    // currentPath so every entry point (URL param, Cmd+O, start screen
-    // Recent click, Cmd+Shift+W close) converges here — no per-handler
-    // wiring required.
+    // Update window title and drive CLI server lifecycle when the project
+    // changes. The CLI register/unregister is reactive to currentPath so
+    // every entry point (URL param, Cmd+O, start screen Recent click,
+    // Cmd+Shift+W close) converges here — no per-handler wiring required.
     const unsubscribeProjectStore = projectStore.subscribe((state) => {
       if (state.currentPath) {
-        prStore.refresh(state.currentPath);
         const projectName = state.currentPath.split('/').pop() || 'kiri';
         windowService.setTitle(`${projectName} — kiri`);
       } else {
@@ -636,10 +617,6 @@
 
   {#if $editorModalStore.isOpen && $editorModalStore.filePath}
     <EditorModal filePath={$editorModalStore.filePath} onClose={() => editorModalStore.close()} />
-  {/if}
-
-  {#if $prViewStore.isOpen && $prViewStore.projectPath}
-    <PrPanel projectPath={$prViewStore.projectPath} onClose={() => prViewStore.close()} />
   {/if}
 
   {#if $isContentSearchOpen && projectStore.getCurrentPath()}
