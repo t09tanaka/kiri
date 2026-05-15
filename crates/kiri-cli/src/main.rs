@@ -241,6 +241,7 @@ fn build_request(cmd: TermCmd) -> Result<Request> {
         TermCmd::Send(a) => Request::Send {
             pane: cli::parse_pane(&a.pane),
             data: a.data.join(" "),
+            submit: !a.no_submit,
         },
         TermCmd::Read(a) => Request::Read {
             pane: cli::parse_pane(&a.pane),

@@ -36,6 +36,16 @@ pub enum Request {
     Send {
         pane: PaneRef,
         data: String,
+        /// When true (the default), the backend appends a submit sequence
+        /// (`\r`) after `data` if the target pane's foreground process is
+        /// an interactive AI assistant (claude / codex). Non-AI panes
+        /// still receive `data` but the submit sequence is skipped — the
+        /// response's `submitted` field reports whether the appended `\r`
+        /// was actually written. Pass `false` (CLI: `--no-submit`) to
+        /// keep the data uncommitted in the AI's input box, e.g. when
+        /// building up multi-step input before the user presses Enter.
+        #[serde(default = "default_true")]
+        submit: bool,
     },
     Read {
         pane: PaneRef,
@@ -116,6 +126,10 @@ fn is_false(b: &bool) -> bool {
     !*b
 }
 
+fn default_true() -> bool {
+    true
+}
+
 fn default_run_timeout() -> u64 {
     300
 }
@@ -172,7 +186,16 @@ pub enum Response {
         timed_out: bool,
         cursor: u64,
     },
-    Send,
+    Send {
+        /// True when the submit sequence (`\r`) was appended after the
+        /// data. Only set for `Request::Send { submit: true, .. }` whose
+        /// target pane was running claude / codex at the time. Omitted
+        /// from the wire when false so older clients (which decode into
+        /// the field-less `Response::Send`) see the same JSON shape they
+        /// always did.
+        #[serde(default, skip_serializing_if = "is_false")]
+        submitted: bool,
+    },
     Read {
         output: String,
         cursor: u64,
@@ -258,7 +281,32 @@ mod tests {
         roundtrip(&Request::Send {
             pane: PaneRef::Index(1),
             data: "echo hi\n".into(),
+            submit: false,
         });
+        roundtrip(&Request::Send {
+            pane: PaneRef::Index(1),
+            data: "echo hi".into(),
+            submit: true,
+        });
+    }
+
+    #[test]
+    fn request_send_submit_defaults_to_true() {
+        // Auto-submit is the default — older clients that omit the
+        // field opt into the new behavior so `kiri term send "..."`
+        // works as a one-shot when the target pane runs claude / codex.
+        let parsed: Request = serde_json::from_value(
+            serde_json::json!({ "type": "send", "pane": 0, "data": "hi" }),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            Request::Send {
+                pane: PaneRef::Index(0),
+                data: "hi".into(),
+                submit: true,
+            }
+        );
     }
 
     #[test]
@@ -299,9 +347,28 @@ mod tests {
     }
 
     #[test]
-    fn response_send_serializes_as_unit() {
-        let v = serde_json::to_value(Response::Send).unwrap();
+    fn response_send_default_submitted_omits_field() {
+        // submitted defaults to false; serializing the default omits
+        // the field so older clients that don't know about it see the
+        // same JSON shape as before this PR.
+        let v = serde_json::to_value(Response::Send { submitted: false }).unwrap();
         assert_eq!(v, serde_json::json!({ "type": "send" }));
+        let parsed: Response = serde_json::from_value(v).unwrap();
+        assert_eq!(parsed, Response::Send { submitted: false });
+    }
+
+    #[test]
+    fn response_send_submitted_true_emits_field() {
+        let v = serde_json::to_value(Response::Send { submitted: true }).unwrap();
+        assert_eq!(v, serde_json::json!({ "type": "send", "submitted": true }));
+        let parsed: Response = serde_json::from_value(v).unwrap();
+        assert_eq!(parsed, Response::Send { submitted: true });
+    }
+
+    #[test]
+    fn response_send_submitted_roundtrip() {
+        roundtrip(&Response::Send { submitted: true });
+        roundtrip(&Response::Send { submitted: false });
     }
 
     #[test]
