@@ -49,6 +49,30 @@ pub enum Request {
     Restore {
         pane: PaneRef,
     },
+    /// Update the label (name and/or color) of an existing pane.
+    ///
+    /// `set_name` / `set_color` install a new value. `clear_name` /
+    /// `clear_color` remove an existing one. Exactly-one-of within each
+    /// pair: `set_name` and `clear_name` must not both be set in the
+    /// same request, and the same for color. At least one of the four
+    /// must be present — a request that touches nothing is rejected as
+    /// `InvalidArgument` so consumers don't silently no-op.
+    SetLabel {
+        pane: PaneRef,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        set_name: Option<String>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        clear_name: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        set_color: Option<crate::PaneColor>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        clear_color: bool,
+    },
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 fn default_run_timeout() -> u64 {
@@ -106,6 +130,7 @@ pub enum Response {
     Close,
     Minimize,
     Restore,
+    SetLabel,
     Error {
         code: ErrorCode,
         message: String,
@@ -374,5 +399,81 @@ mod tests {
             color: None,
             minimized: true,
         });
+    }
+
+    #[test]
+    fn request_set_label_only_name_round_trip() {
+        roundtrip(&Request::SetLabel {
+            pane: PaneRef::focused(),
+            set_name: Some("build".into()),
+            clear_name: false,
+            set_color: None,
+            clear_color: false,
+        });
+    }
+
+    #[test]
+    fn request_set_label_only_color_round_trip() {
+        roundtrip(&Request::SetLabel {
+            pane: PaneRef::Index(2),
+            set_name: None,
+            clear_name: false,
+            set_color: Some(crate::PaneColor::Coral),
+            clear_color: false,
+        });
+    }
+
+    #[test]
+    fn request_set_label_clears_round_trip() {
+        roundtrip(&Request::SetLabel {
+            pane: PaneRef::Id("pane-7".into()),
+            set_name: None,
+            clear_name: true,
+            set_color: None,
+            clear_color: true,
+        });
+    }
+
+    #[test]
+    fn request_set_label_omits_default_fields_in_json() {
+        let v = serde_json::to_value(Request::SetLabel {
+            pane: PaneRef::focused(),
+            set_name: Some("agent".into()),
+            clear_name: false,
+            set_color: None,
+            clear_color: false,
+        })
+        .unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(obj.contains_key("set_name"));
+        assert!(!obj.contains_key("clear_name"));
+        assert!(!obj.contains_key("set_color"));
+        assert!(!obj.contains_key("clear_color"));
+    }
+
+    #[test]
+    fn request_set_label_parses_from_minimal_json() {
+        let parsed: Request = serde_json::from_value(serde_json::json!({
+            "type": "set_label",
+            "pane": "focused",
+            "set_color": "iris"
+        }))
+        .unwrap();
+        assert_eq!(
+            parsed,
+            Request::SetLabel {
+                pane: PaneRef::focused(),
+                set_name: None,
+                clear_name: false,
+                set_color: Some(crate::PaneColor::Iris),
+                clear_color: false,
+            }
+        );
+    }
+
+    #[test]
+    fn response_set_label_serializes_as_unit() {
+        let v = serde_json::to_value(Response::SetLabel).unwrap();
+        assert_eq!(v, serde_json::json!({ "type": "set_label" }));
     }
 }

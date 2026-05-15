@@ -55,6 +55,7 @@ pub fn render_response_pretty(resp: &Response) {
         Response::Close => println!("ok"),
         Response::Minimize => println!("ok"),
         Response::Restore => println!("ok"),
+        Response::SetLabel => println!("ok"),
         Response::Error { code, message, .. } => {
             eprintln!("error [{code:?}]: {message}");
         }
