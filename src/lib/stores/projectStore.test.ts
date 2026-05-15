@@ -401,6 +401,51 @@ describe('projectStore', () => {
     });
   });
 
+  describe('openProject disk-read failure handling', () => {
+    it('should still set currentPath but skip the save when readLatestForWrite throws', async () => {
+      // Init succeeds with one entry...
+      mockStoreInstance.get.mockResolvedValueOnce([{ path: '/a', name: 'a', lastOpened: 1 }]);
+
+      const { projectStore, recentProjects, currentProjectPath } = await import('./projectStore');
+      await projectStore.init();
+      mockStoreInstance.set.mockClear();
+      mockStoreInstance.save.mockClear();
+
+      // ...but the next read (inside openProject) fails.
+      mockStoreInstance.reload.mockRejectedValueOnce(new Error('disk error'));
+
+      await projectStore.openProject('/b');
+
+      // currentPath flipped so the UI navigates into /b.
+      expect(get(currentProjectPath)).toBe('/b');
+      // recentProjects in memory is unchanged — we refused to clobber it.
+      expect(get(recentProjects).map((p) => p.path)).toEqual(['/a']);
+      // And we did NOT persist a partial / empty list.
+      expect(mockStoreInstance.set).not.toHaveBeenCalled();
+      expect(mockStoreInstance.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('removeProject disk-read failure handling', () => {
+    it('should skip the save when readLatestForWrite throws', async () => {
+      mockStoreInstance.get.mockResolvedValueOnce([
+        { path: '/a', name: 'a', lastOpened: 1 },
+        { path: '/b', name: 'b', lastOpened: 2 },
+      ]);
+      const { projectStore, recentProjects } = await import('./projectStore');
+      await projectStore.init();
+      mockStoreInstance.set.mockClear();
+      mockStoreInstance.save.mockClear();
+
+      mockStoreInstance.reload.mockRejectedValueOnce(new Error('disk error'));
+      await projectStore.removeProject('/a');
+
+      // In-memory state untouched.
+      expect(get(recentProjects).map((p) => p.path)).toEqual(['/a', '/b']);
+      expect(mockStoreInstance.set).not.toHaveBeenCalled();
+    });
+  });
+
   describe('bumpRecentTimestamp', () => {
     it('should update lastOpened and move the project to the front without changing currentPath', async () => {
       const before = Date.now() - 1000;

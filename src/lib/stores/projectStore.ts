@@ -43,6 +43,12 @@ function createProjectStore() {
     return store;
   }
 
+  /**
+   * Load recent projects from disk. Returns [] on any failure so the UI
+   * still renders, but never use this result as the basis for a write — a
+   * transient load failure would then overwrite the persisted list with
+   * an empty / partial value. Writers must use {@link readLatestForWrite}.
+   */
   async function loadRecentProjects(): Promise<RecentProject[]> {
     try {
       // Always reload store from disk to get fresh data (for multi-window support)
@@ -54,6 +60,19 @@ function createProjectStore() {
       console.error('Failed to load recent projects:', error);
       return [];
     }
+  }
+
+  /**
+   * Strict variant used as the basis for a save. Propagates failures so
+   * the caller can skip the write and avoid clobbering the on-disk list
+   * with stale or empty data. Returns [] only when the file genuinely has
+   * no `recentProjects` key.
+   */
+  async function readLatestForWrite(): Promise<RecentProject[]> {
+    const s = await getStore();
+    await s.reload();
+    const projects = await s.get<RecentProject[]>('recentProjects');
+    return projects ?? [];
   }
 
   async function saveRecentProjects(projects: RecentProject[]): Promise<void> {
@@ -106,29 +125,38 @@ function createProjectStore() {
 
       // Re-read from disk before computing the new list so concurrent updates
       // from other windows aren't clobbered by this window's stale in-memory
-      // copy.
-      const latestProjects = await loadRecentProjects();
-      const existingIndex = latestProjects.findIndex((p) => p.path === path);
-      const merged =
-        existingIndex >= 0
-          ? [
-              newProject,
-              ...latestProjects.slice(0, existingIndex),
-              ...latestProjects.slice(existingIndex + 1),
-            ]
-          : [newProject, ...latestProjects];
-      const updatedProjects = merged.slice(0, MAX_RECENT_PROJECTS);
+      // copy. If the strict read fails (genuine disk error), skip the save
+      // entirely instead of clobbering the persisted list — but still flip
+      // currentPath so the UI navigates into the project the user asked for.
+      let updatedProjects: RecentProject[] | null = null;
+      try {
+        const latestProjects = await readLatestForWrite();
+        const existingIndex = latestProjects.findIndex((p) => p.path === path);
+        const merged =
+          existingIndex >= 0
+            ? [
+                newProject,
+                ...latestProjects.slice(0, existingIndex),
+                ...latestProjects.slice(existingIndex + 1),
+              ]
+            : [newProject, ...latestProjects];
+        updatedProjects = merged.slice(0, MAX_RECENT_PROJECTS);
+      } catch (error) {
+        console.error('Failed to read recentProjects for write; skipping save:', error);
+      }
 
       update((state) => ({
         ...state,
         currentPath: path,
-        recentProjects: updatedProjects,
+        ...(updatedProjects !== null ? { recentProjects: updatedProjects } : {}),
       }));
 
-      // Await the save so silent failures surface in logs and so the next
-      // operation observes the disk state we just wrote.
-      await saveRecentProjects(updatedProjects);
-      await emitRecentMenuUpdate(updatedProjects);
+      if (updatedProjects !== null) {
+        // Await the save so silent failures surface in logs and so the next
+        // operation observes the disk state we just wrote.
+        await saveRecentProjects(updatedProjects);
+        await emitRecentMenuUpdate(updatedProjects);
+      }
 
       // Resize window to main editor size when opening a project
       try {
@@ -145,7 +173,13 @@ function createProjectStore() {
      * openProject() is never called by that window).
      */
     async bumpRecentTimestamp(path: string) {
-      const latestProjects = await loadRecentProjects();
+      let latestProjects: RecentProject[];
+      try {
+        latestProjects = await readLatestForWrite();
+      } catch (error) {
+        console.error('Failed to read recentProjects for bump; skipping:', error);
+        return;
+      }
       const existingIndex = latestProjects.findIndex((p) => p.path === path);
       if (existingIndex < 0) return;
 
@@ -219,7 +253,13 @@ function createProjectStore() {
     },
 
     async removeProject(path: string) {
-      const latestProjects = await loadRecentProjects();
+      let latestProjects: RecentProject[];
+      try {
+        latestProjects = await readLatestForWrite();
+      } catch (error) {
+        console.error('Failed to read recentProjects for remove; skipping:', error);
+        return;
+      }
       const updatedProjects = latestProjects.filter((p) => p.path !== path);
 
       update((state) => ({
