@@ -1,6 +1,6 @@
 //! Human-readable rendering for `--pretty` output.
 
-use kiri_cli_proto::{PaneColor, PaneInfo, Response};
+use kiri_cli_proto::{PaneColor, PaneInfo, Response, SignalEntry};
 
 pub fn render_response_pretty(resp: &Response) {
     match resp {
@@ -55,9 +55,40 @@ pub fn render_response_pretty(resp: &Response) {
         Response::Close => println!("ok"),
         Response::Minimize => println!("ok"),
         Response::Restore => println!("ok"),
+        Response::SignalSend { delivered } => println!("delivered to {delivered} pane(s)"),
+        Response::SignalWait {
+            name,
+            data,
+            sender_pane_id,
+            sent_at_ms,
+        } => {
+            println!("received '{name}' from {sender_pane_id} (sent at {sent_at_ms} ms)");
+            if let Some(v) = data {
+                println!("{}", serde_json::to_string_pretty(v).unwrap_or_default());
+            }
+        }
+        Response::SignalList { signals } => render_signal_list(signals),
         Response::Error { code, message, .. } => {
             eprintln!("error [{code:?}]: {message}");
         }
+    }
+}
+
+fn render_signal_list(signals: &[SignalEntry]) {
+    if signals.is_empty() {
+        println!("(no signals queued)");
+        return;
+    }
+    for s in signals {
+        let data = s
+            .data
+            .as_ref()
+            .map(|v| serde_json::to_string(v).unwrap_or_default())
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "{} from={} at={}ms data={}",
+            s.name, s.sender_pane_id, s.sent_at_ms, data
+        );
     }
 }
 
