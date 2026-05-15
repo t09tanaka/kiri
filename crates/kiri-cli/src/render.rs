@@ -26,7 +26,13 @@ pub fn render_response_pretty(resp: &Response) {
                 eprintln!("(output truncated; {lines_omitted} earlier lines omitted — re-run with --full)");
             }
         }
-        Response::Send => println!("ok"),
+        Response::Send { submitted } => {
+            if *submitted {
+                println!("ok (submitted)");
+            } else {
+                println!("ok");
+            }
+        }
         Response::Read {
             output,
             cursor,

@@ -14,7 +14,7 @@ pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
     match req {
         Request::WhoAmI => vec![whoami(ctx).await],
         Request::Ls => vec![ls(ctx).await],
-        Request::Send { pane, data } => vec![send(ctx, pane, data).await],
+        Request::Send { pane, data, submit } => vec![send(ctx, pane, data, submit).await],
         Request::Read { pane, since, tail } => vec![read(ctx, pane, since, tail).await],
         Request::Cancel { pane } => vec![cancel(ctx, pane).await],
         Request::Run {
@@ -150,10 +150,42 @@ fn cwd_for(state: &crate::commands::terminal::TerminalState, id: u32) -> Option<
     crate::commands::terminal::get_process_cwd(pid)
 }
 
-async fn send(ctx: &DispatchContext, p: PaneRef, data: String) -> Response {
+async fn send(ctx: &DispatchContext, p: PaneRef, data: String, submit: bool) -> Response {
     let Some(pane) = ctx.pane_map.resolve(&p) else {
         return pane_not_found(p);
     };
+
+    // Decide whether to append `\r` BEFORE taking the write lock. The
+    // sysinfo lookup is slow (~50–200ms) and we don't want to hold the
+    // terminal manager mutex across it. Doing the check first means the
+    // subsequent write of `data` + (maybe) `\r` happens under a single
+    // lock acquisition — concurrent writers (other `kiri term send`
+    // calls, or frontend keystrokes via `write_terminal` which shares
+    // this mutex) can't interleave bytes between `data` and the auto
+    // submit `\r`.
+    //
+    // `data` ending in `\r` already contains claude / codex's submit
+    // byte; we skip the auto-append in that case to avoid an extra
+    // empty turn. `\n` is *not* a submit byte for these TUIs (it's a
+    // newline within the input box, i.e. Shift+Enter), so legacy
+    // recipes like `kiri term send $'msg\n'` still get the auto-`\r`
+    // and commit cleanly.
+    let shell_pid = {
+        let manager = match ctx.terminals.lock() {
+            Ok(g) => g,
+            Err(_) => return internal("terminal state poisoned"),
+        };
+        let Some(instance) = manager.instances.get(&pane.terminal_id) else {
+            return pane_not_found(p);
+        };
+        instance.shell_pid
+    };
+    let should_submit = submit
+        && !ends_with_submit_byte(&data)
+        && shell_pid
+            .map(is_ai_process_for_shell_pid)
+            .unwrap_or(false);
+
     let mut manager = match ctx.terminals.lock() {
         Ok(g) => g,
         Err(_) => return internal("terminal state poisoned"),
@@ -165,15 +197,42 @@ async fn send(ctx: &DispatchContext, p: PaneRef, data: String) -> Response {
     if let Err(e) = instance.writer.write_all(data.as_bytes()) {
         return pty_error(format!("write failed: {e}"));
     }
+    let submitted = if should_submit {
+        if let Err(e) = instance.writer.write_all(b"\r") {
+            return pty_error(format!("submit write failed: {e}"));
+        }
+        true
+    } else {
+        false
+    };
     if let Err(e) = instance.writer.flush() {
         return pty_error(format!("flush failed: {e}"));
     }
-    Response::Send
+    Response::Send { submitted }
+}
+
+/// True when the foreground process under `shell_pid` is an interactive
+/// AI assistant whose input box accepts a single `\r` as submit. Kept in
+/// sync with the frontend's `isAiProcess` allow list — claude / codex.
+fn is_ai_process_for_shell_pid(shell_pid: u32) -> bool {
+    let info = crate::commands::terminal_commands::process_info_for_shell_pid(shell_pid);
+    matches!(info.name.to_lowercase().as_str(), "claude" | "codex")
+}
+
+/// True when `data` already ends with claude / codex's submit byte
+/// (`\r`). Used to skip the auto-`\r` so a caller that explicitly
+/// terminated its data with `\r` doesn't double-submit. `\n` does NOT
+/// count: claude / codex TUIs treat it as a newline within the input
+/// (Shift+Enter), not as submit, so `kiri term send $'msg\n'` still
+/// needs the trailing `\r` for the message to actually commit.
+fn ends_with_submit_byte(data: &str) -> bool {
+    data.ends_with('\r')
 }
 
 async fn cancel(ctx: &DispatchContext, p: PaneRef) -> Response {
-    match send(ctx, p, "\x03".into()).await {
-        Response::Send => Response::Cancel,
+    // Cancel always sends a raw Ctrl-C, never auto-submits.
+    match send(ctx, p, "\x03".into(), false).await {
+        Response::Send { .. } => Response::Cancel,
         other => other,
     }
 }
@@ -1131,11 +1190,28 @@ mod tests {
     #[tokio::test]
     async fn send_to_unknown_pane_returns_pane_not_found() {
         let (ctx, _bus) = make_ctx(vec![]);
-        let resp = send(&ctx, PaneRef::Index(99), "data".into()).await;
+        let resp = send(&ctx, PaneRef::Index(99), "data".into(), false).await;
         match resp {
             Response::Error { code, .. } => assert_eq!(code, ErrorCode::PaneNotFound),
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn ends_with_submit_byte_only_treats_carriage_return_as_submit() {
+        // Plain text never ends with a submit byte.
+        assert!(!ends_with_submit_byte(""));
+        assert!(!ends_with_submit_byte("hello"));
+        assert!(!ends_with_submit_byte("hello world"));
+        // \r is the actual submit byte claude / codex commit on.
+        assert!(ends_with_submit_byte("\r"));
+        assert!(ends_with_submit_byte("hello\r"));
+        // \n is a newline within the input, not submit. Auto-`\r` must
+        // still fire for these so legacy recipes like
+        // `kiri term send $'msg\n'` continue to commit.
+        assert!(!ends_with_submit_byte("\n"));
+        assert!(!ends_with_submit_byte("hello\n"));
+        assert!(!ends_with_submit_byte("hello\nworld"));
     }
 
     // --- signal_send / signal_wait / signal_list tests ---
