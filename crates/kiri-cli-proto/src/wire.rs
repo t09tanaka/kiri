@@ -1,7 +1,24 @@
 use crate::types::{ErrorCode, PaneRef, SplitDirection};
 use serde::{Deserialize, Serialize};
 
+/// Routing target for `Request::SignalSend`.
+///
+/// The wire form is JSON-untagged: `{ "pane": <ref> }` for a specific
+/// pane, or the bare strings `"parent"` / `"children"` for relatives of
+/// the sender pane. Keep the variants tight — anything looser would
+/// collide with `PaneRef::Id`'s string form.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalTarget {
+    /// Route to a single pane (by index or id).
+    Pane(PaneRef),
+    /// Route to the sender pane's parent (the pane it was split from).
+    Parent,
+    /// Route to every pane this sender pane spawned via `split`.
+    Children,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Request {
     /// Ask the server which window/project this socket belongs to.
@@ -52,10 +69,35 @@ pub enum Request {
     Restore {
         pane: PaneRef,
     },
+    /// Enqueue a named signal on `target`'s queue. `from` is the sender
+    /// pane (used to resolve `target = Parent | Children`).
+    SignalSend {
+        from: PaneRef,
+        target: SignalTarget,
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<serde_json::Value>,
+    },
+    /// Block until a signal with `name` lands in `pane`'s queue, or
+    /// until `timeout_secs` elapses. Server clamps to ≤600s.
+    SignalWait {
+        pane: PaneRef,
+        name: String,
+        #[serde(default = "default_signal_wait_timeout")]
+        timeout_secs: u64,
+    },
+    /// Non-blocking peek at every signal currently queued on `pane`.
+    SignalList {
+        pane: PaneRef,
+    },
 }
 
 fn default_run_timeout() -> u64 {
     300
+}
+
+fn default_signal_wait_timeout() -> u64 {
+    60
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -74,6 +116,17 @@ pub struct PaneInfo {
     pub color: Option<crate::PaneColor>,
     #[serde(default)]
     pub minimized: bool,
+}
+
+/// One entry from `Response::SignalList`'s `signals` array.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct SignalEntry {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+    pub sender_pane_id: String,
+    pub sent_at_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -114,6 +167,25 @@ pub enum Response {
     Close,
     Minimize,
     Restore,
+    /// Result of a `SignalSend`. `delivered` is the number of distinct
+    /// pane queues the signal landed on (0 if the target had no matching
+    /// pane, e.g. no parent or no children).
+    SignalSend {
+        delivered: u32,
+    },
+    /// Result of a `SignalWait` that completed before its timeout. The
+    /// timeout path is reported as a `Response::Error` with code
+    /// `Timeout`, not this variant.
+    SignalWait {
+        name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data: Option<serde_json::Value>,
+        sender_pane_id: String,
+        sent_at_ms: u64,
+    },
+    SignalList {
+        signals: Vec<SignalEntry>,
+    },
     Error {
         code: ErrorCode,
         message: String,
@@ -409,5 +481,142 @@ mod tests {
         let obj = v.as_object().unwrap();
         assert!(!obj.contains_key("project_path"));
         assert_eq!(obj.get("window_label").unwrap(), "window-2");
+    }
+
+    // --- signal wire types ---
+
+    #[test]
+    fn signal_target_parent_serializes_as_bare_string() {
+        let v = serde_json::to_value(SignalTarget::Parent).unwrap();
+        assert_eq!(v, serde_json::json!("parent"));
+        let back: SignalTarget = serde_json::from_value(v).unwrap();
+        assert_eq!(back, SignalTarget::Parent);
+    }
+
+    #[test]
+    fn signal_target_children_serializes_as_bare_string() {
+        let v = serde_json::to_value(SignalTarget::Children).unwrap();
+        assert_eq!(v, serde_json::json!("children"));
+    }
+
+    #[test]
+    fn signal_target_pane_serializes_with_key() {
+        let v = serde_json::to_value(SignalTarget::Pane(PaneRef::Id("pane-1".into()))).unwrap();
+        assert_eq!(v, serde_json::json!({ "pane": "pane-1" }));
+        let back: SignalTarget = serde_json::from_value(v).unwrap();
+        assert_eq!(back, SignalTarget::Pane(PaneRef::Id("pane-1".into())));
+    }
+
+    #[test]
+    fn signal_target_pane_with_index() {
+        let v = serde_json::to_value(SignalTarget::Pane(PaneRef::Index(2))).unwrap();
+        assert_eq!(v, serde_json::json!({ "pane": 2 }));
+    }
+
+    #[test]
+    fn request_signal_send_roundtrip_with_data() {
+        roundtrip(&Request::SignalSend {
+            from: PaneRef::focused(),
+            target: SignalTarget::Parent,
+            name: "ready".into(),
+            data: Some(serde_json::json!({ "step": 1 })),
+        });
+    }
+
+    #[test]
+    fn request_signal_send_roundtrip_without_data() {
+        roundtrip(&Request::SignalSend {
+            from: PaneRef::focused(),
+            target: SignalTarget::Pane(PaneRef::Index(0)),
+            name: "go".into(),
+            data: None,
+        });
+    }
+
+    #[test]
+    fn request_signal_send_omits_data_field_when_none() {
+        let v = serde_json::to_value(Request::SignalSend {
+            from: PaneRef::focused(),
+            target: SignalTarget::Children,
+            name: "ping".into(),
+            data: None,
+        })
+        .unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("data"));
+        assert_eq!(obj.get("target"), Some(&serde_json::json!("children")));
+    }
+
+    #[test]
+    fn request_signal_wait_uses_default_timeout() {
+        let parsed: Request = serde_json::from_value(serde_json::json!({
+            "type": "signal_wait",
+            "pane": "focused",
+            "name": "ready"
+        }))
+        .unwrap();
+        assert_eq!(
+            parsed,
+            Request::SignalWait {
+                pane: PaneRef::focused(),
+                name: "ready".into(),
+                timeout_secs: 60,
+            }
+        );
+    }
+
+    #[test]
+    fn request_signal_list_roundtrip() {
+        roundtrip(&Request::SignalList {
+            pane: PaneRef::Index(0),
+        });
+    }
+
+    #[test]
+    fn response_signal_send_roundtrip() {
+        roundtrip(&Response::SignalSend { delivered: 3 });
+    }
+
+    #[test]
+    fn response_signal_wait_roundtrip() {
+        roundtrip(&Response::SignalWait {
+            name: "ready".into(),
+            data: Some(serde_json::json!({ "answer": 42 })),
+            sender_pane_id: "pane-2".into(),
+            sent_at_ms: 1_234_567_890,
+        });
+    }
+
+    #[test]
+    fn response_signal_wait_omits_data_when_none() {
+        let v = serde_json::to_value(Response::SignalWait {
+            name: "ready".into(),
+            data: None,
+            sender_pane_id: "pane-2".into(),
+            sent_at_ms: 0,
+        })
+        .unwrap();
+        let obj = v.as_object().unwrap();
+        assert!(!obj.contains_key("data"));
+    }
+
+    #[test]
+    fn response_signal_list_roundtrip() {
+        roundtrip(&Response::SignalList {
+            signals: vec![
+                SignalEntry {
+                    name: "a".into(),
+                    data: None,
+                    sender_pane_id: "pane-1".into(),
+                    sent_at_ms: 1,
+                },
+                SignalEntry {
+                    name: "b".into(),
+                    data: Some(serde_json::json!(42)),
+                    sender_pane_id: "pane-2".into(),
+                    sent_at_ms: 2,
+                },
+            ],
+        });
     }
 }

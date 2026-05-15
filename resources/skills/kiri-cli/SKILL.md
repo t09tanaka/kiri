@@ -1,6 +1,6 @@
 ---
 name: kiri-cli
-description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close/minimize/restore`, JSON output schema, pane addressing (index/id/focused), the default labeling pattern for `split` (`--name`/`--color`, plus `--minimized` for agent-spawned panes), busy-pane detection, and known limitations.
+description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close/minimize/restore/signal`, JSON output schema, pane addressing (index/id/focused), required pane labels (`--name`/`--color`), default-minimized side panes (with `--no-minimized` opt-out), parent↔child signal queues (`kiri term signal send/wait/list`), busy-pane detection, and known limitations.
 version: 0.3.0
 ---
 
@@ -189,23 +189,23 @@ Response shape:
 
 ---
 
-### `kiri term split [--pane X] [--dir h|v] [--name STR] [--color COLOR] [--minimized]`
+### `kiri term split [--pane X] [--dir h|v] --name STR --color COLOR [--no-minimized]`
 
 Split the pane. `--dir h` (default) is horizontal; `--dir v` is vertical.
 
-The **default form for any agent-initiated split** is:
+**Default form for agents:**
 
 ```bash
-# Default — use this unless you have a specific reason not to
-kiri term split --dir v --name <purpose> --color <color> --minimized
+kiri term split --dir v --name build --color coral
+kiri term split --dir v --name agent --color iris
 ```
 
-Other shapes (use only when the default does not fit):
+This creates a new pane that is **minimized by default** — its shortcut bar is collapsed so it doesn't push the user's primary view down. Use this form whenever the new pane is for the agent's own work (background dev server, log tail, sub-agent claude, etc.).
+
+If the new pane is for the user to watch / interact with, opt out of the default:
 
 ```bash
-kiri term split --name build --color coral             # split the user will watch — drop --minimized
-kiri term split --pane pane-1 --dir h                  # one-off ephemeral pane that will close in seconds
-kiri term split                                        # interactive use only; agents should not emit this form
+kiri term split --dir v --name console --color sky --no-minimized
 ```
 
 Response shape:
@@ -218,33 +218,27 @@ Response shape:
 }
 ```
 
-**Label flags — set both on every agent-initiated split** unless the pane
-is genuinely throwaway (closes within a minute and never appears in `ls`
-output the user will read). Both apply only at split time — there is no
-way to rename or recolor an existing pane.
+**Required label flags** (both must be supplied at split time — there is no
+way to rename or recolor an existing pane):
 
 - `--name STR` — 1–32 characters, no control characters. Shown as text
-  in the pane's header. Pick a short, lowercase, purpose-revealing word
-  (e.g. `dev`, `test`, `build`, `lint-fix`, `pg-restore`,
-  `claude-sub`).
+  in the pane's header.
 - `--color COLOR` — one of `sky | iris | jade | amber | coral | rose`.
   Shown as a colored dot to the left of the name. Anything else is
-  rejected by the CLI. **There is no canonical color-to-purpose
-  mapping** — pick any of the 6 and just keep different concurrent
-  panes on different colors so they're visually separable.
+  rejected by the CLI.
 
-Without these flags the pane is anonymous in the header and in `ls`
-output — neither the user nor your future self can tell two panes apart.
+Omitting either flag causes clap to exit immediately with a usage error
+(non-zero exit code).
 
-**Minimize flag — default-on for agent-spawned side panes:**
+**`--no-minimized`** (optional):
 
-- `--minimized` — create the new pane with its shortcut bar already
-  collapsed. Default for any pane the agent spawns for its own use
-  (background dev server, log tail, parallel sub-agent, long-running
-  job). Keeps the user's primary view from being pushed down. The user
-  (or `kiri term restore --pane <id>`) can expand it later. Drop this
-  flag only when the user explicitly wants to look at the new pane
-  immediately.
+- Default (flag absent): the new pane is created with its shortcut bar
+  collapsed — recommended for agent-spawned side panes.
+- With `--no-minimized`: the new pane is fully expanded — recommended
+  when the user is expected to look at this pane directly.
+
+The user (or `kiri term minimize/restore --pane <id>`) can toggle the
+state at any time.
 
 ---
 
@@ -296,6 +290,146 @@ Response shape:
 { "type": "close" }
 ```
 
+---
+
+### `kiri term signal …` (parent ↔ child messaging)
+
+Each pane has its own FIFO queue of named signals. Two panes that have a
+parent → child relationship (the child was created by `split`-ing the
+parent) can exchange named messages to coordinate work — e.g. a sub-agent
+claude in a side pane reports `done` to the orchestrator claude in the
+parent pane.
+
+Three subcommands:
+
+#### `kiri term signal send`
+
+Enqueue a signal on one or more pane queues.
+
+```bash
+# To a specific pane (by index or id):
+kiri term signal send --pane pane-2 --name ready
+
+# To the sender pane's parent (the pane that split-ed it):
+kiri term signal send --target parent --name done --data '{"step":3}'
+
+# Fan out to every pane the sender has spawned:
+kiri term signal send --target children --name shutdown
+```
+
+Exactly one of `--pane` and `--target` must be set. Use `--from <ref>` to
+override the sender pane (defaults to the focused pane); this matters when
+the sender pane is not the focused one — e.g. a minimized side pane
+that wants its `--target parent` resolution to use its own id.
+
+| Flag | Required? | Notes |
+|---|---|---|
+| `--pane I_OR_ID` | one of pane/target | Deliver to this single pane |
+| `--target parent\|children` | one of pane/target | Route via the sender pane's parent/child links |
+| `--from I_OR_ID` | optional | Sender pane override; defaults to focused |
+| `--name STR` | yes | 1–64 chars, `[a-zA-Z0-9_.-]` only |
+| `--data JSON` | optional | Any JSON value; delivered verbatim |
+
+Response shape:
+
+```json
+{ "type": "signal_send", "delivered": 1 }
+```
+
+`delivered` counts how many pane queues received the signal. `0` means
+the route resolved to no pane (no parent on the root pane, or no
+children). Specifying a non-existent `--pane` returns
+`error: pane_not_found` instead.
+
+#### `kiri term signal wait`
+
+Block the calling pane until a signal with `name` arrives on `--pane`'s
+queue (defaults to focused), or until the timeout elapses.
+
+```bash
+# Default 60s timeout, focused pane:
+kiri term signal wait --name ready
+
+# 120s timeout, print the JSON data payload to stdout on success:
+kiri term signal wait --name done --timeout 120 --print-data
+
+# Wait on a specific pane (rarely needed — usually you wait on yourself):
+kiri term signal wait --pane pane-2 --name ready
+```
+
+| Flag | Required? | Notes |
+|---|---|---|
+| `--pane I_OR_ID` | optional | Defaults to focused |
+| `--name STR` | yes | Same character rules as `send` |
+| `--timeout SECS` | optional | Default 60, max 600 |
+| `--print-data` | optional | Print the JSON `data` field after the response line |
+
+Success response shape:
+
+```json
+{
+  "type": "signal_wait",
+  "name": "done",
+  "data": { "step": 3 },
+  "sender_pane_id": "pane-3",
+  "sent_at_ms": 1716729123456
+}
+```
+
+`data` is **omitted entirely** when the signal had no payload — do not
+expect a `null`.
+
+Timeout response shape (non-zero CLI exit code):
+
+```json
+{
+  "type": "error",
+  "code": "timeout",
+  "message": "no signal named 'done' arrived within 60s",
+  "detail": { "timeout_secs": 60, "name": "done" }
+}
+```
+
+#### `kiri term signal list`
+
+Non-blocking peek at the signals currently queued on `--pane` (defaults
+to focused). Does not consume; useful for debugging.
+
+```bash
+kiri term signal list
+kiri term signal list --pane pane-2
+```
+
+Response shape:
+
+```json
+{
+  "type": "signal_list",
+  "signals": [
+    {
+      "name": "step",
+      "data": { "n": 1 },
+      "sender_pane_id": "pane-1",
+      "sent_at_ms": 1716729123456
+    }
+  ]
+}
+```
+
+#### Lifecycle and routing notes
+
+- Parent/child links are recorded only when a pane is created via
+  `kiri term split` (or the UI equivalent). The root pane has no parent.
+- When a pane closes, its queue and parent/child links are torn down
+  automatically. Any `signal wait` still blocked on that pane will fall
+  through to its outer timeout.
+- A signal sent before any waiter exists is queued — `wait` consumes
+  the oldest matching entry whenever it arrives, even if that entry was
+  enqueued seconds before the wait started. This is the standard
+  FIFO-by-name behavior agents expect.
+- Multiple waiters on the same `name` race for each signal; exactly one
+  wins per send. Don't rely on broadcast-by-name within a single pane.
+
 ## 6. Errors
 
 All errors share this envelope. Keys `type`, `code`, and `message` are always present. `detail` is optional (arbitrary JSON value) and is **omitted entirely** when not populated — do not expect a `null` value.
@@ -332,6 +466,7 @@ Key error codes (snake_case):
 | `frontend_unresponsive` | kiri frontend did not respond in time |
 | `protocol_error` | Malformed message on the wire |
 | `internal_error` | Unexpected server-side error |
+| `invalid_argument` | Validation failed (bad name characters, oversize, etc.) |
 | `no_kiri_window` | No kiri window found (socket discovery failed) |
 | `cwd_outside_project` | Working directory is outside the project root |
 
@@ -405,19 +540,15 @@ Key error codes (snake_case):
 - Use `read --since CURSOR` to incrementally collect output without re-reading what you already have.
 - On `pane_busy`: (a) `cancel` if you own the process, (b) `split` for a clean pane, (c) pick a pane from `ls` with `running: false`.
 - Surface `lines_omitted > 0` from `run` to the user — important context may be truncated. Re-run with `--full` if needed.
-- **Every agent-initiated `kiri term split` should pass `--name`,
-  `--color`, and (for side panes the agent owns) `--minimized` — all
-  three together.** This is the default; bare `kiri term split` is for
-  interactive human use, not agents. Without `--name`/`--color` the new
-  pane is anonymous in `ls` output and the header, so neither the user
-  nor your future self can tell it apart from other panes. Without
-  `--minimized` agent-spawned side panes push the user's primary view
-  down. Pick `--name` as a short purpose word (`dev`, `test`,
-  `pg-restore`) and pick any of `sky | iris | jade | amber | coral |
-  rose` for `--color`, just keeping different concurrent panes on
-  different colors. The only time to skip these is a truly ephemeral
-  pane (closes within a minute) or a pane the user explicitly wants to
-  watch immediately (then drop `--minimized`).
+- When spawning a new pane via `kiri term split`, the default is now
+  **minimized**: use `kiri term split --dir v --name <purpose> --color <color>`
+  for agent-owned side panes (the shortcut bar comes up collapsed so
+  the user's primary view isn't pushed down). Add `--no-minimized` only
+  when the user is expected to look at the new pane directly.
+- For parent ↔ child coordination, prefer `kiri term signal send/wait`
+  over polling files or terminal output. The wait is `Notify`-backed
+  on the server side, so it wakes immediately on send and respects an
+  upper bound timeout (default 60s, max 600s).
 
 ## 9. Known limitations (v1)
 
@@ -425,6 +556,9 @@ Key error codes (snake_case):
 - PTY output includes ANSI color/cursor escape codes. Strip them before semantic analysis.
 - Sentinel-based `run` requires a normal interactive shell. If the pane is inside `vim`, `less`, or another TUI, use `send` + `cancel` instead.
 - Cross-window addressing is not supported. Each kiri window has its own CLI socket and panes.
+- Signal routing assumes the sender pane is the focused pane. Use
+  `signal send --from <ref>` to override when sending from a minimized
+  side pane.
 
 ## 10. Example workflow
 
@@ -443,10 +577,17 @@ kiri term run git status
 kiri term run --pane pane-2 npm test
 # => { "type": "error", "code": "pane_busy", ... }
 
-# 4. Split pane-1 to get a clean pane (default labeled form)
-kiri term split --pane pane-1 --dir v --name test --color jade --minimized
+# 4. Split pane-1 to get a clean side pane (minimized by default)
+kiri term split --pane pane-1 --dir v --name tests --color iris
 # => { "type": "split", "new_pane_id": "pane-3", "new_pane_index": 2 }
 
 # 5. Run tests in the new clean pane
 kiri term run --pane pane-3 npm test
+
+# 6. Notify the parent pane that the child is done
+kiri term signal send --from pane-3 --target parent --name tests_done --data '{"exit":0}'
+
+# 7. Parent pane is blocking on:
+#    kiri term signal wait --name tests_done --timeout 600 --print-data
+#    → unblocks and prints the JSON payload.
 ```
