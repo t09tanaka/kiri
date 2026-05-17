@@ -14,6 +14,7 @@ pub mod run_logic;
 pub mod signals;
 
 use crate::commands::cli_install;
+use crate::commands::lock_ext::LockExt;
 use crate::commands::terminal::{TerminalOutputBusState, TerminalState};
 use interprocess::local_socket::tokio::prelude::*;
 use interprocess::local_socket::{GenericFilePath, ListenerOptions, ToFsName};
@@ -38,7 +39,7 @@ pub struct CliServerHandle {
 
 impl CliServerHandle {
     pub fn stop(&self) {
-        if let Some(tx) = self.stop.lock().expect("stop mutex poisoned").take() {
+        if let Some(tx) = self.stop.lock_recover().take() {
             let _ = tx.send(());
         }
     }
@@ -57,14 +58,14 @@ impl CliServerRegistry {
     /// Insert a handle keyed by window label. If a previous handle
     /// existed for that label, stop it first.
     pub fn insert(&self, label: String, handle: Arc<CliServerHandle>) {
-        let mut map = self.handles.lock().expect("registry mutex poisoned");
+        let mut map = self.handles.lock_recover();
         if let Some(prev) = map.insert(label, handle) {
             prev.stop();
         }
     }
 
     pub fn stop_and_remove(&self, label: &str) {
-        let mut map = self.handles.lock().expect("registry mutex poisoned");
+        let mut map = self.handles.lock_recover();
         if let Some(h) = map.remove(label) {
             h.stop();
         }

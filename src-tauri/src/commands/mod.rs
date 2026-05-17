@@ -1,5 +1,6 @@
 pub mod cli_install;
 pub mod cli_server;
+pub mod lock_ext;
 pub mod skill_install;
 pub mod cloudflare_tunnel;
 pub mod drag_drop;
