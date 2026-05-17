@@ -31,6 +31,7 @@
     "perf:check": "tsx scripts/perf-check.ts --check-size --compare-baseline",
     "perf:measure": "tsx scripts/perf-measure.ts",
     "perf:measure:json": "tsx scripts/perf-measure.ts --json",
+    "perf:bundle-report": "tsx scripts/perf-bundle-report.ts",
     "release": "tsx scripts/release.ts"
   },
   "devDependencies": {
