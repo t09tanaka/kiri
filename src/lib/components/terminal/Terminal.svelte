@@ -35,6 +35,11 @@
     buildTerminalOptions,
     loadDeferredAddons,
   } from './terminalSetup';
+  import {
+    PROCESS_POLL_INTERVAL_MS,
+    RESIZE_STABILITY_DELAY_MS,
+    RESIZE_DEBOUNCE_MS,
+  } from './terminalConstants';
 
   // Lazy-loaded xterm modules (loaded on first terminal creation)
   let xtermLoaded = false;
@@ -95,15 +100,12 @@
   });
   const isAiRunning = $derived(isAiProcess(processName));
 
-  const PROCESS_POLL_INTERVAL_MS = 5000;
-
   // Drop (not buffer) output during a resize that happens after initial
   // setup: buffered content is sized for the OLD terminal, and replaying
   // it after the resize corrupts Ink layouts. The Ink app will redraw on
   // its SIGWINCH anyway. terminalSyncOutput.ts owns the actual drop.
   let syncHandler: SyncOutputHandler | null = null;
   let resizeStabilityTimeout: ReturnType<typeof setTimeout> | null = null;
-  const RESIZE_STABILITY_DELAY = 50;
 
   // Track last sent PTY size to prevent duplicate resize calls
   let lastSentPtySize: { cols: number; rows: number } | null = null;
@@ -338,7 +340,7 @@
     }
     resizeStabilityTimeout = setTimeout(() => {
       requestAnimationFrame(() => syncHandler?.setResizing(false));
-    }, RESIZE_STABILITY_DELAY);
+    }, RESIZE_STABILITY_DELAY_MS);
   }
 
   function handleResize() {
@@ -356,7 +358,7 @@
         fitTerminalToContainer();
         scheduleResizeEnd();
       });
-    }, 16);
+    }, RESIZE_DEBOUNCE_MS);
   }
 
   // Poll foreground process name to drive the AI shortcut bar
@@ -769,7 +771,7 @@
     position: relative;
     flex: 1;
     min-height: 0;
-    padding: 12px 16px;
+    padding: var(--terminal-padding-y) var(--terminal-padding-x);
     box-sizing: border-box;
     overflow: hidden;
   }
