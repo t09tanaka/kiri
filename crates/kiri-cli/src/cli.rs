@@ -2,8 +2,10 @@
 //!
 //! The binary lives at `~/.kiri/bin/kiri` (installed by the kiri app at
 //! startup) and is automatically on PATH inside kiri terminals via
-//! `KIRI_SOCKET`-driven env injection. Outside of a kiri terminal the
-//! command will report an error because `KIRI_SOCKET` is not set.
+//! `KIRI_SOCKET`-driven env injection. Outside of a kiri terminal most
+//! commands fall back to socket discovery against the running windows;
+//! `kiri env` is always safe to run and prints the environment the CLI
+//! sees, including the socket it would target.
 
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use kiri_cli_proto::{PaneColor, PaneRef};
@@ -116,6 +118,12 @@ pub enum Top {
     /// Operate on terminal panes inside this kiri window.
     #[command(subcommand)]
     Term(TermCmd),
+    /// Print the kiri environment (socket path, in-terminal flag, discovered windows).
+    ///
+    /// `env` does not talk to the kiri host. It is safe to run from any
+    /// shell — including outside a kiri terminal — to debug why the CLI
+    /// cannot find a window or to script an external-terminal handshake.
+    Env,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -363,7 +371,9 @@ mod tests {
 
     fn split_args<'a>(extra: &'a [&'a str]) -> Vec<&'a str> {
         // Default `--name`/`--color` are now required for `term split`.
-        let mut v = vec!["kiri", "term", "split", "--name", "build", "--color", "coral"];
+        let mut v = vec![
+            "kiri", "term", "split", "--name", "build", "--color", "coral",
+        ];
         v.extend_from_slice(extra);
         v
     }
@@ -396,28 +406,24 @@ mod tests {
 
     #[test]
     fn rejects_empty_name() {
-        let err = Cli::try_parse_from([
-            "kiri", "term", "split", "--name", "", "--color", "coral",
-        ]);
+        let err = Cli::try_parse_from(["kiri", "term", "split", "--name", "", "--color", "coral"]);
         assert!(err.is_err(), "should reject empty name");
     }
 
     #[test]
     fn rejects_name_over_32_chars() {
         let long = "a".repeat(33);
-        let err = Cli::try_parse_from([
-            "kiri", "term", "split", "--name", &long, "--color", "coral",
-        ]);
+        let err =
+            Cli::try_parse_from(["kiri", "term", "split", "--name", &long, "--color", "coral"]);
         assert!(err.is_err(), "should reject 33-char name");
     }
 
     #[test]
     fn accepts_name_at_32_chars() {
         let edge = "a".repeat(32);
-        let cli = Cli::try_parse_from([
-            "kiri", "term", "split", "--name", &edge, "--color", "coral",
-        ])
-        .unwrap();
+        let cli =
+            Cli::try_parse_from(["kiri", "term", "split", "--name", &edge, "--color", "coral"])
+                .unwrap();
         let Top::Term(TermCmd::Split(a)) = cli.command else {
             panic!("expected split");
         };
@@ -507,7 +513,15 @@ mod tests {
     #[test]
     fn parse_signal_send_with_parent_target_and_data() {
         let cli = Cli::try_parse_from([
-            "kiri", "term", "signal", "send", "--target", "parent", "--name", "done", "--data",
+            "kiri",
+            "term",
+            "signal",
+            "send",
+            "--target",
+            "parent",
+            "--name",
+            "done",
+            "--data",
             "{\"ok\":true}",
         ])
         .unwrap();
@@ -516,10 +530,7 @@ mod tests {
                 assert_eq!(a.target, Some(SignalTargetArg::Parent));
                 assert!(a.pane.is_none());
                 assert_eq!(a.name, "done");
-                assert_eq!(
-                    a.data.unwrap(),
-                    serde_json::json!({ "ok": true })
-                );
+                assert_eq!(a.data.unwrap(), serde_json::json!({ "ok": true }));
             }
             _ => panic!("expected signal send"),
         }
@@ -654,7 +665,14 @@ mod tests {
     #[test]
     fn signal_wait_rejects_zero_timeout() {
         let err = Cli::try_parse_from([
-            "kiri", "term", "signal", "wait", "--name", "ready", "--timeout", "0",
+            "kiri",
+            "term",
+            "signal",
+            "wait",
+            "--name",
+            "ready",
+            "--timeout",
+            "0",
         ]);
         assert!(err.is_err(), "timeout=0 should be rejected");
     }
@@ -662,7 +680,14 @@ mod tests {
     #[test]
     fn signal_wait_rejects_timeout_over_600() {
         let err = Cli::try_parse_from([
-            "kiri", "term", "signal", "wait", "--name", "ready", "--timeout", "601",
+            "kiri",
+            "term",
+            "signal",
+            "wait",
+            "--name",
+            "ready",
+            "--timeout",
+            "601",
         ]);
         assert!(err.is_err(), "timeout>600 should be rejected");
     }
@@ -680,10 +705,8 @@ mod tests {
 
     #[test]
     fn parse_signal_list_with_pane() {
-        let cli = Cli::try_parse_from([
-            "kiri", "term", "signal", "list", "--pane", "pane-3",
-        ])
-        .unwrap();
+        let cli =
+            Cli::try_parse_from(["kiri", "term", "signal", "list", "--pane", "pane-3"]).unwrap();
         match cli.command {
             Top::Term(TermCmd::Signal(SignalCmd::List(a))) => {
                 assert_eq!(a.pane.as_deref(), Some("pane-3"));
@@ -695,7 +718,15 @@ mod tests {
     #[test]
     fn parse_set_label_with_name_and_color() {
         let cli = Cli::try_parse_from([
-            "kiri", "term", "set-label", "--pane", "2", "--name", "build", "--color", "coral",
+            "kiri",
+            "term",
+            "set-label",
+            "--pane",
+            "2",
+            "--name",
+            "build",
+            "--color",
+            "coral",
         ])
         .unwrap();
         let Top::Term(TermCmd::SetLabel(args)) = cli.command else {
@@ -711,8 +742,7 @@ mod tests {
 
     #[test]
     fn parse_set_label_only_clear_name() {
-        let cli =
-            Cli::try_parse_from(["kiri", "term", "set-label", "--clear-name"]).unwrap();
+        let cli = Cli::try_parse_from(["kiri", "term", "set-label", "--clear-name"]).unwrap();
         let Top::Term(TermCmd::SetLabel(args)) = cli.command else {
             panic!("expected set-label");
         };
@@ -725,8 +755,7 @@ mod tests {
 
     #[test]
     fn parse_set_label_only_clear_color() {
-        let cli =
-            Cli::try_parse_from(["kiri", "term", "set-label", "--clear-color"]).unwrap();
+        let cli = Cli::try_parse_from(["kiri", "term", "set-label", "--clear-color"]).unwrap();
         let Top::Term(TermCmd::SetLabel(args)) = cli.command else {
             panic!("expected set-label");
         };
@@ -737,18 +766,27 @@ mod tests {
 
     #[test]
     fn set_label_rejects_name_with_clear_name() {
-        let err = Cli::try_parse_from([
-            "kiri", "term", "set-label", "--name", "x", "--clear-name",
-        ]);
-        assert!(err.is_err(), "should reject conflicting --name + --clear-name");
+        let err = Cli::try_parse_from(["kiri", "term", "set-label", "--name", "x", "--clear-name"]);
+        assert!(
+            err.is_err(),
+            "should reject conflicting --name + --clear-name"
+        );
     }
 
     #[test]
     fn set_label_rejects_color_with_clear_color() {
         let err = Cli::try_parse_from([
-            "kiri", "term", "set-label", "--color", "sky", "--clear-color",
+            "kiri",
+            "term",
+            "set-label",
+            "--color",
+            "sky",
+            "--clear-color",
         ]);
-        assert!(err.is_err(), "should reject conflicting --color + --clear-color");
+        assert!(
+            err.is_err(),
+            "should reject conflicting --color + --clear-color"
+        );
     }
 
     #[test]
