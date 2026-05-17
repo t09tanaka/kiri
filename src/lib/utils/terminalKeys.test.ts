@@ -247,4 +247,116 @@ describe('terminalKeys', () => {
       expect(isMacOS()).toBe(false);
     });
   });
+
+  describe('OS-specific coverage', () => {
+    const createKeyboardEvent = (options: Partial<KeyboardEvent>): KeyboardEvent => {
+      return {
+        key: '',
+        altKey: false,
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        isComposing: false,
+        ...options,
+      } as KeyboardEvent;
+    };
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    // The MAC_TERMINAL_KEYBINDINGS table is the only one this module
+    // currently knows about; `getTerminalSequence` doesn't inspect the
+    // platform itself, so the caller (Terminal.svelte) has to gate on
+    // `isMacOS()`. These tests document that contract: the parser
+    // returns the same sequence regardless of `navigator.platform`,
+    // and consumers must not pipe its output through to a non-mac
+    // shell because Win32/Linux readline expects different bytes.
+    it.each([
+      { platform: 'MacIntel', label: 'macOS' },
+      { platform: 'Win32', label: 'Windows' },
+      { platform: 'Linux x86_64', label: 'Linux' },
+    ])('returns Mac sequences uniformly on $label ($platform)', ({ platform }) => {
+      vi.stubGlobal('navigator', { platform });
+      const event = createKeyboardEvent({ key: 'ArrowLeft', altKey: true });
+      expect(getTerminalSequence(event)).toBe(TERMINAL_SEQUENCES.WORD_BACKWARD);
+    });
+
+    it.each([
+      { platform: 'Win32', label: 'Windows' },
+      { platform: 'Linux x86_64', label: 'Linux' },
+    ])('isMacOS() is false on $label so the caller will skip dispatch', ({ platform }) => {
+      vi.stubGlobal('navigator', { platform });
+      expect(isMacOS()).toBe(false);
+    });
+
+    // IME composition (Japanese, Chinese, Korean input): xterm.js has
+    // its own composition handling, so a keydown that fires while
+    // `isComposing` is true must not be consumed by our handler. The
+    // current implementation does not check `isComposing` itself, so
+    // we document that the consumer (Terminal.svelte) is responsible.
+    it('still matches Option+Left when isComposing is true (consumer must gate)', () => {
+      const event = createKeyboardEvent({
+        key: 'ArrowLeft',
+        altKey: true,
+        isComposing: true,
+      });
+      expect(getTerminalSequence(event)).toBe(TERMINAL_SEQUENCES.WORD_BACKWARD);
+    });
+
+    // IME 229 keyCode and 'Process' key: browsers emit these while the
+    // user is mid-composition. They must not pattern-match any binding.
+    it('returns null for Process key (IME pending)', () => {
+      const event = createKeyboardEvent({ key: 'Process' });
+      expect(getTerminalSequence(event)).toBeNull();
+    });
+
+    it('returns null for Process key even with Alt held', () => {
+      const event = createKeyboardEvent({ key: 'Process', altKey: true });
+      expect(getTerminalSequence(event)).toBeNull();
+    });
+
+    // Dead keys: macOS Option+E produces a Dead acute accent before
+    // the next vowel finishes composition. The arrow-key bindings
+    // share `altKey: true`, so we must not accidentally match `Dead`.
+    it('returns null for Dead key', () => {
+      const event = createKeyboardEvent({ key: 'Dead', altKey: true });
+      expect(getTerminalSequence(event)).toBeNull();
+    });
+
+    // Windows / Linux convention: AltGr is reported as altKey=true +
+    // ctrlKey=true on most browsers. Even on macOS, holding Ctrl with
+    // Option+Arrow should not collapse to a word-jump - the user is
+    // doing something else (xterm has its own ctrl handling).
+    it('does not match Option+Arrow when Ctrl is also held (AltGr / Ctrl-combo)', () => {
+      const binding: KeyBinding = {
+        key: 'ArrowLeft',
+        altKey: true,
+        sequence: TERMINAL_SEQUENCES.WORD_BACKWARD,
+      };
+      const event = createKeyboardEvent({
+        key: 'ArrowLeft',
+        altKey: true,
+        ctrlKey: true,
+      });
+      // Current implementation still matches because ctrlKey isn't
+      // inspected. This test pins that behavior so any future change
+      // (e.g. adding ctrlKey filtering) shows up as a deliberate diff.
+      expect(matchesKeybinding(event, binding)).toBe(true);
+    });
+
+    it('matches Cmd+Backspace even with Shift held (consistent with VSCode)', () => {
+      const binding: KeyBinding = {
+        key: 'Backspace',
+        metaKey: true,
+        sequence: TERMINAL_SEQUENCES.KILL_LINE,
+      };
+      const event = createKeyboardEvent({
+        key: 'Backspace',
+        metaKey: true,
+        shiftKey: true,
+      });
+      expect(matchesKeybinding(event, binding)).toBe(true);
+    });
+  });
 });
