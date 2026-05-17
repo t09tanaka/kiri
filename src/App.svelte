@@ -19,10 +19,6 @@
     import('@/lib/components/git/DiffViewModal.svelte').then((m) => m.default);
   const lazyCommitHistoryModal = () =>
     import('@/lib/components/git/CommitHistoryModal.svelte').then((m) => m.default);
-  const lazyRemoteAccessSettings = () =>
-    import('@/lib/components/settings/RemoteAccessSettings.svelte').then((m) => m.default);
-  const lazyQrCodeModal = () =>
-    import('@/lib/components/remote/QrCodeModal.svelte').then((m) => m.default);
   const lazyEditorModal = () =>
     import('@/lib/components/editor/EditorModal.svelte').then((m) => m.default);
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
@@ -35,14 +31,10 @@
   import { peekStore } from '@/lib/stores/peekStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
   import { commitHistoryStore } from '@/lib/stores/commitHistoryStore';
-  import { remoteAccessViewStore } from '@/lib/stores/remoteAccessViewStore';
   import { windowService } from '@/lib/services/windowService';
   import { PeekEditor } from '@/lib/components/peek';
   import { projectStore, isProjectOpen } from '@/lib/stores/projectStore';
   import { settingsStore, startupCommand } from '@/lib/stores/settingsStore';
-  import { isRemoteActive } from '@/lib/stores/remoteAccessStore';
-  import { toggleRemoteAccess } from '@/lib/utils/remoteAccessToggle';
-  import { toastStore } from '@/lib/stores/toastStore';
   import type { StartupCommand } from '@/lib/services/persistenceService';
   import { performanceService } from '@/lib/services/performanceService';
   import { setupLongTaskObserver } from '@/lib/utils/performanceMarker';
@@ -221,10 +213,8 @@
 
   // Sync tools state to macOS menu bar
   $effect(() => {
-    const remoteOn = $isRemoteActive;
     const cmd = $startupCommand;
     emit('update-tools-menu', {
-      remoteAccessOn: remoteOn,
       startupCommand: cmd,
     });
   });
@@ -324,13 +314,6 @@
           commitHistoryStore.open(path);
         }
       }
-      return;
-    }
-
-    // Cmd+Shift+R: Toggle Remote Access Settings
-    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'r') {
-      e.preventDefault();
-      remoteAccessViewStore.toggleSettings();
       return;
     }
 
@@ -558,27 +541,6 @@
       await projectStore.clearRecentProjects();
     });
 
-    // Listen for menu-toggle-remote event from Tools menu
-    const unlistenMenuToggleRemote = await listen('menu-toggle-remote', async () => {
-      // Open QR modal immediately for instant feedback (before any async work)
-      if (!get(isRemoteActive)) {
-        remoteAccessViewStore.openQrModal();
-      }
-      const result = await toggleRemoteAccess({
-        onToggling: () => {},
-        onError: (msg) => {
-          if (msg) {
-            toastStore.error(msg);
-            remoteAccessViewStore.closeQrModal();
-          }
-        },
-      });
-      // Close QR modal if toggle failed
-      if (!result && !get(isRemoteActive)) {
-        remoteAccessViewStore.closeQrModal();
-      }
-    });
-
     // Listen for menu-set-startup-command event from Tools menu
     const unlistenMenuStartupCmd = await listen<string>(
       'menu-set-startup-command',
@@ -587,11 +549,6 @@
         settingsStore.setStartupCommand(cmd);
       }
     );
-
-    // Listen for menu-show-qr-code event from Tools menu
-    const unlistenMenuShowQr = await listen('menu-show-qr-code', () => {
-      remoteAccessViewStore.openQrModal();
-    });
 
     performanceService.markStartupPhase('app-mount-complete');
 
@@ -604,9 +561,7 @@
       unlistenMenuNewWindow?.();
       unlistenOpenRecent();
       unlistenClearRecent();
-      unlistenMenuToggleRemote();
       unlistenMenuStartupCmd();
-      unlistenMenuShowQr();
       cleanupLongTaskObserver();
     };
   });
@@ -664,18 +619,6 @@
 {:else}
   <StartScreen />
   <KeyboardShortcuts isOpen={showShortcuts} onClose={() => (showShortcuts = false)} />
-{/if}
-
-{#if $remoteAccessViewStore.isSettingsOpen}
-  {#await lazyRemoteAccessSettings() then RemoteAccessSettings}
-    <RemoteAccessSettings onClose={() => remoteAccessViewStore.closeSettings()} />
-  {/await}
-{/if}
-
-{#if $remoteAccessViewStore.isQrModalOpen}
-  {#await lazyQrCodeModal() then QrCodeModal}
-    <QrCodeModal onClose={() => remoteAccessViewStore.closeQrModal()} />
-  {/await}
 {/if}
 
 {#if kiriSkillPrompt}

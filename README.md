@@ -105,7 +105,6 @@ Beyond hosting the agent, kiri is also a careful terminal-and-viewer:
 - **Cmd+Click on `file.ts:42`** in any output → peek editor opens at that line
 - **Cmd+P / Cmd+Shift+F / Cmd+D / Cmd+H** — quick open, content search, diff view, commit graph
 - **Cmd+Shift+P** — pull request panel (via `gh`)
-- **Cmd+Shift+R** — remote access; QR-code your phone into a live project monitor over Cloudflare Tunnel
 - **Cmd+Shift+N** — new window; one process tree per project, fully isolated
 - **Shortcut suggestions** — kiri learns the commands you type often and surfaces them
 
@@ -124,16 +123,7 @@ The file viewer is read-only on purpose. Editing is what the agent (or your real
 | `Cmd+H` | Commit History |
 | `Cmd+Shift+N` | New Window |
 | `Cmd+Shift+W` | Close Project |
-| `Cmd+Shift+R` | Remote Access |
 | `Cmd+/` | Show All Shortcuts |
-
-## Remote Access
-
-Toggle from the start screen (or `Cmd+Shift+R`); a QR code appears. Scan with your phone — your phone's browser shows every open kiri project, the branch each is on, and which AI agents are running. Tap to open or close projects.
-
-The transport is [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) (`brew install cloudflared`). The default Quick Tunnel gives you a fresh `*.trycloudflare.com` URL each time, no account needed. For a persistent URL, configure a Named Tunnel token in settings.
-
-Security: every URL carries a UUID auth token validated in constant time, the home directory is the hard project boundary, and only process names — never terminal content — leave the machine.
 
 ## Install
 
@@ -175,7 +165,6 @@ The server-side code is split into pure modules (`ring_buffer`, `run_logic`, `pa
 | File viewer | [CodeMirror 6](https://codemirror.net/) |
 | Git | [git2](https://github.com/rust-lang/git2-rs) |
 | CLI transport | Unix Domain Sockets + [clap](https://github.com/clap-rs/clap) |
-| Remote Access | [Axum](https://github.com/tokio-rs/axum) + WebSocket + [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) |
 
 ## Performance budget
 
@@ -226,4 +215,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## Acknowledgments
 
-[Tauri](https://tauri.app/) · [Svelte](https://svelte.dev/) · [xterm.js](https://xtermjs.org/) · [CodeMirror](https://codemirror.net/) · [Axum](https://github.com/tokio-rs/axum) · [clap](https://github.com/clap-rs/clap) · [git2](https://github.com/rust-lang/git2-rs) · [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+[Tauri](https://tauri.app/) · [Svelte](https://svelte.dev/) · [xterm.js](https://xtermjs.org/) · [CodeMirror](https://codemirror.net/) · [clap](https://github.com/clap-rs/clap) · [git2](https://github.com/rust-lang/git2-rs)
