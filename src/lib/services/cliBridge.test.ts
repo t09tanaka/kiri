@@ -1,13 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const listeners = new Map<string, (event: { payload: unknown }) => void>();
-const invokeMock = vi.fn();
+const { listeners, invokeMock, globalListenMock, windowListenMock } = vi.hoisted(() => {
+  const listeners = new Map<string, (event: { payload: unknown }) => void>();
+  return {
+    listeners,
+    invokeMock: vi.fn(),
+    globalListenMock: vi.fn(),
+    windowListenMock: vi.fn(async (name: string, fn: (event: { payload: unknown }) => void) => {
+      listeners.set(name, fn);
+      return () => listeners.delete(name);
+    }),
+  };
+});
 
 vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(async (name: string, fn: (event: { payload: unknown }) => void) => {
-    listeners.set(name, fn);
-    return () => listeners.delete(name);
-  }),
+  listen: globalListenMock,
+  emit: vi.fn(),
+}));
+
+vi.mock('@tauri-apps/api/window', () => ({
+  getCurrentWindow: vi.fn(() => ({
+    listen: windowListenMock,
+  })),
 }));
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -20,6 +34,36 @@ describe('cliBridge', () => {
   beforeEach(() => {
     listeners.clear();
     invokeMock.mockReset();
+    globalListenMock.mockReset();
+    windowListenMock.mockClear();
+  });
+
+  // Regression for issue #17: cli:pane-* listeners must be scoped to the
+  // current window so that emit_to(label, ...) from the Rust side does not
+  // leak into other open kiri windows. Using the global listen() from
+  // @tauri-apps/api/event would receive every window's events.
+  it('scopes all cli:pane-* listeners to the current window (issue #17)', async () => {
+    await startCliBridge({
+      label: 'window-1',
+      splitPane: vi.fn(),
+      closePane: vi.fn(),
+      indexOf: vi.fn(),
+      resolveFocusedPaneId: () => null,
+      setPaneCollapsed: vi.fn(),
+      setPaneLabel: vi.fn(),
+    });
+
+    const subscribedEvents = windowListenMock.mock.calls.map(([name]) => name);
+    expect(subscribedEvents).toEqual([
+      'cli:pane-split',
+      'cli:pane-close',
+      'cli:pane-minimize',
+      'cli:pane-set-label',
+    ]);
+    // The global listen() must not be used for any cli:* event, otherwise
+    // events emitted with emit_to(label, ...) would still leak to all
+    // webviews.
+    expect(globalListenMock).not.toHaveBeenCalled();
   });
 
   it('on cli:pane-split, dispatches to splitPane and resolves the request', async () => {
