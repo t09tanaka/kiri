@@ -1,25 +1,48 @@
-## Summary
+<!--
+Keep the section headers below. Delete the comments inside each section
+when you fill it in, or replace them with one line if it really is
+not applicable.
+-->
 
-<!-- Brief description of what this PR does -->
+## Why
 
-## Changes
+<!--
+What problem does this PR solve? Why does it need to be solved now?
+Link the issue (`Closes #123`) when one exists.
+-->
 
-<!-- List the main changes -->
+## How
 
--
+<!--
+What approach did you take? Call out the key design decisions a reviewer
+would want to question. Mention alternatives you considered and ruled out.
+-->
 
-## Test Plan
+## Verification
 
-<!-- How was this tested? -->
+<!--
+How did you confirm this works? Be specific: commands you ran, manual
+steps, edge cases you checked. "Works on my machine" is not enough.
+-->
 
-- [ ] Unit tests pass (`npm run test`)
-- [ ] Browser tests pass (`npm run test:browser`)
-- [ ] Rust tests pass (`npm run test:rust`)
-- [ ] Manual testing completed
+- [ ] `npm run lint`
+- [ ] `npm run check`
+- [ ] `npm run test`
+- [ ] `npm run test:browser` (if frontend behaviour changed)
+- [ ] `npm run test:rust` (if Rust changed)
+- [ ] Manual smoke test of the changed flow
 
-## Checklist
+## Known trade-offs
 
-- [ ] Code follows project conventions
-- [ ] Tests added for new functionality
-- [ ] No new linting warnings
-- [ ] Documentation updated (if needed)
+<!--
+Anything the reviewer should know that the diff alone doesn't show:
+performance cost, deferred follow-ups, deliberate scope cuts.
+"None" is a fine answer.
+-->
+
+## Screenshots / clips
+
+<!--
+Required for visible UI changes. Drop a before/after pair if you can.
+Skip this section for non-UI changes.
+-->
