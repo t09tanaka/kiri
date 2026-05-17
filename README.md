@@ -195,12 +195,17 @@ Issues and PRs welcome. Useful commands during development:
 | `npm run tauri dev` | Run the app in dev mode |
 | `npm run build:app` | Build the production app bundle with the bundled CLI |
 | `npm run install:app` | Build and install the local macOS app into `/Applications` |
-| `npm run test` | Frontend unit tests |
-| `npm run test:rust` | Rust tests |
+| `npm run test` | Frontend unit tests (Vitest, jsdom) |
+| `npm run test:browser` | Frontend browser tests (Vitest, Chromium via Playwright) |
+| `npm run test:rust` | Rust integration tests |
 | `npm run lint` / `lint:fix` | ESLint + Svelte check |
 | `npm run format` | Prettier + rustfmt |
 
-See [`CLAUDE.md`](CLAUDE.md) for project conventions and [`.claude/rules/`](.claude/rules/) for the design rules CI enforces (testing policy, multi-window data flow, design tokens, etc.).
+See [`TESTING.md`](TESTING.md) for the full test layout (unit / browser /
+Rust integration), an explanation of why no E2E suite ships today, and
+how to add one. See [`CLAUDE.md`](CLAUDE.md) for project conventions and
+[`.claude/rules/`](.claude/rules/) for the design rules CI enforces
+(testing policy, multi-window data flow, design tokens, etc.).
 
 ## License
 
