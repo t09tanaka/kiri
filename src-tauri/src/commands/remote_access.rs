@@ -7,6 +7,40 @@
 //! All paths (except `/api/health`) are protected by a path-prefix token:
 //! requests must be made to `/{token}/...`. The middleware validates the
 //! token and strips it from the URI before passing to downstream handlers.
+//!
+//! # Threat model
+//!
+//! - **Bearer token strength**: tokens are generated as UUIDv4 (`uuid::Uuid::new_v4`),
+//!   which is 122 bits of entropy from a CSPRNG. Brute-force search is not
+//!   feasible.
+//! - **Token rotation / TTL**: there is no automatic TTL. Tokens are rotated
+//!   explicitly via `regenerate_remote_token`. The router reads the live
+//!   token from an `Arc<RwLock<String>>` on every request, so rotation
+//!   takes effect without restart. Old tokens are rejected by the next
+//!   request after rotation completes. See `test_token_rotation_old_rejected_new_accepted`.
+//! - **Session expiry on disconnect**: the WebSocket loop in
+//!   `handle_status_ws` exits when the peer closes, sends EOF, or when a
+//!   send / ping-reply fails. There is no separate session table to leak.
+//!   See `test_ws_session_terminates_on_peer_disconnect`.
+//! - **Replay**: a captured request is "replayable" until the token is
+//!   rotated, because the path-prefix token is the sole credential. Defence:
+//!   the operator rotates the token via the UI when they suspect leakage,
+//!   which immediately invalidates the captured request. See
+//!   `test_token_replay_after_rotation_fails`.
+//! - **MitM / Downgrade**: the local plaintext HTTP server is intended to
+//!   be fronted by the Cloudflare quick/named tunnel, which terminates
+//!   TLS and forbids HTTP downgrade. When used **without** the tunnel,
+//!   the token traverses the LAN in plaintext; that is documented as a
+//!   non-goal of the local-only mode.
+//! - **CSRF on WebSocket**: `ws_handler` cross-checks the `Origin` header
+//!   against `Host` and rejects mismatches with 403, so a malicious page
+//!   in the same browser context cannot hijack the WS by guessing the
+//!   path-prefix token. See existing tests beginning
+//!   `test_ws_origin_*`.
+//! - **Token-in-querystring (downgrade)**: the token MUST be in the path
+//!   prefix; tokens passed via `?token=...` or `Authorization:` are not
+//!   accepted, so a misconfigured client cannot inadvertently log the
+//!   token in proxy access logs. See `test_token_query_param_not_accepted`.
 
 use axum::{
     extract::{
@@ -2722,6 +2756,173 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), 404);
+
+        let _ = shutdown_tx.send(());
+    }
+
+    // ── Token rotation / replay / MitM tests (issue #25) ─────────────
+
+    /// Helper: build a router that shares an externally-owned token cell so
+    /// the test can rotate it mid-flight.
+    fn router_with_shared_token(token: Arc<RwLock<String>>) -> Router {
+        create_router(token, None)
+    }
+
+    #[tokio::test]
+    async fn test_token_rotation_old_rejected_new_accepted() {
+        // The router reads the live token through an Arc<RwLock>. Rotating
+        // it (as `regenerate_remote_token` does) must immediately reject
+        // requests using the previous value.
+        let token = Arc::new(RwLock::new("old-token".to_string()));
+        let router = router_with_shared_token(token.clone());
+
+        // Sanity: old token works before rotation.
+        let (status, _) = send_request(router.clone(), "/old-token/api/health").await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Rotate the token.
+        {
+            let mut t = token.write().await;
+            *t = "new-token".to_string();
+        }
+
+        // Old token no longer works.
+        let (status, _) = send_request(router.clone(), "/old-token/api/health").await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "old token must be rejected after rotation"
+        );
+
+        // New token works.
+        let (status, _) = send_request(router, "/new-token/api/health").await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_token_replay_after_rotation_fails() {
+        // Captured request scenario: an attacker observes a valid request
+        // path (e.g. via a proxy log) and replays it after the operator
+        // rotates the token.
+        let token = Arc::new(RwLock::new("captured-token".to_string()));
+        let router = router_with_shared_token(token.clone());
+
+        let captured_request_path = "/captured-token/api/health";
+        let (status, _) = send_request(router.clone(), captured_request_path).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Operator rotates because they suspect leakage.
+        {
+            let mut t = token.write().await;
+            *t = "post-rotation-token".to_string();
+        }
+
+        // Replay of the *exact* captured request fails — proving the rotation
+        // effectively defeats the replay.
+        let (status, _) = send_request(router, captured_request_path).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_token_query_param_not_accepted() {
+        // Defense-in-depth: tokens may only authenticate via the path
+        // prefix. A `?token=...` query parameter must NOT be accepted,
+        // because query strings frequently leak into proxy / browser /
+        // server logs.
+        let router = test_router("real-token");
+
+        let (status, _) =
+            send_request(router.clone(), "/api/health?token=real-token").await;
+        assert_eq!(status, StatusCode::OK); // health bypasses anyway
+
+        let (status, _) =
+            send_request(router, "/ws?token=real-token").await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "query-string token must not authenticate"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_token_authorization_header_not_accepted() {
+        // Similarly, an `Authorization: Bearer <token>` header MUST NOT
+        // bypass the path-prefix check. This is the typical replay
+        // surface for naïve Bearer-token APIs.
+        use tower::ServiceExt;
+
+        let router = test_router("real-token");
+        let request = axum::http::Request::builder()
+            .uri("/ws")
+            .header(
+                axum::http::header::AUTHORIZATION,
+                "Bearer real-token",
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = router.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_token_path_traversal_attempts_rejected() {
+        // Defense-in-depth: a crafted path that tries to "exit" the
+        // token prefix segment (e.g. `/.. /token/...`) MUST be rejected.
+        let router = test_router("legit-token");
+
+        for evil_path in [
+            "/../legit-token/api/health",
+            "/legit-token/../api/health",
+            "/%2Elegit-token/api/health",
+        ] {
+            let (status, _) = send_request(router.clone(), evil_path).await;
+            assert_ne!(
+                status,
+                StatusCode::OK,
+                "expected path-traversal-style request {} to be rejected",
+                evil_path
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ws_session_terminates_on_peer_disconnect() {
+        // Verify that closing the client socket terminates the server-side
+        // session. We connect a WS client, then drop the read+write halves,
+        // then attempt to send a message — the server should observe the
+        // disconnect on the next `recv()` and `break` out of its loop. We
+        // assert that the connection ends within a short timeout (not e.g.
+        // hung waiting for the 2-second status tick interval).
+        let (addr, shutdown_tx) = start_test_server("disc").await;
+
+        let url = format!("ws://{}/disc/ws", addr);
+        let (ws_stream, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("WS connect failed");
+
+        use futures_util::{SinkExt, StreamExt};
+        let (mut write, mut read) = ws_stream.split();
+
+        // Send a clean Close frame and read until the stream ends. The
+        // server's `recv()` arm matches Close and breaks. The whole flow
+        // must finish well under the 2-second tick interval — we give 3
+        // seconds of headroom for CI slowness but expect << 1s in practice.
+        write
+            .send(tokio_tungstenite::tungstenite::Message::Close(None))
+            .await
+            .ok();
+
+        let drain = async {
+            while let Some(_msg) = read.next().await {
+                // drain
+            }
+        };
+        let result =
+            tokio::time::timeout(std::time::Duration::from_secs(3), drain).await;
+        assert!(
+            result.is_ok(),
+            "server did not terminate session within timeout after client Close"
+        );
 
         let _ = shutdown_tx.send(());
     }

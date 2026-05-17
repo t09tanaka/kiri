@@ -70,14 +70,28 @@ fn fuzzy_match(query: &str, target: &str) -> Option<i32> {
     }
 }
 
+/// Server-side default and ceiling for `search_files`. A frontend that
+/// passes `0` (or omits the field) gets `DEFAULT_FILE_SEARCH_RESULTS`;
+/// any value above `MAX_FILE_SEARCH_RESULTS` is clamped down. Prevents
+/// a misconfigured client (or a deliberate abuse) from triggering an
+/// unbounded directory walk of multi-GB trees.
+const DEFAULT_FILE_SEARCH_RESULTS: usize = 500;
+const MAX_FILE_SEARCH_RESULTS: usize = 5_000;
+
+/// Hard recursion ceiling for [`collect_files`]. Protects against
+/// pathological directory layouts (deep monorepos, accidentally
+/// hand-built loops) without affecting any realistic project.
+const MAX_SEARCH_DEPTH: usize = 32;
+
 fn collect_files(
     dir: &Path,
     query: &str,
     results: &mut Vec<FileSearchResult>,
     max_results: usize,
     ignore_hidden: bool,
+    depth: usize,
 ) {
-    if results.len() >= max_results {
+    if results.len() >= max_results || depth > MAX_SEARCH_DEPTH {
         return;
     }
 
@@ -108,7 +122,7 @@ fn collect_files(
                 && dir_name != "dist"
                 && dir_name != "build"
             {
-                collect_files(&path, query, results, max_results, ignore_hidden);
+                collect_files(&path, query, results, max_results, ignore_hidden, depth + 1);
             }
         } else if let Some(score) = fuzzy_match(query, &name) {
             results.push(FileSearchResult {
@@ -121,8 +135,7 @@ fn collect_files(
     }
 }
 
-#[tauri::command]
-pub fn search_files(
+fn search_files_blocking(
     root_path: String,
     query: String,
     max_results: usize,
@@ -133,12 +146,32 @@ pub fn search_files(
         return Err("Path does not exist".to_string());
     }
 
+    // Clamp the requested cap so a 0 or wildly-large value can't lead
+    // to an unbounded walk. `0` is interpreted as "use the default".
+    let effective_max = match max_results {
+        0 => DEFAULT_FILE_SEARCH_RESULTS,
+        n => n.min(MAX_FILE_SEARCH_RESULTS),
+    };
+
     let mut results = Vec::new();
-    collect_files(root, &query, &mut results, max_results, true);
+    collect_files(root, &query, &mut results, effective_max, true, 0);
 
     results.sort_by_key(|r| std::cmp::Reverse(r.score));
 
     Ok(results)
+}
+
+/// Tauri command wrapper. The walk runs on a `spawn_blocking` thread so
+/// large queries don't stall the IPC runtime.
+#[tauri::command]
+pub async fn search_files(
+    root_path: String,
+    query: String,
+    max_results: usize,
+) -> Result<Vec<FileSearchResult>, String> {
+    tokio::task::spawn_blocking(move || search_files_blocking(root_path, query, max_results))
+        .await
+        .map_err(|e| format!("search_files task panicked: {}", e))?
 }
 
 /// Check if a path should be excluded based on the exclude patterns.
@@ -395,7 +428,7 @@ mod tests {
     fn test_search_files_empty_directory() {
         let dir = tempdir().unwrap();
 
-        let result = search_files(
+        let result = search_files_blocking(
             dir.path().to_string_lossy().to_string(),
             "test".to_string(),
             10
@@ -406,7 +439,7 @@ mod tests {
 
     #[test]
     fn test_search_files_nonexistent_path() {
-        let result = search_files(
+        let result = search_files_blocking(
             "/nonexistent/path".to_string(),
             "test".to_string(),
             10
@@ -424,7 +457,7 @@ mod tests {
         fs::write(dir.path().join("another.rs"), "code").unwrap();
         fs::write(dir.path().join("testing.md"), "docs").unwrap();
 
-        let result = search_files(
+        let result = search_files_blocking(
             dir.path().to_string_lossy().to_string(),
             "test".to_string(),
             10
@@ -444,7 +477,7 @@ mod tests {
             fs::write(dir.path().join(format!("file{}.txt", i)), "content").unwrap();
         }
 
-        let result = search_files(
+        let result = search_files_blocking(
             dir.path().to_string_lossy().to_string(),
             "file".to_string(),
             5
@@ -460,7 +493,7 @@ mod tests {
         fs::write(dir.path().join(".hidden_file.txt"), "hidden").unwrap();
         fs::write(dir.path().join("visible_file.txt"), "visible").unwrap();
 
-        let result = search_files(
+        let result = search_files_blocking(
             dir.path().to_string_lossy().to_string(),
             "file".to_string(),
             10
@@ -479,7 +512,7 @@ mod tests {
         fs::write(dir.path().join("exact_match.txt"), "").unwrap();
         fs::write(dir.path().join("e_x_a_c_t.txt"), "").unwrap();
 
-        let result = search_files(
+        let result = search_files_blocking(
             dir.path().to_string_lossy().to_string(),
             "exact".to_string(),
             10
@@ -501,7 +534,7 @@ mod tests {
         fs::write(dir.path().join("subdir").join("nested.txt"), "").unwrap();
         fs::write(dir.path().join("root.txt"), "").unwrap();
 
-        let result = search_files(
+        let result = search_files_blocking(
             dir.path().to_string_lossy().to_string(),
             "nested".to_string(),
             10
@@ -521,7 +554,7 @@ mod tests {
         fs::write(dir.path().join("node_modules").join("package.txt"), "").unwrap();
         fs::write(dir.path().join("package.txt"), "").unwrap();
 
-        let result = search_files(
+        let result = search_files_blocking(
             dir.path().to_string_lossy().to_string(),
             "package".to_string(),
             10
@@ -737,7 +770,7 @@ mod tests {
         // Create a file that can be found
         fs::write(dir.path().join("test.txt"), "").unwrap();
 
-        let result = search_files(
+        let result = search_files_blocking(
             dir.path().to_string_lossy().to_string(),
             "test".to_string(),
             10
@@ -800,7 +833,7 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
         fs::write(nested.join("deep.txt"), "").unwrap();
 
-        let result = search_files(
+        let result = search_files_blocking(
             dir.path().to_string_lossy().to_string(),
             "deep".to_string(),
             10
@@ -822,7 +855,7 @@ mod tests {
         }
 
         // Search with a small max_results limit
-        let result = search_files(
+        let result = search_files_blocking(
             dir.path().to_string_lossy().to_string(),
             "match".to_string(),
             3
@@ -895,7 +928,7 @@ mod tests {
             }
         }
 
-        let result = search_files(
+        let result = search_files_blocking(
             dir.path().to_string_lossy().to_string(),
             "file".to_string(),
             5
@@ -1023,7 +1056,7 @@ mod tests {
 
         let mut results = Vec::new();
         // Set max_results to 2 so we hit the early return
-        collect_files(dir.path(), "file", &mut results, 2, false);
+        collect_files(dir.path(), "file", &mut results, 2, false, 0);
         assert_eq!(results.len(), 2);
     }
 
@@ -1031,8 +1064,63 @@ mod tests {
     fn test_collect_files_unreadable_directory() {
         // Test with a non-existent directory (read_dir fails)
         let mut results = Vec::new();
-        collect_files(Path::new("/nonexistent/path"), "test", &mut results, 100, false);
+        collect_files(Path::new("/nonexistent/path"), "test", &mut results, 100, false, 0);
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_search_files_zero_max_uses_default_cap() {
+        // 0 means "frontend didn't pass a cap" — server should fall back
+        // to DEFAULT_FILE_SEARCH_RESULTS instead of disabling the cap.
+        let dir = tempdir().unwrap();
+        for i in 0..DEFAULT_FILE_SEARCH_RESULTS + 10 {
+            fs::write(dir.path().join(format!("match_{}.txt", i)), b"").unwrap();
+        }
+        let result = search_files_blocking(
+            dir.path().to_string_lossy().to_string(),
+            "match".to_string(),
+            0,
+        )
+        .unwrap();
+        assert!(result.len() <= DEFAULT_FILE_SEARCH_RESULTS);
+    }
+
+    #[test]
+    fn test_search_files_oversized_max_is_clamped() {
+        // Anything above the absolute ceiling should be clamped down so
+        // a misconfigured client can't trigger an unbounded walk.
+        let dir = tempdir().unwrap();
+        for i in 0..MAX_FILE_SEARCH_RESULTS + 10 {
+            fs::write(dir.path().join(format!("hit_{}.txt", i)), b"").unwrap();
+        }
+        let result = search_files_blocking(
+            dir.path().to_string_lossy().to_string(),
+            "hit".to_string(),
+            usize::MAX,
+        )
+        .unwrap();
+        assert!(result.len() <= MAX_FILE_SEARCH_RESULTS);
+    }
+
+    #[test]
+    fn test_collect_files_respects_depth_limit() {
+        // Build a deeper-than-max chain. The walk should stop at the
+        // limit rather than recursing all the way down.
+        let dir = tempdir().unwrap();
+        let mut p = dir.path().to_path_buf();
+        for i in 0..(MAX_SEARCH_DEPTH + 5) {
+            p = p.join(format!("d{}", i));
+            fs::create_dir(&p).unwrap();
+        }
+        // Drop a target file at the deepest level.
+        fs::write(p.join("needle.txt"), b"").unwrap();
+
+        let mut results = Vec::new();
+        collect_files(dir.path(), "needle", &mut results, 100, false, 0);
+        assert!(
+            results.is_empty(),
+            "needle.txt sits below MAX_SEARCH_DEPTH and must be unreachable"
+        );
     }
 
     #[test]

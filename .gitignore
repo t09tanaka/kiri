@@ -2,9 +2,6 @@
 CLAUDE.md
 .claude/
 
-# Documentation (local only)
-docs/
-
 # Environment files
 .env
 .env.*

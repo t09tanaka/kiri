@@ -56,7 +56,7 @@ Without the CLI, every step would have been a paste-the-output round-trip with y
 
 ## CLI
 
-`kiri` is installed at `~/.kiri/bin/kiri` on first launch. Inside kiri terminals it is on PATH automatically (via `KIRI_TERMINAL=1` and `KIRI_SOCKET=…`); outside one it errors out cleanly.
+`kiri` is installed at `~/.kiri/bin/kiri` on first launch. Inside kiri terminals it is on PATH automatically (via `KIRI_TERMINAL=1` and `KIRI_SOCKET=…`); outside one, `kiri env` still works and the other verbs fall back to socket discovery against the running windows. See [`docs/external-terminals.md`](docs/external-terminals.md) for the WezTerm / Zed / Cursor handshake.
 
 ### Verbs
 
@@ -70,6 +70,7 @@ Without the CLI, every step would have been a paste-the-output round-trip with y
 | `kiri term cancel` | no | Send Ctrl-C to the foreground process |
 | `kiri term split [--dir h\|v]` | no | Open a sibling pane |
 | `kiri term close` | no | Close a pane |
+| `kiri env` | no | Print socket / kiri-terminal state — works outside a kiri terminal too. Use it to debug the external-terminal handshake. |
 
 **`run` vs `send`** is the distinction that matters most. `run` is for things that finish (`git status`, `cargo build`) and gives you the exit code. `send` is for things that don't (`npm run dev`, `docker compose up`, replying to an interactive prompt). Mix them up and `run` will hang on its 5-minute default timeout.
 
@@ -140,7 +141,7 @@ Pre-built binaries on the [Releases](https://github.com/t09tanaka/kiri/releases)
 
 - macOS Apple Silicon (`aarch64.dmg`)
 
-Other platforms (Intel Mac, Windows, Linux) are not currently shipped — build from source if you need them.
+Other platforms (Intel Mac, Windows, Linux) are not currently shipped — build from source if you need them. See [`docs/platform-support.md`](docs/platform-support.md) for the per-platform tier, known gaps, and how to upgrade a Tier 3 platform to Tier 2 by running the smoke test.
 
 ### Build from source
 
@@ -186,21 +187,38 @@ The server-side code is split into pure modules (`ring_buffer`, `run_logic`, `pa
 
 CI fails the build if the bundle exceeds the size budget.
 
+## Documentation
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — start here if you are sending a PR.
+- [`docs/`](docs/) — design plans, contributor reference, and maintainer-only material.
+  See [`docs/README.md`](docs/README.md) for the layout.
+
 ## Contributing
 
-Issues and PRs welcome. Useful commands during development:
+Issues and PRs welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) — it
+covers setup, scripts, the test policy, branch/commit conventions, and the PR
+checklist. Longer-form contributor docs live under
+[`docs/contributing/`](docs/contributing/); release and other maintainer
+notes live under [`docs/maintainers/`](docs/maintainers/).
+
+Most-used commands while iterating:
 
 | Command | Description |
 |---------|-------------|
 | `npm run tauri dev` | Run the app in dev mode |
 | `npm run build:app` | Build the production app bundle with the bundled CLI |
 | `npm run install:app` | Build and install the local macOS app into `/Applications` |
-| `npm run test` | Frontend unit tests |
-| `npm run test:rust` | Rust tests |
+| `npm run test` | Frontend unit tests (Vitest, jsdom) |
+| `npm run test:browser` | Frontend browser tests (Vitest, Chromium via Playwright) |
+| `npm run test:rust` | Rust integration tests |
 | `npm run lint` / `lint:fix` | ESLint + Svelte check |
 | `npm run format` | Prettier + rustfmt |
 
-See [`CLAUDE.md`](CLAUDE.md) for project conventions and [`.claude/rules/`](.claude/rules/) for the design rules CI enforces (testing policy, multi-window data flow, design tokens, etc.).
+See [`TESTING.md`](TESTING.md) for the full test layout (unit / browser /
+Rust integration), an explanation of why no E2E suite ships today, and
+how to add one. See [`CLAUDE.md`](CLAUDE.md) for project conventions and
+[`.claude/rules/`](.claude/rules/) for the design rules CI enforces
+(testing policy, multi-window data flow, design tokens, etc.).
 
 ## License
 

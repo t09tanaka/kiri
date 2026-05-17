@@ -14,6 +14,7 @@
 //!   waiter then re-checks its queue for a matching name. Waiters that
 //!   don't find a match go back to sleep on the same `Notify`.
 
+use crate::commands::lock_ext::LockExt;
 use kiri_cli_proto::SignalEntry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -69,7 +70,7 @@ impl SignalRegistry {
     /// any previous mapping (the most recent split wins — useful if pane
     /// ids ever get reused, though today they don't).
     pub fn register_parent(&self, parent: String, child: String) {
-        let mut g = self.inner.lock().expect("signal registry mutex poisoned");
+        let mut g = self.inner.lock_recover();
         g.parents.insert(child, parent);
     }
 
@@ -84,7 +85,7 @@ impl SignalRegistry {
     /// block on us holding it.
     pub fn retain(&self, known: &HashSet<String>) {
         let drained_notifiers = {
-            let mut g = self.inner.lock().expect("signal registry mutex poisoned");
+            let mut g = self.inner.lock_recover();
             g.parents
                 .retain(|child, parent| known.contains(child) && known.contains(parent));
             g.queues.retain(|pane, _| known.contains(pane));
@@ -106,13 +107,13 @@ impl SignalRegistry {
 
     /// Look up the parent of `child`, if recorded.
     pub fn parent_of(&self, child: &str) -> Option<String> {
-        let g = self.inner.lock().expect("signal registry mutex poisoned");
+        let g = self.inner.lock_recover();
         g.parents.get(child).cloned()
     }
 
     /// All panes that were spawned by `split`-ing `parent`.
     pub fn children_of(&self, parent: &str) -> Vec<String> {
-        let g = self.inner.lock().expect("signal registry mutex poisoned");
+        let g = self.inner.lock_recover();
         g.parents
             .iter()
             .filter(|(_child, p)| p.as_str() == parent)
@@ -126,7 +127,7 @@ impl SignalRegistry {
     /// that don't exist in the pane map (see `handlers::signal_send`).
     pub fn enqueue(&self, pane_id: &str, signal: Signal) {
         let notify = {
-            let mut g = self.inner.lock().expect("signal registry mutex poisoned");
+            let mut g = self.inner.lock_recover();
             g.queues
                 .entry(pane_id.to_string())
                 .or_default()
@@ -142,7 +143,7 @@ impl SignalRegistry {
     /// Drain the queue and return its current contents (without
     /// removing anything). Used by `SignalList`.
     pub fn list(&self, pane_id: &str) -> Vec<Signal> {
-        let g = self.inner.lock().expect("signal registry mutex poisoned");
+        let g = self.inner.lock_recover();
         g.queues
             .get(pane_id)
             .map(|q| q.iter().cloned().collect())
@@ -152,7 +153,7 @@ impl SignalRegistry {
     /// Remove and return the first signal whose `name` matches. Returns
     /// `None` when the queue is empty or no entry matches.
     pub fn try_pop_named(&self, pane_id: &str, name: &str) -> Option<Signal> {
-        let mut g = self.inner.lock().expect("signal registry mutex poisoned");
+        let mut g = self.inner.lock_recover();
         let q = g.queues.get_mut(pane_id)?;
         let idx = q.iter().position(|s| s.name == name)?;
         q.remove(idx)
@@ -161,7 +162,7 @@ impl SignalRegistry {
     /// Get-or-create the `Notify` for `pane_id` so callers can `await`
     /// it without holding the registry mutex.
     fn notify_handle(&self, pane_id: &str) -> Arc<Notify> {
-        let mut g = self.inner.lock().expect("signal registry mutex poisoned");
+        let mut g = self.inner.lock_recover();
         g.notifiers
             .entry(pane_id.to_string())
             .or_default()

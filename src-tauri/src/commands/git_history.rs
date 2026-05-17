@@ -58,40 +58,31 @@ pub struct PullResult {
     pub message: String,
 }
 
-/// Build a CommitInfo from a git2::Commit
+/// Build a CommitInfo from a git2::Commit.
+///
+/// `commit.author()` and `commit.id()` each allocate / synthesize a fresh
+/// value on every call, so the previous implementation paid for them
+/// twice per commit. On a 5 000-commit log that's 20 000 redundant
+/// allocations; cache them locally and consume each once.
 fn build_commit_info(
     commit: &git2::Commit,
     is_pushed: bool,
     branch_type: &str,
     graph_column: u32,
 ) -> CommitInfo {
-    let id = format!("{:.7}", commit.id());
-    let full_hash = commit.id().to_string();
-    let message = commit
-        .summary()
-        .unwrap_or("")
-        .to_string();
-    let message_body = commit
-        .message()
-        .unwrap_or("")
-        .to_string();
-    let author = commit.author().name().unwrap_or("").to_string();
-    let author_email = commit.author().email().unwrap_or("").to_string();
-    let date = commit.time().seconds();
-    let parent_ids = commit
-        .parent_ids()
-        .map(|oid| oid.to_string())
-        .collect();
-
+    let oid = commit.id();
+    let full_hash = oid.to_string();
+    let id = full_hash[..full_hash.len().min(7)].to_string();
+    let author_sig = commit.author();
     CommitInfo {
         id,
         full_hash,
-        message,
-        message_body,
-        author,
-        author_email,
-        date,
-        parent_ids,
+        message: commit.summary().unwrap_or("").to_string(),
+        message_body: commit.message().unwrap_or("").to_string(),
+        author: author_sig.name().unwrap_or("").to_string(),
+        author_email: author_sig.email().unwrap_or("").to_string(),
+        date: commit.time().seconds(),
+        parent_ids: commit.parent_ids().map(|p| p.to_string()).collect(),
         is_pushed,
         branch_type: branch_type.to_string(),
         graph_column,

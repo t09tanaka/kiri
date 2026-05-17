@@ -161,7 +161,7 @@
    * Check if this pane still exists in the terminal store
    */
   function paneExistsInStore(): boolean {
-    const state = get(terminalStore);
+    const state = terminalStore.getState();
     if (!state.rootPane) return false;
     return getAllPaneIds(state.rootPane).includes(paneId);
   }
@@ -170,7 +170,7 @@
    * Get existing terminal ID from the pane in store
    */
   function getExistingTerminalId(): number | null {
-    const state = get(terminalStore);
+    const state = terminalStore.getState();
     if (!state.rootPane) return null;
 
     const findTerminalId = (pane: typeof state.rootPane): number | null => {
@@ -262,12 +262,13 @@
       xtermLoaded = true;
     }
 
-    // Dynamic imports for xterm modules
-    const [{ Terminal }, { FitAddon }, { WebLinksAddon }, { CanvasAddon }] = await Promise.all([
+    // Only Terminal core + FitAddon are needed for the first render
+    // (open() + fit()). WebLinks and Canvas are deferred until after
+    // the terminal is on screen so they don't sit on the critical path
+    // of the very first pane.
+    const [{ Terminal }, { FitAddon }] = await Promise.all([
       import('@xterm/xterm'),
       import('@xterm/addon-fit'),
-      import('@xterm/addon-web-links'),
-      import('@xterm/addon-canvas'),
     ]);
 
     // Get current font size from store
@@ -318,15 +319,24 @@
 
     fitAddon = new FitAddon();
     terminal.loadAddon(fitAddon);
-    terminal.loadAddon(
-      new WebLinksAddon((_event, uri) => {
-        openerService.openUrl(uri);
-      })
-    );
 
-    // Canvas avoids one WebGL context per pane, which keeps multi-agent memory
-    // and GPU resource use lower.
-    terminal.loadAddon(new CanvasAddon());
+    // Defer WebLinks + Canvas addons. They are nice-to-haves (URL
+    // detection in output, canvas-backed rendering) but are not needed
+    // for the first paint or for accepting input. Loading them after
+    // `open()` keeps the initial render off the chunk graph.
+    void Promise.all([import('@xterm/addon-web-links'), import('@xterm/addon-canvas')]).then(
+      ([{ WebLinksAddon }, { CanvasAddon }]) => {
+        if (!terminal) return;
+        terminal.loadAddon(
+          new WebLinksAddon((_event, uri) => {
+            openerService.openUrl(uri);
+          })
+        );
+        // Canvas avoids one WebGL context per pane, which keeps multi-agent
+        // memory and GPU resource use lower.
+        terminal.loadAddon(new CanvasAddon());
+      }
+    );
 
     // Register file path link provider for peek editor
     terminal.registerLinkProvider(
@@ -576,11 +586,13 @@
       // Only for newly created terminals (not reattached from registry),
       // and only when this is the root terminal pane (no splits yet)
       if (existingTerminalId === null) {
-        const state = get(terminalStore);
+        const state = terminalStore.getState();
         const isRootTerminalPane =
           state.rootPane?.type === 'terminal' && state.rootPane.id === paneId;
 
         if (isRootTerminalPane) {
+          // get(startupCommand) here is a one-shot read of a derived
+          // settings store, not a reactivity bypass on terminalStore.
           const commandStr = getStartupCommandString(get(startupCommand));
           if (commandStr) {
             // Wait for shell to be ready before sending command

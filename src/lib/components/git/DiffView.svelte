@@ -11,6 +11,7 @@
     supportsEmbeddedLanguages,
     type EmbeddedContext,
   } from '@/lib/utils/syntaxHighlight';
+  import { createDiffCache } from '@/lib/utils/diffCache';
 
   const allDiffs = $derived($gitStore.allDiffs);
   const isLoading = $derived($gitStore.isDiffsLoading);
@@ -33,99 +34,89 @@
     lineNumber: number | null;
   }
 
-  // Cache parsed diffs to avoid re-parsing (non-reactive cache)
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally non-reactive to avoid state_unsafe_mutation
-  const parsedDiffCache = new Map<string, DiffLine[]>();
+  // Cache parsed diffs and computed stats; both are intentionally
+  // non-reactive (see `diffCache.ts` for the rationale).
+  const parsedDiffCache = createDiffCache<DiffLine[]>();
 
   function parseDiff(path: string, diffContent: string): DiffLine[] {
-    if (parsedDiffCache.has(path)) {
-      return parsedDiffCache.get(path)!;
-    }
+    return parsedDiffCache.getOrCompute(path, () => {
+      if (!diffContent) return [];
 
-    if (!diffContent) {
-      const result: DiffLine[] = [];
-      parsedDiffCache.set(path, result);
-      return result;
-    }
+      const baseLanguage = getLanguageFromPath(path);
+      const hasEmbedded = supportsEmbeddedLanguages(path);
+      const lines: DiffLine[] = [];
+      let lineNum = 0;
+      let context: EmbeddedContext = 'template';
 
-    const baseLanguage = getLanguageFromPath(path);
-    const hasEmbedded = supportsEmbeddedLanguages(path);
-    const lines: DiffLine[] = [];
-    let lineNum = 0;
-    let context: EmbeddedContext = 'template';
+      const rawLines = diffContent.split('\n');
 
-    const rawLines = diffContent.split('\n');
+      for (let i = 0; i < rawLines.length; i++) {
+        const line = rawLines[i];
+        let content: string;
+        let type: DiffLine['type'];
+        let lineNumber: number | null;
 
-    for (let i = 0; i < rawLines.length; i++) {
-      const line = rawLines[i];
-      let content: string;
-      let type: DiffLine['type'];
-      let lineNumber: number | null;
+        if (line.startsWith('+ ')) {
+          lineNum++;
+          content = line.slice(2);
+          type = 'add';
+          lineNumber = lineNum;
+        } else if (line.startsWith('- ')) {
+          content = line.slice(2);
+          type = 'remove';
+          lineNumber = null;
+        } else if (line.startsWith('  ')) {
+          lineNum++;
+          content = line.slice(2);
+          type = 'context';
+          lineNumber = lineNum;
+        } else if (line.startsWith('@@')) {
+          const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
+          if (match) {
+            lineNum = parseInt(match[1], 10) - 1;
+          }
 
-      if (line.startsWith('+ ')) {
-        lineNum++;
-        content = line.slice(2);
-        type = 'add';
-        lineNumber = lineNum;
-      } else if (line.startsWith('- ')) {
-        content = line.slice(2);
-        type = 'remove';
-        lineNumber = null;
-      } else if (line.startsWith('  ')) {
-        lineNum++;
-        content = line.slice(2);
-        type = 'context';
-        lineNumber = lineNum;
-      } else if (line.startsWith('@@')) {
-        const match = line.match(/@@ -\d+(?:,\d+)? \+(\d+)/);
-        if (match) {
-          lineNum = parseInt(match[1], 10) - 1;
+          if (hasEmbedded) {
+            const upcomingContent: string[] = [];
+            for (let j = i + 1; j < rawLines.length; j++) {
+              const next = rawLines[j];
+              if (next.startsWith('@@')) break;
+              if (next.startsWith('+ ') || next.startsWith('- ') || next.startsWith('  ')) {
+                upcomingContent.push(next.slice(2));
+              }
+              if (upcomingContent.length >= 10) break;
+            }
+            context = detectEmbeddedContext(upcomingContent);
+          }
+
+          lines.push({
+            type: 'header',
+            content: line,
+            highlightedContent: escapeHtml(line),
+            lineNumber: null,
+          });
+          continue;
+        } else {
+          continue;
         }
 
-        // For embedded language files, detect the context for this hunk
-        // by peeking at upcoming content lines
+        let language = baseLanguage;
         if (hasEmbedded) {
-          const upcomingContent: string[] = [];
-          for (let j = i + 1; j < rawLines.length; j++) {
-            const next = rawLines[j];
-            if (next.startsWith('@@')) break;
-            if (next.startsWith('+ ') || next.startsWith('- ') || next.startsWith('  ')) {
-              upcomingContent.push(next.slice(2));
-            }
-            if (upcomingContent.length >= 10) break;
-          }
-          context = detectEmbeddedContext(upcomingContent);
+          const result = getLineLanguage(content, baseLanguage, context);
+          language = result.language;
+          context = result.newContext;
         }
 
         lines.push({
-          type: 'header',
-          content: line,
-          highlightedContent: escapeHtml(line),
-          lineNumber: null,
+          type,
+          content,
+          highlightedContent: highlightLine(content, language),
+          lineNumber,
         });
-        continue;
-      } else {
-        continue;
       }
 
-      // Determine language for this line
-      let language = baseLanguage;
-      if (hasEmbedded) {
-        const result = getLineLanguage(content, baseLanguage, context);
-        language = result.language;
-        context = result.newContext;
-      }
-
-      lines.push({
-        type,
-        content,
-        highlightedContent: highlightLine(content, language),
-        lineNumber,
-      });
-    }
-
-    parsedDiffCache.set(path, lines);
-    return lines;
+      return lines;
+    });
   }
 
   function getFileName(path: string): string {
@@ -137,31 +128,25 @@
     deletions: number;
   }
 
-  // Cache for file diff stats (non-reactive cache)
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentionally non-reactive to avoid state_unsafe_mutation
-  const diffStatsCache = new Map<string, DiffStats>();
+  const diffStatsCache = createDiffCache<DiffStats>();
 
   function getDiffStats(path: string, diffContent: string): DiffStats {
-    if (diffStatsCache.has(path)) {
-      return diffStatsCache.get(path)!;
-    }
+    return diffStatsCache.getOrCompute(path, () => {
+      let additions = 0;
+      let deletions = 0;
 
-    let additions = 0;
-    let deletions = 0;
-
-    if (diffContent) {
-      for (const line of diffContent.split('\n')) {
-        if (line.startsWith('+ ')) {
-          additions++;
-        } else if (line.startsWith('- ')) {
-          deletions++;
+      if (diffContent) {
+        for (const line of diffContent.split('\n')) {
+          if (line.startsWith('+ ')) {
+            additions++;
+          } else if (line.startsWith('- ')) {
+            deletions++;
+          }
         }
       }
-    }
 
-    const stats = { additions, deletions };
-    diffStatsCache.set(path, stats);
-    return stats;
+      return { additions, deletions };
+    });
   }
 
   function getImageMimeType(path: string): string {

@@ -2,16 +2,17 @@
 //! These are thin wrappers that delegate to the core logic in terminal.rs
 
 use super::cli_install;
+use super::lock_ext::LockExt;
 use super::terminal::{
     create_pty_size, find_utf8_boundary, get_process_cwd, open_pty_with_shell, resolve_cwd,
-    resolve_terminal_size, CliEnv, PtyInstance, TerminalOutput, TerminalOutputBusState,
-    TerminalState,
+    resolve_terminal_size, CliEnv, PtyCleanupGuard, PtyInstance, TerminalOutput,
+    TerminalOutputBusState, TerminalState,
 };
 use lazy_static::lazy_static;
 use serde::Serialize;
 use std::io::{Read, Write};
 use std::str;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -36,7 +37,9 @@ struct ProcessRecord {
 #[derive(Default)]
 struct ProcessSnapshotCache {
     refreshed_at: Option<Instant>,
-    records: Vec<ProcessRecord>,
+    /// Latest snapshot held behind `Arc` so concurrent callers share one
+    /// allocation instead of cloning the whole `Vec` every read.
+    records: Option<Arc<Vec<ProcessRecord>>>,
 }
 
 lazy_static! {
@@ -44,49 +47,48 @@ lazy_static! {
         Mutex::new(ProcessSnapshotCache::default());
 }
 
-fn process_snapshot_records() -> Vec<ProcessRecord> {
-    let mut cache = PROCESS_SNAPSHOT_CACHE
-        .lock()
-        .expect("process snapshot cache mutex poisoned");
-    if cache
-        .refreshed_at
-        .map(|t| t.elapsed() < PROCESS_SNAPSHOT_TTL)
-        .unwrap_or(false)
-    {
-        return cache.records.clone();
+fn process_snapshot_records() -> Arc<Vec<ProcessRecord>> {
+    let mut cache = PROCESS_SNAPSHOT_CACHE.lock_recover();
+    if let (Some(records), Some(refreshed_at)) = (&cache.records, cache.refreshed_at) {
+        if refreshed_at.elapsed() < PROCESS_SNAPSHOT_TTL {
+            return Arc::clone(records);
+        }
     }
 
     let mut sys = sysinfo::System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
-    let records = sys
-        .processes()
-        .iter()
-        .map(|(pid, proc)| ProcessRecord {
-            pid: pid.as_u32(),
-            parent_pid: proc.parent().map(|p| p.as_u32()),
-            name: proc.name().to_string_lossy().to_string(),
-            memory_bytes: proc.memory(),
-        })
-        .collect::<Vec<_>>();
+    let records: Arc<Vec<ProcessRecord>> = Arc::new(
+        sys.processes()
+            .iter()
+            .map(|(pid, proc)| ProcessRecord {
+                pid: pid.as_u32(),
+                parent_pid: proc.parent().map(|p| p.as_u32()),
+                name: proc.name().to_string_lossy().to_string(),
+                memory_bytes: proc.memory(),
+            })
+            .collect(),
+    );
 
     cache.refreshed_at = Some(Instant::now());
-    cache.records = records.clone();
+    cache.records = Some(Arc::clone(&records));
     records
 }
 
 pub fn process_info_for_shell_pid(shell_pid: u32) -> TerminalProcessInfo {
     let records = process_snapshot_records();
     let shell = records.iter().find(|p| p.pid == shell_pid);
-    let children = records
-        .iter()
-        .filter(|p| p.parent_pid == Some(shell_pid))
-        .collect::<Vec<_>>();
 
-    let memory_bytes = shell.map(|p| p.memory_bytes).unwrap_or(0)
-        + children.iter().map(|p| p.memory_bytes).sum::<u64>();
-    let name = children
-        .first()
-        .map(|p| p.name.clone())
+    let mut memory_bytes = shell.map(|p| p.memory_bytes).unwrap_or(0);
+    let mut first_child_name: Option<&str> = None;
+    for child in records.iter().filter(|p| p.parent_pid == Some(shell_pid)) {
+        memory_bytes += child.memory_bytes;
+        if first_child_name.is_none() {
+            first_child_name = Some(child.name.as_str());
+        }
+    }
+
+    let name = first_child_name
+        .map(str::to_string)
         .or_else(|| shell.map(|p| p.name.clone()))
         .unwrap_or_else(|| "Terminal".to_string());
 
@@ -127,20 +129,26 @@ pub fn create_terminal(
     let resolved_cwd = resolve_cwd(cwd);
     let cli_env = cli_env_for(window_label.as_deref());
 
-    // Use extracted function for PTY creation
-    let pty_with_shell = open_pty_with_shell(
+    // Wrap the freshly-spawned PTY in a cleanup guard so that any
+    // early-return below (reader/writer extraction, state lock failure)
+    // kills + reaps the shell instead of leaking the FD and process.
+    // The guard is `commit()`-ed once the PtyInstance is safely owned
+    // by the manager.
+    let mut pty_guard = PtyCleanupGuard::new(open_pty_with_shell(
         initial_cols,
         initial_rows,
         resolved_cwd.as_deref(),
         cli_env.as_ref(),
-    )?;
+    )?);
 
-    let mut reader = pty_with_shell
+    let mut reader = pty_guard
+        .as_mut()
         .pair
         .master
         .try_clone_reader()
         .map_err(|e| e.to_string())?;
-    let writer = pty_with_shell
+    let writer = pty_guard
+        .as_mut()
         .pair
         .master
         .take_writer()
@@ -151,7 +159,7 @@ pub fn create_terminal(
     manager.next_id += 1;
 
     // Get shell PID for foreground process checking
-    let shell_pid = pty_with_shell.child.process_id();
+    let shell_pid = pty_guard.as_mut().child.process_id();
 
     // Send bindkey -e to enable emacs mode for keyboard navigation
     // This ensures Option+Arrow and Cmd+Arrow work correctly regardless of user's shell config
@@ -160,6 +168,8 @@ pub fn create_terminal(
     let _ = writer.write_all(b"bindkey -e && clear\n");
     let _ = writer.flush();
 
+    // Take ownership out of the guard now that nothing else can fail.
+    let pty_with_shell = pty_guard.commit();
     manager.instances.insert(
         id,
         PtyInstance {

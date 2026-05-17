@@ -1,4 +1,4 @@
-import { writable, derived } from 'svelte/store';
+import { writable, derived, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 
 export type GitFileStatus =
@@ -45,7 +45,7 @@ interface GitStoreState {
 }
 
 function createGitStore() {
-  const { subscribe, set, update } = writable<GitStoreState>({
+  const store = writable<GitStoreState>({
     repoInfo: null,
     branchAheadCount: 0,
     isLoading: false,
@@ -54,9 +54,18 @@ function createGitStore() {
     isDiffsLoading: false,
     currentVisibleFile: null,
   });
+  const { subscribe, set, update } = store;
 
   return {
     subscribe,
+
+    /**
+     * Synchronous snapshot of the current state. Use this in tests and
+     * non-reactive contexts (CLI bridges, one-shot async handlers)
+     * instead of `get(gitStore)` so the access stays type-safe and the
+     * intent is explicit.
+     */
+    getState: (): GitStoreState => get(store),
 
     async refresh(path: string) {
       update((state) => ({ ...state, isLoading: true, error: null }));

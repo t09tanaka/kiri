@@ -31,6 +31,8 @@ interface PerformanceResults {
   };
   startup: {
     first_contentful_paint_ms: number | null;
+    /** Per-phase elapsed time relative to `performanceService.init`. */
+    phases: Record<string, number>;
   };
   operations: {
     name: string;
@@ -185,7 +187,17 @@ async function measurePerformance(client: McpBridgeClient): Promise<PerformanceR
         const fcpEntry = paintEntries.find(e => e.name === 'first-contentful-paint');
         if (fcpEntry) fcp = fcpEntry.startTime;
       } catch (e) {}
-      results.startup = { first_contentful_paint_ms: fcp };
+
+      // Startup phase breakdown — populated by performanceService.markStartupPhase
+      // calls scattered through main.ts / App.svelte.
+      let phases = {};
+      try {
+        const ps = (window).__KIRI_PERF__ || {};
+        if (typeof ps.getStartupMetrics === 'function') {
+          phases = ps.getStartupMetrics().phases || {};
+        }
+      } catch (e) {}
+      results.startup = { first_contentful_paint_ms: fcp, phases };
 
       // Operation benchmarks
       const operations = [];
@@ -229,7 +241,7 @@ async function measurePerformance(client: McpBridgeClient): Promise<PerformanceR
   // Parse the result - it might be wrapped in content array
   let jsResults: {
     memory: { rss_mb: number; vms_gb: number; platform: string };
-    startup: { first_contentful_paint_ms: number | null };
+    startup: { first_contentful_paint_ms: number | null; phases: Record<string, number> };
     operations: { name: string; duration_ms: number }[];
   };
 
@@ -297,6 +309,21 @@ function formatResults(results: PerformanceResults): string {
   lines.push(
     `║    FCP:         ${fcp !== null ? fcp.toFixed(0).padStart(8) : '     N/A'} ms  (target: < ${results.targets.startup_ms} ms) ${fcpStatus.padEnd(7)}║`
   );
+
+  // Phase breakdown (deltas between adjacent marks).
+  const phaseEntries = Object.entries(results.startup.phases).sort((a, b) => a[1] - b[1]);
+  if (phaseEntries.length > 0) {
+    lines.push('║    Phase breakdown:                                            ║');
+    let prev = 0;
+    for (const [name, t] of phaseEntries) {
+      const delta = t - prev;
+      const label = name.length > 28 ? name.slice(0, 25) + '...' : name.padEnd(28);
+      lines.push(
+        `║      ${label} ${delta.toFixed(1).padStart(7)} ms  (cum ${t.toFixed(1).padStart(7)} ms)║`
+      );
+      prev = t;
+    }
+  }
 
   // Bundle size
   lines.push('╠════════════════════════════════════════════════════════════════╣');

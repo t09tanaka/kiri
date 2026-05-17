@@ -124,5 +124,12 @@ pub fn run() {
             install_kiri_skill,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|err| {
+            // Print to stderr (so it lands in stderr-capture logs) AND log
+            // via the configured logger before exiting non-zero. Panicking
+            // here would lose the structured logger context.
+            eprintln!("fatal: kiri tauri runtime failed: {err}");
+            log::error!("fatal: kiri tauri runtime failed: {err}");
+            std::process::exit(1);
+        });
 }

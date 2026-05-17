@@ -6,6 +6,7 @@
 //! Handlers then read this map to translate `PaneRef` into a concrete
 //! `terminal_id` they can act on.
 
+use crate::commands::lock_ext::LockExt;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -37,7 +38,7 @@ impl PaneMap {
     /// Replace the full map with `entries`. Entries are keyed by
     /// `entry.index`. Duplicate indices keep the last one inserted.
     pub fn replace(&self, entries: Vec<PaneEntry>) {
-        let mut map = self.inner.lock().expect("pane_map mutex poisoned");
+        let mut map = self.inner.lock_recover();
         map.clear();
         for entry in entries {
             map.insert(entry.index, entry);
@@ -46,12 +47,12 @@ impl PaneMap {
 
     /// Snapshot of all entries, ordered by `index`.
     pub fn snapshot(&self) -> Vec<PaneEntry> {
-        let map = self.inner.lock().expect("pane_map mutex poisoned");
+        let map = self.inner.lock_recover();
         map.values().cloned().collect()
     }
 
     pub fn resolve(&self, r: &kiri_cli_proto::PaneRef) -> Option<PaneEntry> {
-        let map = self.inner.lock().expect("pane_map mutex poisoned");
+        let map = self.inner.lock_recover();
         match r {
             kiri_cli_proto::PaneRef::Index(i) => map.get(i).cloned(),
             kiri_cli_proto::PaneRef::Id(s)

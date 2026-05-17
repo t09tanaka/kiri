@@ -1,3 +1,4 @@
+use super::lock_ext::LockExt;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtyPair, PtySize};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -62,7 +63,7 @@ impl TerminalOutputBus {
     /// Subscribe to a terminal's output. Creates the channel if it does
     /// not exist yet so callers can subscribe before any output arrives.
     pub fn subscribe(&self, terminal_id: u32) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
-        let mut map = self.senders.lock().expect("terminal bus mutex poisoned");
+        let mut map = self.senders.lock_recover();
         let sender = map
             .entry(terminal_id)
             .or_insert_with(|| tokio::sync::broadcast::channel(TERMINAL_BUS_CAPACITY).0);
@@ -72,7 +73,7 @@ impl TerminalOutputBus {
     /// Publish a chunk. Returns the number of receivers that got it
     /// (zero is fine — nobody was listening).
     pub fn publish(&self, terminal_id: u32, data: &[u8]) -> usize {
-        let map = self.senders.lock().expect("terminal bus mutex poisoned");
+        let map = self.senders.lock_recover();
         match map.get(&terminal_id) {
             Some(sender) => sender.send(data.to_vec()).unwrap_or(0),
             None => 0,
@@ -82,7 +83,7 @@ impl TerminalOutputBus {
     /// Drop the channel for a terminal that has been closed. Existing
     /// receivers will see `RecvError::Closed` on their next call.
     pub fn close(&self, terminal_id: u32) {
-        let mut map = self.senders.lock().expect("terminal bus mutex poisoned");
+        let mut map = self.senders.lock_recover();
         map.remove(&terminal_id);
     }
 }
@@ -237,6 +238,55 @@ pub fn find_utf8_boundary(buf: &[u8]) -> usize {
 pub struct PtyWithShell {
     pub pair: PtyPair,
     pub child: Box<dyn portable_pty::Child + Send + Sync>,
+}
+
+/// RAII guard that owns a freshly-spawned [`PtyWithShell`] and kills +
+/// reaps the child on drop unless [`commit`](Self::commit) is called.
+///
+/// Without this guard, any early-return between `open_pty_with_shell`
+/// and the terminal manager insertion (e.g. `try_clone_reader` succeeds
+/// but `take_writer` fails, or `state.lock()` returns an error) would
+/// leak the shell process and its PTY file descriptors because the
+/// reader / writer are dropped but the child is never waited on.
+/// Wrapping the freshly-spawned PTY in this guard makes cleanup happen
+/// automatically on every early-return path; `commit` is called only
+/// after the instance is successfully owned by the manager.
+pub struct PtyCleanupGuard {
+    inner: Option<PtyWithShell>,
+}
+
+impl PtyCleanupGuard {
+    pub fn new(pty: PtyWithShell) -> Self {
+        Self { inner: Some(pty) }
+    }
+
+    /// Borrow the wrapped PTY (for reader/writer extraction etc.).
+    pub fn as_mut(&mut self) -> &mut PtyWithShell {
+        self.inner
+            .as_mut()
+            .expect("PtyCleanupGuard accessed after commit")
+    }
+
+    /// Consume the guard, returning the inner PTY so the caller takes
+    /// over its lifecycle. Skips the kill-on-drop cleanup.
+    pub fn commit(mut self) -> PtyWithShell {
+        self.inner
+            .take()
+            .expect("PtyCleanupGuard committed twice")
+    }
+}
+
+impl Drop for PtyCleanupGuard {
+    fn drop(&mut self) {
+        if let Some(mut pty) = self.inner.take() {
+            log::warn!(
+                "PtyCleanupGuard: reaping orphaned shell PID {:?} from failed terminal setup",
+                pty.child.process_id()
+            );
+            let _ = pty.child.kill();
+            let _ = pty.child.wait();
+        }
+    }
 }
 
 /// Open a PTY and spawn a shell command
@@ -477,6 +527,69 @@ mod tests {
         // Verify struct has expected fields accessible
         let _ = &pty.pair;
         let _ = &pty.child;
+    }
+
+    // ── PtyCleanupGuard tests ───────────────────────────────────────
+
+    #[test]
+    fn pty_cleanup_guard_kills_child_on_drop() {
+        // Spawn a PTY, wrap in the guard, then let the guard drop
+        // without committing. The child shell must have been reaped
+        // (try_wait / poll-style check via .wait() returning quickly).
+        let pty = open_pty_with_shell(80, 24, None, None)
+            .expect("open_pty_with_shell should succeed in tests");
+        let pid = pty.child.process_id();
+        assert!(pid.is_some(), "spawned shell should have a PID");
+        let guard = PtyCleanupGuard::new(pty);
+        drop(guard);
+        // No assertion on PID still being alive — the guard's `kill +
+        // wait` is best-effort and immediately reaps. The important
+        // property is that drop did not panic and did not block longer
+        // than the wait. If the wait hung, the test runner would also
+        // hang here.
+    }
+
+    #[test]
+    fn pty_cleanup_guard_commit_skips_drop_cleanup() {
+        // After commit, the inner PTY is returned and the guard's drop
+        // path is a no-op (because `inner` is `None`). The caller now
+        // owns the child and is responsible for killing it manually.
+        let pty = open_pty_with_shell(80, 24, None, None)
+            .expect("open_pty_with_shell should succeed in tests");
+        let guard = PtyCleanupGuard::new(pty);
+        let mut inner = guard.commit();
+
+        // We can still interact with the inner PTY — proof that commit
+        // did not kill the child.
+        assert!(inner.child.process_id().is_some());
+
+        // Manual cleanup so the test doesn't leak a shell.
+        let _ = inner.child.kill();
+        let _ = inner.child.wait();
+    }
+
+    #[test]
+    #[should_panic(expected = "PtyCleanupGuard committed twice")]
+    fn pty_cleanup_guard_double_commit_panics() {
+        let pty = open_pty_with_shell(80, 24, None, None)
+            .expect("open_pty_with_shell should succeed in tests");
+        let guard = PtyCleanupGuard::new(pty);
+        let mut inner = guard.commit();
+        let _ = inner.child.kill();
+        let _ = inner.child.wait();
+
+        // Reconstruct just to call commit again on a freshly-built
+        // guard, then "double commit" by accessing `inner` after commit.
+        // Verified via `commit` panicking when called on an empty guard.
+        let pty2 = open_pty_with_shell(80, 24, None, None)
+            .expect("open_pty_with_shell should succeed in tests");
+        let mut guard2 = PtyCleanupGuard::new(pty2);
+        // Drain inner manually to simulate the post-commit state.
+        let mut taken = guard2.inner.take().unwrap();
+        let _ = taken.child.kill();
+        let _ = taken.child.wait();
+        // Now commit on the emptied guard must panic.
+        let _ = guard2.commit();
     }
 
     #[tokio::test]

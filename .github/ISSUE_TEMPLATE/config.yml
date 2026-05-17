@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/t09tanaka/kiri/discussions
+    about: For open-ended questions, "is this a bug?" checks, or feature ideas not yet ready for a request.

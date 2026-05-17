@@ -31,7 +31,11 @@ tauri-plugin-opener = "2"
 dirs = "5.0"
 portable-pty = "0.8"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time", "net"] }
-git2 = "0.18"
+# Local-only git2: push/fetch go through the system `git` binary (see
+# `git_history::push_commits` / `fetch_remote`), so we don't need the
+# `ssh` / `https` / `ssh_key_from_memory` default features that pull in
+# libssh2 + libcurl + openssl. Trimming them reduces binary size.
+git2 = { version = "0.18", default-features = false }
 base64 = "0.22"
 tauri-plugin-mcp-bridge = "0.7"
 notify = "6.1"
