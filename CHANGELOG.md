@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-17
+
+### Fixed
+
+#### Multi-window
+- `cli:pane-*` events (`split` / `close` / `minimize` / `set-label`) emitted by the Rust CLI server now reach only the targeted window
+  - Previously the JS-side listener used the global `listen()` from `@tauri-apps/api/event`, so events that Rust targeted with `emit_to(label, …)` still leaked to every open kiri window. Splitting a pane in window A would split panes in window B (and any other open windows).
+  - Switched `cliBridge.ts` to `eventService.listenCurrentWindow()` (`getCurrentWindow().listen()`), so each window only receives its own events.
+  - Closes #17
+
 ## [0.5.0] - 2026-05-14
 
 ### Added
