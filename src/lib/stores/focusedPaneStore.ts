@@ -1,22 +1,24 @@
-import { writable } from 'svelte/store';
+// Backward-compatible facade over `focusedPaneState` (issue #42 phase 1).
+//
+// Tracks which terminal pane currently has user focus. Used by the CLI
+// bridge so `kiri term split` / `term send` etc. with no --pane flag can
+// target the pane the user is looking at.
+//
+// Canonical class: `focusedPaneState.svelte.ts`.
 
-/**
- * Tracks which terminal pane currently has user focus.
- *
- * Used by the CLI bridge so `kiri term split` / `term send` etc. with no
- * --pane flag can target the pane the user is looking at.
- */
+import { writable } from 'svelte/store';
+import { focusedPaneState } from './focusedPaneState.svelte';
+
 function createFocusedPaneStore() {
-  const { subscribe, set } = writable<string | null>(null);
-  let value: string | null = null;
-  subscribe((v) => {
-    value = v;
-  });
+  const mirror = writable<string | null>(focusedPaneState.paneId);
   return {
-    subscribe,
-    set,
+    subscribe: mirror.subscribe,
+    set: (id: string | null) => {
+      focusedPaneState.set(id);
+      mirror.set(id);
+    },
     /** Synchronous read of the current value. */
-    current: (): string | null => value,
+    current: (): string | null => focusedPaneState.current(),
   };
 }
 

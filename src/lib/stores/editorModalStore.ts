@@ -1,40 +1,34 @@
-import { writable, derived } from 'svelte/store';
+// Backward-compatible facade over `editorModalState` (issue #42 phase 1).
+// See the canonical class in `editorModalState.svelte.ts`.
 
-export interface EditorModalState {
-  isOpen: boolean;
-  filePath: string | null;
+import { writable, derived } from 'svelte/store';
+import { editorModalState, type EditorModalStateShape } from './editorModalState.svelte';
+
+export type EditorModalState = EditorModalStateShape;
+
+function snapshot(): EditorModalStateShape {
+  return { ...editorModalState.state };
 }
 
-const initialState: EditorModalState = {
-  isOpen: false,
-  filePath: null,
-};
-
 function createEditorModalStore() {
-  const { subscribe, set } = writable<EditorModalState>(initialState);
+  const mirror = writable<EditorModalStateShape>(snapshot());
+  const refresh = () => mirror.set(snapshot());
 
   return {
-    subscribe,
+    subscribe: mirror.subscribe,
 
-    /**
-     * Open the file viewer modal with the specified file path
-     * @param filePath - Path to the file to view
-     */
     open: (filePath: string) => {
-      set({
-        isOpen: true,
-        filePath,
-      });
+      editorModalState.open(filePath);
+      refresh();
     },
 
-    /**
-     * Close the file viewer modal
-     */
-    close: () => set(initialState),
+    close: () => {
+      editorModalState.close();
+      refresh();
+    },
   };
 }
 
 export const editorModalStore = createEditorModalStore();
 
-// Derived store for checking if editor modal is open
 export const isEditorModalOpen = derived(editorModalStore, ($state) => $state.isOpen);
