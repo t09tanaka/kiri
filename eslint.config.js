@@ -51,6 +51,27 @@ export default [
       ],
     },
   },
+  // Multi-window enforcement (issue #50): window-bound code must pass data via
+  // URL params + Tauri events, never via shared Svelte stores. A second window
+  // is a separate JS realm, so a store import here would silently desync.
+  {
+    files: ['src/lib/services/windowService.ts', 'src/lib/services/window*.ts'],
+    ignores: ['src/lib/services/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/lib/stores/*', '**/stores/*'],
+              message:
+                'windowService must not import shared stores. A new window runs in a separate JS realm and cannot share store state. Pass data via URL params + Tauri events instead. See docs/multi-window.md.',
+            },
+          ],
+        },
+      ],
+    },
+  },
   {
     rules: {
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
