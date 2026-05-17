@@ -24,6 +24,14 @@
   import { toastStore } from '@/lib/stores/toastStore';
   import { Skeleton } from '@/lib/components/ui';
   import { resolveDropTarget, isValidMoveTarget } from '@/lib/utils/dragDrop';
+  import {
+    createFileTreeRegistry,
+    provideFileTreeRegistry,
+    type FileTreeAction,
+  } from './fileTreeRegistry';
+
+  const fileTreeRegistry = createFileTreeRegistry();
+  provideFileTreeRegistry(fileTreeRegistry.registry);
 
   interface Props {
     rootPath?: string;
@@ -349,7 +357,7 @@
     // Start timer for new target directory (not root - root is always "expanded")
     if (targetDir && targetDir !== rootPath) {
       dragDropStore.startHoverTimer(targetDir, () => {
-        window.dispatchEvent(new CustomEvent('drag-auto-expand', { detail: { path: targetDir } }));
+        fileTreeRegistry.dispatchAutoExpand(targetDir);
       });
     }
   }
@@ -517,11 +525,8 @@
     return target.closest('.file-tree') !== null;
   }
 
-  function dispatchFileTreeAction(
-    path: string,
-    action: 'rename' | 'delete' | 'new-file' | 'new-folder'
-  ) {
-    window.dispatchEvent(new CustomEvent('filetree-action', { detail: { path, action } }));
+  function dispatchFileTreeAction(path: string, action: FileTreeAction) {
+    fileTreeRegistry.dispatchAction(path, action);
   }
 
   async function handleRootCreate(action: 'new-file' | 'new-folder') {
@@ -786,6 +791,9 @@
               projectRoot={rootPath}
               {refreshKey}
               testTreeLine={testTreeLines.get(entry.path) ?? null}
+              isDragging={$isDragging}
+              dropTargetPath={$dropTargetPath}
+              draggedPaths={$draggedPaths}
             />
           {/each}
         {/if}

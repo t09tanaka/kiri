@@ -18,10 +18,10 @@
     computeTestTreeLines,
   } from '@/lib/utils/fileIcons';
   import ContextMenu, { type MenuItem } from '@/lib/components/ui/ContextMenu.svelte';
-  import { isDragging, dropTargetPath, draggedPaths } from '@/lib/stores/dragDropStore';
   import { fileOpUndoStore } from '@/lib/stores/fileOpUndoStore';
   import { toastStore } from '@/lib/stores/toastStore';
   import FileTreeItem from './FileTreeItem.svelte';
+  import { useFileTreeRegistry } from './fileTreeRegistry';
 
   interface Props {
     entry: FileEntry;
@@ -33,6 +33,9 @@
     projectRoot?: string;
     refreshKey?: number;
     testTreeLine?: 'branch' | 'last' | null;
+    isDragging?: boolean;
+    dropTargetPath?: string | null;
+    draggedPaths?: string[];
   }
 
   let {
@@ -45,7 +48,12 @@
     projectRoot = '',
     refreshKey = 0,
     testTreeLine = null,
+    isDragging = false,
+    dropTargetPath = null,
+    draggedPaths = [],
   }: Props = $props();
+
+  const registry = useFileTreeRegistry();
 
   let expanded = $state(false);
   let children = $state<FileEntry[]>([]);
@@ -108,23 +116,23 @@
   });
 
   // Drop target detection
-  const isDropTarget = $derived($isDragging && entry.is_dir && $dropTargetPath === entry.path);
+  const isDropTarget = $derived(isDragging && entry.is_dir && dropTargetPath === entry.path);
 
   // True when this file's parent directory is the current drop target
   const isDropTargetChild = $derived(
-    $isDragging &&
+    isDragging &&
       !entry.is_dir &&
-      $dropTargetPath !== null &&
-      entry.path.startsWith($dropTargetPath + '/') &&
-      !entry.path.slice($dropTargetPath.length + 1).includes('/')
+      dropTargetPath !== null &&
+      entry.path.startsWith(dropTargetPath + '/') &&
+      !entry.path.slice(dropTargetPath.length + 1).includes('/')
   );
 
   // Preview entries for this directory during drag
   const previewEntries = $derived.by(() => {
-    if (!$isDragging || !entry.is_dir || $dropTargetPath !== entry.path) return [];
+    if (!isDragging || !entry.is_dir || dropTargetPath !== entry.path) return [];
     if (!expanded) return [];
 
-    return $draggedPaths.map((sourcePath) => {
+    return draggedPaths.map((sourcePath) => {
       const name = sourcePath.split('/').pop() || sourcePath;
       return {
         name,
@@ -176,32 +184,23 @@
 
   const childTestTreeLines = $derived(computeTestTreeLines(displayChildren));
 
-  // Auto-expand listener for drag hover
-  let autoExpandHandler: ((e: Event) => void) | null = null;
-  // Keyboard-shortcut bridge from FileTree. We listen globally and act
-  // only when the event targets this entry's path so each item handles
-  // its own state (rename input, inline new-file/new-folder) without
-  // FileTree needing refs into every nested item.
-  let actionHandler: ((e: Event) => void) | null = null;
+  // Registry-driven subscriptions for window events. FileTree owns the
+  // actual window listeners and dispatches via this registry, so we add
+  // 2 window listeners per tree instead of 2 per item.
+  let unregisterAutoExpand: (() => void) | null = null;
+  let unregisterAction: (() => void) | null = null;
 
   onMount(() => {
+    if (!registry) return;
+
     if (entry.is_dir) {
-      autoExpandHandler = (e: Event) => {
-        const detail = (e as CustomEvent).detail;
-        if (detail.path === entry.path && !expanded) {
-          toggleExpand();
-        }
-      };
-      window.addEventListener('drag-auto-expand', autoExpandHandler);
+      unregisterAutoExpand = registry.registerAutoExpand(entry.path, () => {
+        if (!expanded) toggleExpand();
+      });
     }
 
-    actionHandler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as {
-        path: string;
-        action: 'rename' | 'delete' | 'new-file' | 'new-folder';
-      };
-      if (detail.path !== entry.path) return;
-      switch (detail.action) {
+    unregisterAction = registry.registerAction(entry.path, (action) => {
+      switch (action) {
         case 'rename':
           startRenaming();
           break;
@@ -215,17 +214,12 @@
           if (entry.is_dir) startCreatingFolder();
           break;
       }
-    };
-    window.addEventListener('filetree-action', actionHandler);
+    });
   });
 
   onDestroy(() => {
-    if (autoExpandHandler) {
-      window.removeEventListener('drag-auto-expand', autoExpandHandler);
-    }
-    if (actionHandler) {
-      window.removeEventListener('filetree-action', actionHandler);
-    }
+    unregisterAutoExpand?.();
+    unregisterAction?.();
   });
 
   async function toggleExpand() {
@@ -530,7 +524,7 @@
 {#if !isDeleted}
   <div
     class="tree-item-container"
-    class:dragging-source={$isDragging && $draggedPaths.includes(entry.path)}
+    class:dragging-source={isDragging && draggedPaths.includes(entry.path)}
     role="treeitem"
     aria-selected={isSelected}
     tabindex={isSelected ? 0 : -1}
@@ -759,6 +753,9 @@
               {projectRoot}
               {refreshKey}
               testTreeLine={childTestTreeLines.get(child.path) ?? null}
+              {isDragging}
+              {dropTargetPath}
+              {draggedPaths}
             />
           </div>
         {/each}
