@@ -1,48 +1,34 @@
-import { writable, derived } from 'svelte/store';
+// Backward-compatible facade over `peekState` (issue #42 phase 1).
+// Canonical class: `peekState.svelte.ts`.
 
-export interface PeekState {
-  isOpen: boolean;
-  filePath: string | null;
-  lineNumber?: number;
-  columnNumber?: number;
+import { writable, derived } from 'svelte/store';
+import { peekState, type PeekStateShape } from './peekState.svelte';
+
+export type PeekState = PeekStateShape;
+
+function snapshot(): PeekStateShape {
+  return { ...peekState.state };
 }
 
-const initialState: PeekState = {
-  isOpen: false,
-  filePath: null,
-  lineNumber: undefined,
-  columnNumber: undefined,
-};
-
 function createPeekStore() {
-  const { subscribe, set } = writable<PeekState>(initialState);
+  const mirror = writable<PeekStateShape>(snapshot());
+  const refresh = () => mirror.set(snapshot());
 
   return {
-    subscribe,
+    subscribe: mirror.subscribe,
 
-    /**
-     * Open the peek editor with the specified file
-     * @param filePath - Path to the file to display
-     * @param lineNumber - Optional line number to scroll to (1-indexed)
-     * @param columnNumber - Optional column number
-     */
     open: (filePath: string, lineNumber?: number, columnNumber?: number) => {
-      set({
-        isOpen: true,
-        filePath,
-        lineNumber,
-        columnNumber,
-      });
+      peekState.open(filePath, lineNumber, columnNumber);
+      refresh();
     },
 
-    /**
-     * Close the peek editor
-     */
-    close: () => set(initialState),
+    close: () => {
+      peekState.close();
+      refresh();
+    },
   };
 }
 
 export const peekStore = createPeekStore();
 
-// Derived store for checking if peek is open
 export const isPeekOpen = derived(peekStore, ($peek) => $peek.isOpen);
