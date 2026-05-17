@@ -69,6 +69,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -76,6 +82,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      # src-tauri/build.rs asserts that ../target/release/kiri-cli exists
+      # (tauri.conf.json declares it as a bundle resource). Build the CLI
+      # binary before invoking cargo directly, otherwise the build script
+      # fails fast with the "kiri-cli binary not found" message.
+      - name: Build kiri-cli
+        run: npm run build:cli
 
       - name: Run Rust tests
         run: cargo test --manifest-path src-tauri/Cargo.toml
@@ -111,6 +127,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Build kiri-cli
+        run: npm run build:cli
 
       - name: Build frontend
         run: npm run build
