@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::path::Path;
 
+use super::error::{user_io_error, user_path_error};
 use super::fs_gitignore::check_gitignore;
 use super::fs_io::{get_dir_entry, get_file_type, get_home_dir, open_repo, read_dir_entries};
 
@@ -50,11 +51,11 @@ pub fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
     let path = Path::new(&path);
 
     if !path.exists() {
-        return Err(format!("Path does not exist: {}", path.display()));
+        return Err(user_path_error("Path does not exist", path));
     }
 
     if !path.is_dir() {
-        return Err(format!("Path is not a directory: {}", path.display()));
+        return Err(user_path_error("Path is not a directory", path));
     }
 
     // Try to open git repository for gitignore checking
@@ -113,18 +114,18 @@ pub fn create_directory(parent_path: String, name: String) -> Result<String, Str
     let parent = Path::new(&parent_path);
 
     if !parent.exists() {
-        return Err(format!("Parent path does not exist: {}", parent.display()));
+        return Err(user_path_error("Parent path does not exist", parent));
     }
 
     if !parent.is_dir() {
-        return Err(format!("Parent path is not a directory: {}", parent.display()));
+        return Err(user_path_error("Parent path is not a directory", parent));
     }
 
     // Support nested directory creation (e.g., "test/opt" creates both)
     let new_dir_path = parent.join(&name);
 
     std::fs::create_dir_all(&new_dir_path)
-        .map_err(|e| format!("Failed to create directory: {}", e))?;
+        .map_err(|e| user_io_error("Failed to create directory", e))?;
 
     Ok(new_dir_path.to_string_lossy().to_string())
 }
@@ -134,13 +135,13 @@ pub fn delete_path(path: String) -> Result<(), String> {
     let path = Path::new(&path);
 
     if !path.exists() {
-        return Err(format!("Path does not exist: {}", path.display()));
+        return Err(user_path_error("Path does not exist", path));
     }
 
     if path.is_dir() {
-        std::fs::remove_dir_all(path).map_err(|e| format!("Failed to delete directory: {}", e))
+        std::fs::remove_dir_all(path).map_err(|e| user_io_error("Failed to delete directory", e))
     } else {
-        std::fs::remove_file(path).map_err(|e| format!("Failed to delete file: {}", e))
+        std::fs::remove_file(path).map_err(|e| user_io_error("Failed to delete file", e))
     }
 }
 
