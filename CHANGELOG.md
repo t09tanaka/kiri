@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terminal value prop. Removing it shrinks the bundle (axum + qrcode deps
   dropped) and simplifies the security review.
 
+#### Terminal worktree tag
+- Removed the linked-worktree label chip from the pane header along with
+  its supporting `get_worktree_info` Tauri command, `WorktreeInfo`
+  Rust/TS types, the per-pane cwd-poll loop that drove it, and the
+  related design notes.
+
 ## [0.5.1] - 2026-05-17
 
 ### Fixed
