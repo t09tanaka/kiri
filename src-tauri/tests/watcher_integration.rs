@@ -215,3 +215,76 @@ fn test_watcher_multiple_files() {
     let result = rx.recv_timeout(Duration::from_secs(2));
     assert!(result.is_ok(), "Should receive events for multiple files");
 }
+
+/// Burst of file mutations must produce a bounded event stream
+/// (debouncer collapses them) and every path that gets an event must
+/// be one of the files we touched (or its parent dir) - the debouncer
+/// must not invent paths.
+#[test]
+fn test_watcher_dedups_burst_of_mutations() {
+    const N: usize = 100;
+    let dir = tempdir().expect("Failed to create temp dir");
+
+    let (tx, rx) = channel();
+
+    let mut debouncer = new_debouncer(Duration::from_millis(75), move |res| {
+        let _ = tx.send(res);
+    })
+    .expect("Failed to create debouncer");
+
+    debouncer
+        .watcher()
+        .watch(dir.path(), RecursiveMode::Recursive)
+        .expect("Failed to watch directory");
+
+    // macOS reports paths via /private/var/... after canonicalisation,
+    // so compare canonicalised paths on both sides.
+    let canon_root = dir.path().canonicalize().expect("canonicalize root");
+    let mut expected: std::collections::HashSet<std::path::PathBuf> =
+        std::collections::HashSet::with_capacity(N);
+    for i in 0..N {
+        expected.insert(canon_root.join(format!("burst_{i}.txt")));
+    }
+
+    // Burst write, then a second mutation pass over each file. The
+    // 75ms debounce window must collapse most of this.
+    for i in 0..N {
+        let p = dir.path().join(format!("burst_{i}.txt"));
+        let mut f = File::create(&p).expect("create");
+        writeln!(f, "v1").expect("write v1");
+    }
+    for i in 0..N {
+        let p = dir.path().join(format!("burst_{i}.txt"));
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&p)
+            .expect("reopen");
+        writeln!(f, "v2").expect("write v2");
+    }
+
+    let mut batches = 0usize;
+    let mut total_events = 0usize;
+    let deadline = std::time::Instant::now() + Duration::from_millis(1500);
+    while std::time::Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(Ok(events)) => {
+                batches += 1;
+                total_events += events.len();
+                for ev in &events {
+                    let is_known = ev.path == canon_root
+                        || expected.contains(&ev.path)
+                        || Some(canon_root.as_path()) == ev.path.parent();
+                    assert!(is_known, "watcher surfaced unexpected path: {:?}", ev.path);
+                }
+            }
+            Ok(Err(e)) => panic!("watcher error: {e:?}"),
+            Err(_) => continue,
+        }
+    }
+
+    assert!(batches >= 1, "expected at least one debounced batch");
+    assert!(
+        total_events <= N * 4,
+        "debouncer failed to dedup: got {total_events} events for {N} files"
+    );
+}
