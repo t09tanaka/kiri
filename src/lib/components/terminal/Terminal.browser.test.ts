@@ -7,12 +7,6 @@ import { terminalRegistry } from '@/lib/stores/terminalRegistry';
 // Mock services used by Terminal.svelte beyond what browser-setup.ts already covers.
 // The pane-label markup is rendered synchronously from props, so the async onMount path
 // (xterm init, PTY creation) can safely fail or no-op without affecting assertions.
-vi.mock('@/lib/services/gitService', () => ({
-  gitService: {
-    getWorktreeInfo: vi.fn().mockResolvedValue(null),
-  },
-}));
-
 vi.mock('@/lib/services/openerService', () => ({
   openerService: {
     openUrl: vi.fn().mockResolvedValue(undefined),

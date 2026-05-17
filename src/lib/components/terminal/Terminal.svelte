@@ -2,7 +2,6 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { terminalService } from '@/lib/services/terminalService';
-  import { gitService, type WorktreeInfo } from '@/lib/services/gitService';
   import { eventService, type UnlistenFn } from '@/lib/services/eventService';
   import type { Terminal as TerminalType } from '@xterm/xterm';
   import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
@@ -90,18 +89,13 @@
   let showShortcutSettings = $state(false);
   let shortcutFocusSection = $state<'reply' | 'command' | null>(null);
   let numberRowEnabled = $state(false);
-  let worktreeInfo = $state<WorktreeInfo | null>(null);
   let collapsed = $state(false);
   const unsubscribeCollapsed = terminalStore.subscribe(() => {
     collapsed = terminalStore.isCollapsed(paneId);
   });
-  // Plain (non-reactive) cache: only used to decide whether to refetch.
-  // Updating this should NOT trigger re-renders.
-  let lastCwd: string | null = null;
   const isAiRunning = $derived(isAiProcess(processName));
 
   const PROCESS_POLL_INTERVAL_MS = 5000;
-  const CWD_POLL_INTERVAL_MS = 15000;
 
   // Drop (not buffer) output during a resize that happens after initial
   // setup: buffered content is sized for the OLD terminal, and replaying
@@ -367,23 +361,12 @@
 
   // Poll foreground process name to drive the AI shortcut bar
   let processPollInterval: ReturnType<typeof setInterval> | null = null;
-  let lastCwdPollAt = 0;
 
   async function updateProcessInfo() {
     if (terminalId === null) return;
     try {
       const info = await terminalService.getProcessInfo(terminalId);
       processName = info.name;
-
-      const now = Date.now();
-      if (now - lastCwdPollAt >= CWD_POLL_INTERVAL_MS) {
-        lastCwdPollAt = now;
-        const cwd = await terminalService.getCwd(terminalId);
-        if (cwd !== lastCwd) {
-          lastCwd = cwd;
-          worktreeInfo = cwd ? await gitService.getWorktreeInfo(cwd) : null;
-        }
-      }
     } catch {
       // Terminal may have been closed
     }
@@ -602,30 +585,6 @@
           {#if name}<span class="pane-name">{name}</span>{/if}
         </span>
       {/if}
-      {#if worktreeInfo?.is_linked_worktree}
-        <span
-          class="worktree-tag"
-          title={worktreeInfo.root}
-          aria-label={`Worktree: ${worktreeInfo.name}`}
-        >
-          <svg
-            width="11"
-            height="11"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            aria-hidden="true"
-          >
-            <circle cx="6" cy="6" r="2" />
-            <circle cx="6" cy="18" r="2" />
-            <circle cx="18" cy="9" r="2" />
-            <path d="M6 8v8" />
-            <path d="M18 11c0 4-6 4-6 7" />
-          </svg>
-          <span class="worktree-tag-name">{worktreeInfo.name}</span>
-        </span>
-      {/if}
       {#if onClose}
         <button
           class="control-btn close-btn"
@@ -743,9 +702,9 @@
     color: #f87171;
   }
 
-  /* Flex spacer that pushes the trailing cluster (pane-label, worktree-tag,
-     close-btn) to the right. Using a single spacer keeps the trailing group
-     visually tight regardless of which of those three elements are present. */
+  /* Flex spacer that pushes the trailing cluster (pane-label, close-btn) to
+     the right. Using a single spacer keeps the trailing group visually tight
+     regardless of which of those elements are present. */
   .trailing-spacer {
     flex: 1 1 auto;
   }
@@ -773,34 +732,6 @@
   .pane-name {
     white-space: nowrap;
     max-width: 200px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .worktree-tag {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    background: rgba(125, 211, 252, 0.08);
-    border: 1px solid rgba(125, 211, 252, 0.2);
-    border-radius: var(--radius-sm);
-    color: var(--accent-color);
-    font-family: 'IBM Plex Mono', 'SF Mono', monospace;
-    font-size: 11px;
-    line-height: 1.4;
-    white-space: nowrap;
-    max-width: 240px;
-    overflow: hidden;
-    transition: background var(--transition-fast);
-  }
-
-  .worktree-tag:hover {
-    background: rgba(125, 211, 252, 0.14);
-  }
-
-  .worktree-tag-name {
-    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
   }
