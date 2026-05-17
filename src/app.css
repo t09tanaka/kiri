@@ -20,7 +20,7 @@
   /* Text - soft white like morning light through mist */
   --text-primary: #e6edf3;
   --text-secondary: #8b949e;
-  --text-muted: #484f58;
+  --text-muted: #828993;
   --text-accent: #7dd3fc;
 
   /* Borders - soft mist edges */
@@ -81,6 +81,16 @@
   --sidebar-max-width: 400px;
   --statusbar-height: 30px;
   --tabbar-height: 44px;
+
+  /* Control sizing scale - shared button/input heights */
+  --control-height-xs: 20px;
+  --control-height-sm: 24px;
+  --control-height-md: 28px;
+  --control-height-lg: 32px;
+
+  /* Terminal visual padding (xterm container) */
+  --terminal-padding-y: 12px;
+  --terminal-padding-x: 16px;
 
   /* Spacing system - harmonious */
   --space-1: 4px;
@@ -1143,6 +1153,27 @@ textarea {
     opacity: 0;
     transform: scale(0.95) translateY(-10px);
   }
+}
+
+/* Global default styling for native <kbd> elements.
+   Individual components may still override (e.g. larger keys in the
+   keyboard-shortcuts modal), but the default keeps footer-style key
+   chips consistent across modals. */
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  padding: 2px 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  box-shadow: 0 1px 0 var(--bg-primary);
+  transition: all var(--transition-fast);
 }
 
 /* Utility: Keyboard key styling */
