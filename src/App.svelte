@@ -130,12 +130,25 @@
     return out;
   }
 
+  // `cli_update_pane_map` already takes the full pane list in one shot
+  // (it's effectively a `bulk_set_pane_map`), but `pushPaneMap` was
+  // subscribed to both `terminalStore` and `focusedPaneStore`, so a
+  // restore-on-startup that ran N `splitPane` calls would fire N
+  // invokes in quick succession — exactly the N round-trips #41
+  // describes. Batch via microtask so any number of subscribe ticks in
+  // the same task coalesce into a single invoke with the final state.
+  let pushPaneMapScheduled = false;
   function pushPaneMap() {
-    if (!windowLabel) return;
-    const root = terminalStore.snapshot().rootPane;
-    void invoke('cli_update_pane_map', {
-      label: windowLabel,
-      panes: collectPaneEntries(root, focusedPaneStore.current()),
+    if (!windowLabel || pushPaneMapScheduled) return;
+    pushPaneMapScheduled = true;
+    queueMicrotask(() => {
+      pushPaneMapScheduled = false;
+      if (!windowLabel) return;
+      const root = terminalStore.snapshot().rootPane;
+      void invoke('cli_update_pane_map', {
+        label: windowLabel,
+        panes: collectPaneEntries(root, focusedPaneStore.current()),
+      });
     });
   }
 
