@@ -6,16 +6,14 @@
   import { eventService, type UnlistenFn } from '@/lib/services/eventService';
   import type { Terminal as TerminalType } from '@xterm/xterm';
   import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
-  import { terminalStore, getAllPaneIds, type PaneColor } from '@/lib/stores/terminalStore';
+  import { terminalStore, type PaneColor } from '@/lib/stores/terminalStore';
   import { focusedPaneStore } from '@/lib/stores/focusedPaneStore';
   import { terminalRegistry } from '@/lib/stores/terminalRegistry';
   import { fontSize, startupCommand } from '@/lib/stores/settingsStore';
   import { getStartupCommandString } from '@/lib/services/persistenceService';
   import { peekStore } from '@/lib/stores/peekStore';
-  import { openerService } from '@/lib/services/openerService';
   import { notificationService } from '@/lib/services/notificationService';
   import { createFilePathLinkProvider } from '@/lib/services/filePathLinkProvider';
-  import { getTerminalSequence, isMacOS } from '@/lib/utils/terminalKeys';
   import TerminalShortcutBar from './TerminalShortcutBar.svelte';
   import TerminalShortcutSettings from './TerminalShortcutSettings.svelte';
   import { shortcutState, isAiProcess } from '@/lib/stores/shortcutStore.svelte';
@@ -25,6 +23,19 @@
     loadNumberRowEnabled,
     saveNumberRowEnabled,
   } from '@/lib/services/persistenceService';
+  import { getExistingTerminalId, paneExistsInStore } from './terminalPaneHelpers';
+  import { createSyncOutputHandler, type SyncOutputHandler } from './terminalSyncOutput';
+  import {
+    applyPtyRowMargin,
+    fitTerminalToContainer as fitTerminal,
+    waitForInitialLayout,
+  } from './terminalLayout';
+  import {
+    attachCapturePhaseKeyboard,
+    attachKeyEventFilter,
+    buildTerminalOptions,
+    loadDeferredAddons,
+  } from './terminalSetup';
 
   // Lazy-loaded xterm modules (loaded on first terminal creation)
   let xtermLoaded = false;
@@ -89,31 +100,16 @@
   let lastCwd: string | null = null;
   const isAiRunning = $derived(isAiProcess(processName));
 
-  // Reserve 1 row for PTY to prevent Ink full-height flickering issue
-  // See: https://github.com/vadimdemedes/ink/issues/450
-  // When Ink renders at exactly terminal height, unintended scrolling occurs
-  const PTY_ROW_MARGIN = 1;
-  const TERMINAL_SCROLLBACK_LINES = 3000;
   const PROCESS_POLL_INTERVAL_MS = 5000;
   const CWD_POLL_INTERVAL_MS = 15000;
-  const MAX_SYNC_BUFFER_CHARS = 512 * 1024;
-  const MAX_PENDING_WRITE_CHARS = 512 * 1024;
 
-  // Resize stability: drop output during resize to prevent partial frame rendering
-  // This acts as an additional sync layer on top of Mode 2026
-  // NOTE: We DROP (not buffer) output during resize because:
-  // - Buffered content is rendered for the OLD terminal size
-  // - Writing old-size content after resize causes cursor position mismatches
-  // - This manifests as character corruption and unnatural line breaks in Ink apps
-  // - The Ink app will receive SIGWINCH and redraw with the new size anyway
-  let isResizing = false;
+  // Drop (not buffer) output during a resize that happens after initial
+  // setup: buffered content is sized for the OLD terminal, and replaying
+  // it after the resize corrupts Ink layouts. The Ink app will redraw on
+  // its SIGWINCH anyway. terminalSyncOutput.ts owns the actual drop.
+  let syncHandler: SyncOutputHandler | null = null;
   let resizeStabilityTimeout: ReturnType<typeof setTimeout> | null = null;
-  const RESIZE_STABILITY_DELAY = 50; // ms to wait after resize before resuming output
-
-  // Flag to track if initial setup is complete
-  // During initial setup, we don't drop output - the shell's initial prompt is valid
-  // After setup, resize events will drop output as Ink apps redraw on SIGWINCH
-  let initialSetupComplete = false;
+  const RESIZE_STABILITY_DELAY = 50;
 
   // Track last sent PTY size to prevent duplicate resize calls
   let lastSentPtySize: { cols: number; rows: number } | null = null;
@@ -130,472 +126,163 @@
     }
   });
 
-  // KIRI Mist Theme - soft atmospheric terminal colors
-  const mistTheme = {
-    background: '#0a0c10',
-    foreground: '#c8d3e0',
-    cursor: '#7dd3fc',
-    cursorAccent: '#0a0c10',
-    selectionBackground: 'rgba(125, 211, 252, 0.2)',
-    selectionForeground: '#f0f4f8',
-    // ANSI colors - soft, muted palette
-    black: '#0e1218',
-    red: '#f87171',
-    green: '#4ade80',
-    yellow: '#fbbf24',
-    blue: '#7dd3fc',
-    magenta: '#c4b5fd',
-    cyan: '#67e8f9',
-    white: '#c8d3e0',
-    brightBlack: '#5c6b7a',
-    brightRed: '#fca5a5',
-    brightGreen: '#86efac',
-    brightYellow: '#fcd34d',
-    brightBlue: '#93c5fd',
-    brightMagenta: '#d8b4fe',
-    brightCyan: '#a5f3fc',
-    brightWhite: '#f0f4f8',
-  };
-
-  /**
-   * Check if this pane still exists in the terminal store
-   */
-  function paneExistsInStore(): boolean {
-    const state = terminalStore.getState();
-    if (!state.rootPane) return false;
-    return getAllPaneIds(state.rootPane).includes(paneId);
+  function attachFocusTracking(termInstance: TerminalType) {
+    termInstance.textarea?.addEventListener('focus', () => {
+      isFocused = true;
+      focusedPaneStore.set(paneId);
+    });
+    termInstance.textarea?.addEventListener('blur', () => {
+      isFocused = false;
+    });
   }
 
   /**
-   * Get existing terminal ID from the pane in store
+   * Reattach an existing xterm instance from the registry to our new
+   * container. Triggered when a split rebuilds the parent tree and the
+   * Terminal component remounts: we move xterm's managed DOM node into
+   * the freshly mounted container rather than creating a new terminal.
    */
-  function getExistingTerminalId(): number | null {
-    const state = terminalStore.getState();
-    if (!state.rootPane) return null;
+  function reattachFromRegistry(existingInstance: ReturnType<typeof terminalRegistry.get>) {
+    if (!existingInstance) return;
+    terminal = existingInstance.terminal;
+    fitAddon = existingInstance.fitAddon;
+    terminalId = existingInstance.terminalId;
+    unlisten = existingInstance.unlisten;
 
-    const findTerminalId = (pane: typeof state.rootPane): number | null => {
-      if (!pane) return null;
-      if (pane.type === 'terminal') {
-        if (pane.id === paneId) return pane.terminalId;
-        return null;
-      }
-      for (const child of pane.children) {
-        const result = findTerminalId(child);
-        if (result !== null) return result;
-      }
-      return null;
-    };
-    return findTerminalId(state.rootPane);
-  }
-
-  async function initTerminal() {
-    // Check if there's an existing terminal instance in the registry
-    const existingInstance = terminalRegistry.get(paneId);
-
-    if (existingInstance) {
-      // Reattach existing terminal to new container
-      terminal = existingInstance.terminal;
-      fitAddon = existingInstance.fitAddon;
-      terminalId = existingInstance.terminalId;
-      unlisten = existingInstance.unlisten;
-
-      // Move the terminal's DOM element to the new container
-      if (terminal.element) {
-        // xterm.js manages its own DOM, so we need to manually move it
-        // Note: We check only if element exists, not if it has a parent.
-        // When component is destroyed, the parent container is removed from DOM,
-        // leaving the terminal element orphaned. We can still re-append it.
-        // eslint-disable-next-line svelte/no-dom-manipulating
-        terminalContainer.appendChild(terminal.element);
-
-        // Force a refresh to redraw the terminal content
-        // This is necessary because WebGL context may need to be refreshed after DOM move
-        terminal.refresh(0, terminal.rows - 1);
-      } else {
-        // If element doesn't exist, open the terminal (first time or error recovery)
-        terminal.open(terminalContainer);
-      }
-
-      // Fit and focus - use same thorough layout wait as initial creation
-      document.fonts.ready.then(() => {
-        setTimeout(() => {
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              fitTerminalToContainer();
-              // Force another refresh after fit to ensure content is visible
-              if (terminal) {
-                terminal.refresh(0, terminal.rows - 1);
-              }
-              // If size seems wrong (too small), wait more and try again
-              if (terminal && (terminal.cols < 40 || terminal.rows < 10)) {
-                setTimeout(() => {
-                  fitTerminalToContainer();
-                  terminal?.refresh(0, terminal.rows - 1);
-                  terminal?.focus();
-                }, 100);
-              } else {
-                terminal?.focus();
-              }
-            });
-          });
-        }, 100); // Match initial creation timing
-      });
-
-      // Setup focus tracking for the reattached terminal
-      terminal.textarea?.addEventListener('focus', () => {
-        isFocused = true;
-        focusedPaneStore.set(paneId);
-      });
-      terminal.textarea?.addEventListener('blur', () => {
-        isFocused = false;
-      });
-
-      return;
+    if (terminal.element) {
+      // xterm.js manages its own DOM, so we manually move it. We don't
+      // check parent — when the previous container is removed from the
+      // DOM the element is orphaned but still re-appendable.
+      // eslint-disable-next-line svelte/no-dom-manipulating
+      terminalContainer.appendChild(terminal.element);
+      // WebGL context may need a refresh after the DOM move.
+      terminal.refresh(0, terminal.rows - 1);
+    } else {
+      terminal.open(terminalContainer);
     }
 
-    // Check if there's an existing PTY for this pane (from store)
-    const existingTerminalId = getExistingTerminalId();
+    document.fonts.ready.then(() => {
+      setTimeout(() => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            fitTerminalToContainer();
+            terminal?.refresh(0, terminal.rows - 1);
+            if (terminal && (terminal.cols < 40 || terminal.rows < 10)) {
+              setTimeout(() => {
+                fitTerminalToContainer();
+                terminal?.refresh(0, terminal.rows - 1);
+                terminal?.focus();
+              }, 100);
+            } else {
+              terminal?.focus();
+            }
+          });
+        });
+      }, 100);
+    });
 
-    // Lazy load xterm and addons on first use
+    attachFocusTracking(terminal);
+  }
+
+  async function ensureXtermLoaded(): Promise<{
+    TerminalCtor: typeof import('@xterm/xterm').Terminal;
+    FitAddonCtor: typeof import('@xterm/addon-fit').FitAddon;
+  }> {
     if (!xtermLoaded) {
       await import('@xterm/xterm/css/xterm.css');
       xtermLoaded = true;
     }
-
-    // Only Terminal core + FitAddon are needed for the first render
-    // (open() + fit()). WebLinks and Canvas are deferred until after
-    // the terminal is on screen so they don't sit on the critical path
-    // of the very first pane.
-    const [{ Terminal }, { FitAddon }] = await Promise.all([
+    // Only Terminal core + FitAddon are needed for the first render.
+    // WebLinks/Canvas are deferred (loadDeferredAddons) until after the
+    // terminal is on screen so they stay off the critical path.
+    const [{ Terminal: TerminalCtor }, { FitAddon: FitAddonCtor }] = await Promise.all([
       import('@xterm/xterm'),
       import('@xterm/addon-fit'),
     ]);
+    return { TerminalCtor, FitAddonCtor };
+  }
 
-    // Get current font size from store
-    const currentFontSize = get(fontSize);
+  async function initTerminal() {
+    const existingInstance = terminalRegistry.get(paneId);
+    if (existingInstance) {
+      reattachFromRegistry(existingInstance);
+      return;
+    }
 
-    terminal = new Terminal({
-      cursorBlink: true,
-      cursorStyle: 'bar',
-      cursorWidth: 2,
-      fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', 'Menlo', monospace",
-      fontSize: currentFontSize,
-      fontWeight: '400',
-      fontWeightBold: '500',
-      lineHeight: 1.2,
-      letterSpacing: 0,
-      allowTransparency: true,
-      theme: mistTheme,
-      scrollback: TERMINAL_SCROLLBACK_LINES,
-      smoothScrollDuration: 150,
-      macOptionIsMeta: true,
-      altClickMovesCursor: true,
-      // Match macOS Terminal behavior for ED2 (Erase in Display)
-      // This prevents blank lines when CLI tools use screen clearing
-      scrollOnEraseInDisplay: true,
-      // OSC 8 Hyperlink handler - handles explicit hyperlinks from terminal apps
-      // See: https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda
-      linkHandler: {
-        activate: (_event, uri) => {
-          // Handle file:// URLs by opening in editor
-          if (uri.startsWith('file://')) {
-            const filePath = uri.replace('file://', '');
-            // Extract line number if present (file:///path/to/file:42)
-            const match = filePath.match(/^(.+?):(\d+)(?::(\d+))?$/);
-            if (match) {
-              const [, path, line, column] = match;
-              peekStore.open(path, parseInt(line, 10), column ? parseInt(column, 10) : undefined);
-            } else {
-              peekStore.open(filePath);
-            }
-          } else {
-            // Open other URLs in browser
-            openerService.openUrl(uri);
-          }
-        },
-        allowNonHttpProtocols: true, // Allow file:// protocol
-      },
-    });
+    const existingTerminalId = getExistingTerminalId(paneId);
+    const { TerminalCtor, FitAddonCtor } = await ensureXtermLoaded();
 
-    fitAddon = new FitAddon();
+    terminal = new TerminalCtor(buildTerminalOptions(get(fontSize)));
+    fitAddon = new FitAddonCtor();
     terminal.loadAddon(fitAddon);
 
-    // Defer WebLinks + Canvas addons. They are nice-to-haves (URL
-    // detection in output, canvas-backed rendering) but are not needed
-    // for the first paint or for accepting input. Loading them after
-    // `open()` keeps the initial render off the chunk graph.
-    void Promise.all([import('@xterm/addon-web-links'), import('@xterm/addon-canvas')]).then(
-      ([{ WebLinksAddon }, { CanvasAddon }]) => {
-        if (!terminal) return;
-        terminal.loadAddon(
-          new WebLinksAddon((_event, uri) => {
-            openerService.openUrl(uri);
-          })
-        );
-        // Canvas avoids one WebGL context per pane, which keeps multi-agent
-        // memory and GPU resource use lower.
-        terminal.loadAddon(new CanvasAddon());
-      }
-    );
+    void loadDeferredAddons(terminal);
 
-    // Register file path link provider for peek editor
     terminal.registerLinkProvider(
       createFilePathLinkProvider(terminal, (path, line, column) => {
         peekStore.open(path, line, column);
       })
     );
 
-    // Handle keyboard events - prevent xterm from processing keys we handle in capture phase
-    terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type !== 'keydown') return true;
+    attachKeyEventFilter(terminal);
 
-      // Block Shift+Enter (handled in capture phase)
-      if (event.key === 'Enter' && event.shiftKey) {
-        return false;
-      }
-
-      // Block Option+Arrow and Cmd+Arrow on macOS (handled in capture phase)
-      if (isMacOS() && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
-        if (event.altKey || event.metaKey) {
-          return false; // Prevent xterm from processing
-        }
-      }
-
-      // Block Cmd+Backspace on macOS (handled in capture phase for kill line)
-      if (isMacOS() && event.key === 'Backspace' && event.metaKey) {
-        return false; // Prevent xterm from processing
-      }
-
-      return true;
-    });
-
-    // Guard against the component unmounting before the async xterm imports
-    // resolve (rapid mount/unmount during tests, or a fast pane teardown).
-    // Without this check xterm throws "Terminal requires a parent element"
-    // on a detached node.
+    // Guard against the component unmounting before the async xterm
+    // imports resolve (rapid mount/unmount during tests, or a fast pane
+    // teardown). Without this xterm throws "Terminal requires a parent
+    // element" on a detached node.
     if (!terminalContainer?.isConnected) {
       return;
     }
     terminal.open(terminalContainer);
 
-    // Wait for layout to be complete before creating PTY
-    // This ensures the PTY is created with the correct initial size
-    // which is critical for Ink-based apps like Claude Code
-    const waitForLayout = (): Promise<void> => {
-      return new Promise((resolve) => {
-        document.fonts.ready.then(() => {
-          // Use longer delay and multiple fit attempts to ensure correct size
-          setTimeout(() => {
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                if (fitAddon && terminal && terminalContainer) {
-                  // Use proposeDimensions to calculate and resize
-                  const dimensions = fitAddon.proposeDimensions();
-                  if (dimensions) {
-                    terminal.resize(dimensions.cols, dimensions.rows);
-                  }
-
-                  // Calculate expected minimum rows based on container height
-                  // Using fontSize (default 15px) * lineHeight (1.2) = ~18px per row
-                  const containerRect = terminalContainer.getBoundingClientRect();
-                  const estimatedRowHeight = 18; // approximate row height
-                  const expectedMinRows =
-                    Math.floor((containerRect.height - 24) / estimatedRowHeight) * 0.5;
-
-                  // If size seems wrong (too small or rows much less than expected), wait more and try again
-                  if (terminal.cols < 40 || terminal.rows < 10 || terminal.rows < expectedMinRows) {
-                    setTimeout(() => {
-                      const dims = fitAddon.proposeDimensions();
-                      if (dims) {
-                        terminal.resize(dims.cols, dims.rows);
-                      }
-                      resolve();
-                    }, 100);
-                    return;
-                  }
-                }
-                resolve();
-              });
-            });
-          }, 100); // Increased from 50ms to 100ms
-        });
-      });
-    };
-
-    // Create PTY or reconnect to existing one
     try {
       if (existingTerminalId !== null) {
-        // Reconnect to existing PTY
         terminalId = existingTerminalId;
-        // Still need to fit for reconnection
-        await waitForLayout();
+        await waitForInitialLayout(terminal, fitAddon, terminalContainer);
       } else {
-        // Wait for layout before creating PTY
-        await waitForLayout();
-
-        // Now create PTY with correct initial size
-        // Note: cols is already capped by waitForLayout()
+        await waitForInitialLayout(terminal, fitAddon, terminalContainer);
+        // Cols is already capped by waitForInitialLayout(); we apply the
+        // PTY row margin so Ink apps don't flicker at full height.
         const cols = terminal.cols;
-        // Apply row margin to prevent Ink full-height flickering
-        const rows = Math.max(terminal.rows - PTY_ROW_MARGIN, 10);
-
+        const rows = applyPtyRowMargin(terminal.rows);
         terminalId = await terminalService.createTerminal(cwd, cols, rows);
-        // Store terminal ID in terminal store
         terminalStore.setTerminalId(paneId, terminalId);
       }
 
       terminal?.focus();
 
-      // Synchronized Output Mode (DEC Private Mode 2026)
-      // xterm.js doesn't support this natively, so we implement manual buffering
-      // to prevent visual glitches from partial frame rendering
-      // See: https://github.com/xtermjs/xterm.js/issues/3375
-      const SYNC_START = '\x1b[?2026h';
-      const SYNC_END = '\x1b[?2026l';
-      let syncBuffer = '';
-      let inSyncMode = false;
-      let pendingWrite = '';
-      let writeScheduled = false;
-      let syncFrameCount = 0; // Debug: count synced frames
+      syncHandler = createSyncOutputHandler(terminal);
 
-      // Debug flag - set to true to enable sync mode logging
-      const DEBUG_SYNC_MODE = false;
-
-      const appendCapped = (current: string, next: string, maxChars: number): string => {
-        if (!next) return current;
-        const combined = current + next;
-        if (combined.length <= maxChars) return combined;
-        return combined.slice(combined.length - maxChars);
-      };
-
-      // Flush all pending writes in a single animation frame
-      const flushWrites = () => {
-        if (pendingWrite && terminal) {
-          // If resizing AFTER initial setup, drop the pending write - it's based on old terminal size
-          // Ink apps will redraw after receiving SIGWINCH
-          // During initial setup, don't drop - the shell's initial prompt is valid
-          if (isResizing && initialSetupComplete) {
-            pendingWrite = '';
-            writeScheduled = false;
-            return;
-          }
-          terminal.write(pendingWrite);
-          pendingWrite = '';
-        }
-        writeScheduled = false;
-      };
-
-      // Schedule a batched write using requestAnimationFrame
-      const scheduleWrite = (data: string) => {
-        // If resizing AFTER initial setup, drop the data - it's based on old terminal size
-        // Ink apps will redraw after receiving SIGWINCH
-        // During initial setup, don't drop - the shell's initial prompt is valid
-        if (isResizing && initialSetupComplete) {
-          return;
-        }
-        pendingWrite = appendCapped(pendingWrite, data, MAX_PENDING_WRITE_CHARS);
-        if (!writeScheduled) {
-          writeScheduled = true;
-          requestAnimationFrame(flushWrites);
-        }
-      };
-
-      // Listen for terminal output
       unlisten = await eventService.listen<TerminalOutput>('terminal-output', (event) => {
-        if (event.payload.id === terminalId && terminal) {
-          let data = event.payload.data;
+        if (event.payload.id !== terminalId || !terminal || !syncHandler) return;
+        let data = event.payload.data;
 
-          // Process notification escape sequences (OSC 9, OSC 777)
-          // This extracts notifications and removes them from the output
-          const { output: cleanedData, notifications } =
-            notificationService.parseNotifications(data);
-          data = cleanedData;
-
-          // Send notifications asynchronously (don't block output)
-          if (notifications.length > 0) {
-            for (const notification of notifications) {
-              notificationService.notify(notification);
-            }
-          }
-
-          // Process sync mode markers and buffer content
-          while (data.length > 0) {
-            if (inSyncMode) {
-              // Look for sync end marker
-              const endIndex = data.indexOf(SYNC_END);
-              if (endIndex !== -1) {
-                // Add content before end marker to buffer
-                syncBuffer = appendCapped(
-                  syncBuffer,
-                  data.substring(0, endIndex),
-                  MAX_SYNC_BUFFER_CHARS
-                );
-                // Schedule the entire buffered frame for next animation frame
-                scheduleWrite(syncBuffer);
-                syncFrameCount++;
-                if (DEBUG_SYNC_MODE) {
-                  console.log(
-                    `[SyncOutput] Frame #${syncFrameCount} flushed (${syncBuffer.length} bytes)`
-                  );
-                }
-                syncBuffer = '';
-                inSyncMode = false;
-                // Continue processing remaining data
-                data = data.substring(endIndex + SYNC_END.length);
-              } else {
-                // No end marker yet, buffer entire chunk
-                syncBuffer = appendCapped(syncBuffer, data, MAX_SYNC_BUFFER_CHARS);
-                data = '';
-              }
-            } else {
-              // Look for sync start marker
-              const startIndex = data.indexOf(SYNC_START);
-              if (startIndex !== -1) {
-                // Schedule content before start marker
-                if (startIndex > 0) {
-                  scheduleWrite(data.substring(0, startIndex));
-                }
-                inSyncMode = true;
-                syncBuffer = '';
-                if (DEBUG_SYNC_MODE) {
-                  console.log('[SyncOutput] Sync mode started');
-                }
-                // Continue processing after start marker
-                data = data.substring(startIndex + SYNC_START.length);
-              } else {
-                // No sync markers, schedule write
-                scheduleWrite(data);
-                data = '';
-              }
-            }
-          }
+        // Notifications (OSC 9, OSC 777) are stripped from the output
+        // and fired asynchronously so they don't block the write path.
+        const { output: cleanedData, notifications } = notificationService.parseNotifications(data);
+        data = cleanedData;
+        for (const notification of notifications) {
+          notificationService.notify(notification);
         }
+
+        syncHandler.process(data);
       });
 
-      // Register instance in registry for preservation across remounts
       if (terminal && fitAddon && terminalId !== null && unlisten) {
-        terminalRegistry.register(paneId, {
-          terminal,
-          fitAddon,
-          terminalId,
-          unlisten,
-        });
+        terminalRegistry.register(paneId, { terminal, fitAddon, terminalId, unlisten });
       }
 
-      // Execute startup command if configured
-      // Only for newly created terminals (not reattached from registry),
-      // and only when this is the root terminal pane (no splits yet)
+      // Execute startup command for freshly created root panes only —
+      // reattached panes already ran it on their original mount, and
+      // split children inherit their parent's shell.
       if (existingTerminalId === null) {
         const state = terminalStore.getState();
         const isRootTerminalPane =
           state.rootPane?.type === 'terminal' && state.rootPane.id === paneId;
-
         if (isRootTerminalPane) {
-          // get(startupCommand) here is a one-shot read of a derived
-          // settings store, not a reactivity bypass on terminalStore.
+          // get(startupCommand) is a one-shot read; not a reactivity bypass.
           const commandStr = getStartupCommandString(get(startupCommand));
           if (commandStr) {
-            // Wait for shell to be ready before sending command
             setTimeout(() => {
               if (terminalId !== null) {
                 terminalService.writeTerminal(terminalId, commandStr + '\n');
@@ -605,87 +292,39 @@
         }
       }
 
-      // Send input to PTY
       terminal.onData((data) => {
         if (terminalId !== null) {
           terminalService.writeTerminal(terminalId, data);
         }
       });
 
-      // Handle resize - apply row margin for Ink apps
       terminal.onResize(({ cols, rows }) => {
+        if (terminalId === null) return;
+        const ptyRows = applyPtyRowMargin(rows);
+        if (lastSentPtySize && lastSentPtySize.cols === cols && lastSentPtySize.rows === ptyRows) {
+          return;
+        }
+        lastSentPtySize = { cols, rows: ptyRows };
+        terminalService.resizeTerminal(terminalId, cols, ptyRows);
+      });
+
+      // PTY was created with the correct initial size, but dispatching
+      // terminal-resize twice mirrors the path split panes take so the
+      // visual state and the PTY agree even if layout shifts late.
+      setTimeout(() => window.dispatchEvent(new Event('terminal-resize')), 100);
+      setTimeout(() => window.dispatchEvent(new Event('terminal-resize')), 250);
+
+      // Past this point, mid-stream resize drops output to prevent Ink
+      // glitches. Until then, the shell's first prompt is valid even
+      // if a resize fires during initial layout.
+      setTimeout(() => syncHandler?.markInitialSetupComplete(), 400);
+
+      attachFocusTracking(terminal);
+      attachCapturePhaseKeyboard(terminal, (data) => {
         if (terminalId !== null) {
-          // Apply row margin to prevent Ink full-height flickering
-          const ptyRows = Math.max(rows - PTY_ROW_MARGIN, 10);
-
-          // Skip if size hasn't changed
-          if (
-            lastSentPtySize &&
-            lastSentPtySize.cols === cols &&
-            lastSentPtySize.rows === ptyRows
-          ) {
-            return;
-          }
-
-          lastSentPtySize = { cols, rows: ptyRows };
-          terminalService.resizeTerminal(terminalId, cols, ptyRows);
+          terminalService.writeTerminal(terminalId, data);
         }
       });
-
-      // PTY was created with correct initial size, but trigger terminal-resize
-      // to ensure consistent behavior with split panes
-      setTimeout(() => {
-        window.dispatchEvent(new Event('terminal-resize'));
-      }, 100);
-
-      // And another one slightly later to catch any remaining layout changes
-      setTimeout(() => {
-        window.dispatchEvent(new Event('terminal-resize'));
-      }, 250);
-
-      // Mark initial setup as complete after all resize events have settled
-      // After this point, resize events will drop output to prevent Ink app glitches
-      setTimeout(() => {
-        initialSetupComplete = true;
-      }, 400);
-
-      // Track focus state for visual feedback
-      terminal.textarea?.addEventListener('focus', () => {
-        isFocused = true;
-        focusedPaneStore.set(paneId);
-      });
-      terminal.textarea?.addEventListener('blur', () => {
-        isFocused = false;
-      });
-
-      // Handle special keyboard shortcuts
-      // Using capture phase on textarea to intercept before xterm processes it
-      terminal.textarea?.addEventListener(
-        'keydown',
-        (event) => {
-          // Handle Shift+Enter to send literal newline (like VSCode)
-          if (event.key === 'Enter' && event.shiftKey) {
-            event.preventDefault();
-            event.stopPropagation();
-            if (terminalId !== null) {
-              terminalService.writeTerminal(terminalId, '\n');
-            }
-            return;
-          }
-
-          // Handle macOS keyboard navigation (Option+Arrow, Cmd+Arrow)
-          // Must intercept here to prevent xterm.js from processing with macOptionIsMeta
-          if (isMacOS()) {
-            const sequence = getTerminalSequence(event);
-            if (sequence && terminalId !== null) {
-              event.preventDefault();
-              event.stopPropagation();
-              terminalService.writeTerminal(terminalId, sequence);
-            }
-          }
-        },
-        { capture: true }
-      );
     } catch (error) {
       console.error('Failed to create terminal:', error);
       terminal.write(`\r\n\x1b[31mError: Failed to create terminal: ${error}\x1b[0m\r\n`);
@@ -696,72 +335,34 @@
 
   function fitTerminalToContainer() {
     if (!fitAddon || !terminal || !terminalContainer) return;
-
-    // CRITICAL: Guard against 0-size fits
-    // When tabs are switched or closed, the container may momentarily have 0 size
-    // Sending cols=0/rows=0 to PTY will break Ink-based apps
-    const rect = terminalContainer.getBoundingClientRect();
-    if (rect.width < 2 || rect.height < 2) {
-      return;
-    }
-
-    try {
-      // Use proposeDimensions() to calculate size
-      const dimensions = fitAddon.proposeDimensions();
-      if (!dimensions) return;
-
-      const { cols, rows } = dimensions;
-
-      // Only resize if size actually changed
-      if (terminal.cols !== cols || terminal.rows !== rows) {
-        terminal.resize(cols, rows);
-      }
-
-      // Note: PTY resize is handled by terminal.onResize handler
-      // which applies row margin for Ink-based apps
-    } catch (e) {
-      console.warn('FitAddon.fit() error:', e);
-    }
+    fitTerminal(terminal, fitAddon, terminalContainer);
   }
 
-  /**
-   * End resize mode after stability delay
-   * This allows output to flow again after resize is complete
-   */
-  function endResizeMode() {
-    isResizing = false;
-  }
-
-  /**
-   * Schedule the end of resize mode after stability delay
-   */
   function scheduleResizeEnd() {
     if (resizeStabilityTimeout) {
       clearTimeout(resizeStabilityTimeout);
     }
     resizeStabilityTimeout = setTimeout(() => {
-      requestAnimationFrame(endResizeMode);
+      requestAnimationFrame(() => syncHandler?.setResizing(false));
     }, RESIZE_STABILITY_DELAY);
   }
 
   function handleResize() {
-    if (terminal) {
-      // Start resize buffering to prevent partial frame rendering
-      isResizing = true;
+    if (!terminal) return;
 
-      // Debounce resize to avoid rapid calls during window resize
-      if (resizeTimeout) {
-        clearTimeout(resizeTimeout);
-      }
-      resizeTimeout = setTimeout(() => {
-        // RAF to ensure layout is complete
-        requestAnimationFrame(() => {
-          fitTerminalToContainer();
-          // Schedule buffer clear after resize completes
-          scheduleResizeEnd();
-        });
-      }, 16); // ~1 frame at 60fps
+    syncHandler?.setResizing(true);
+
+    if (resizeTimeout) {
+      clearTimeout(resizeTimeout);
     }
+    // Debounce ~1 frame to coalesce rapid window-resize events; the RAF
+    // inside ensures layout has committed before we re-fit.
+    resizeTimeout = setTimeout(() => {
+      requestAnimationFrame(() => {
+        fitTerminalToContainer();
+        scheduleResizeEnd();
+      });
+    }, 16);
   }
 
   // Poll foreground process name to drive the AI shortcut bar
@@ -877,12 +478,11 @@
 
     // Listen for custom terminal-resize event (dispatched when pane sizes change)
     const handleTerminalResize = () => {
-      // Start resize buffering
-      isResizing = true;
-      // Force immediate resize without debounce
+      syncHandler?.setResizing(true);
+      // Force immediate resize without debounce (pane size changes are
+      // discrete events, not continuous like window resize).
       requestAnimationFrame(() => {
         fitTerminalToContainer();
-        // Schedule buffer clear after resize completes
         scheduleResizeEnd();
       });
     };
@@ -915,9 +515,9 @@
       resizeObserver.disconnect();
     }
 
-    // Check if the pane still exists in the store
-    // If it does, this is just a remount due to split - preserve the terminal
-    const paneStillExists = paneExistsInStore();
+    // If the pane still exists in the store this is just a remount
+    // triggered by a split — preserve the terminal for the reattach path.
+    const paneStillExists = paneExistsInStore(paneId);
 
     if (paneStillExists) {
       // Pane still exists, terminal will be reattached
