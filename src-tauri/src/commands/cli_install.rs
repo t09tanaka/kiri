@@ -111,46 +111,57 @@ fn needs_copy(src: &Path, dest: &Path) -> std::io::Result<bool> {
 mod tests {
     use super::*;
 
+    /// Returns a fresh tempdir whose lifetime the test owns; using `?`
+    /// throughout the test body propagates IO failures instead of
+    /// `unwrap()`ing them into opaque panic messages.
+    fn tempdir() -> std::io::Result<tempfile::TempDir> {
+        tempfile::TempDir::new()
+    }
+
     #[test]
     fn socket_path_uses_label() {
-        let p = socket_path_for("window-7").unwrap();
+        let p = socket_path_for("window-7")
+            .expect("HOME must be set for cli_install tests");
         assert!(p.ends_with("window-7.sock"));
         assert!(p.to_string_lossy().contains("/.kiri/instances/"));
     }
 
     #[test]
     fn kiri_bin_dir_under_home() {
-        let p = kiri_bin_dir().unwrap();
+        let p = kiri_bin_dir().expect("HOME must be set for cli_install tests");
         assert!(p.ends_with(".kiri/bin"));
     }
 
     #[test]
-    fn needs_copy_when_dest_missing() {
-        let tmp = tempfile::TempDir::new().unwrap();
+    fn needs_copy_when_dest_missing() -> std::io::Result<()> {
+        let tmp = tempdir()?;
         let src = tmp.path().join("src");
         let dest = tmp.path().join("dest");
-        std::fs::write(&src, b"hello").unwrap();
-        assert!(needs_copy(&src, &dest).unwrap());
+        std::fs::write(&src, b"hello")?;
+        assert!(needs_copy(&src, &dest)?);
+        Ok(())
     }
 
     #[test]
-    fn no_copy_when_identical() {
-        let tmp = tempfile::TempDir::new().unwrap();
+    fn no_copy_when_identical() -> std::io::Result<()> {
+        let tmp = tempdir()?;
         let src = tmp.path().join("src");
         let dest = tmp.path().join("dest");
-        std::fs::write(&src, b"hello").unwrap();
-        std::fs::copy(&src, &dest).unwrap();
+        std::fs::write(&src, b"hello")?;
+        std::fs::copy(&src, &dest)?;
         // dest mtime == src mtime (or later), so no copy needed
-        assert!(!needs_copy(&src, &dest).unwrap());
+        assert!(!needs_copy(&src, &dest)?);
+        Ok(())
     }
 
     #[test]
-    fn needs_copy_when_size_differs() {
-        let tmp = tempfile::TempDir::new().unwrap();
+    fn needs_copy_when_size_differs() -> std::io::Result<()> {
+        let tmp = tempdir()?;
         let src = tmp.path().join("src");
         let dest = tmp.path().join("dest");
-        std::fs::write(&src, b"hello").unwrap();
-        std::fs::write(&dest, b"x").unwrap();
-        assert!(needs_copy(&src, &dest).unwrap());
+        std::fs::write(&src, b"hello")?;
+        std::fs::write(&dest, b"x")?;
+        assert!(needs_copy(&src, &dest)?);
+        Ok(())
     }
 }
