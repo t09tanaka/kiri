@@ -27,7 +27,7 @@ Bugs filed against Tier 1 get triage priority.
 | Platform | Build artefact | UI smoke-tested | CLI tested | Known gaps |
 |---|---|---|---|---|
 | macOS Intel (x86_64, macOS 13+) | none shipped; `cargo build --release` works | no | yes (CI runs on `ubuntu-latest`; binary verified by parity with aarch64) | Same Apple Silicon binary will not run; you must build from source. App icon and window-vibrancy effects are designed for Apple Silicon defaults and may render differently. |
-| Linux x86_64 (Debian 12 / Ubuntu 22.04+) | none shipped; build from source | no | partial (CI exercises the unit-test surface, not the bundled app) | Tray icon and global shortcuts use platform-specific Tauri plugins; behaviour on X11 vs Wayland is unverified. The DEC 2026 (Synchronized Output) rendering depends on the WebKit version shipped with `libwebkit2gtk-4.1` — older distros may flicker. Cloudflare Tunnel `brew install` instructions in the Remote Access docs do not apply; install `cloudflared` via your distro. |
+| Linux x86_64 (Debian 12 / Ubuntu 22.04+) | none shipped; build from source | no | partial (CI exercises the unit-test surface, not the bundled app) | Tray icon and global shortcuts use platform-specific Tauri plugins; behaviour on X11 vs Wayland is unverified. The DEC 2026 (Synchronized Output) rendering depends on the WebKit version shipped with `libwebkit2gtk-4.1` — older distros may flicker. |
 
 Tier 2 means: the source compiles, the tests pass in CI, but nobody on
 the maintainer team uses this configuration daily. Issues are welcome;

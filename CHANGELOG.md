@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+#### Remote Access
+- Removed the Remote Access feature in its entirety: built-in Axum server,
+  Cloudflare Tunnel integration, QR code surface, `Cmd+Shift+R` shortcut,
+  Tools → Remote Access menu, and the persisted `remoteAccess` settings.
+- Reasoning: the feature broadened the attack surface (Cloudflare tunnel
+  `sh -c` invocation, overly-permissive Tauri capabilities, untested auth /
+  encryption seams — see #21, #23, #25) and was orthogonal to the agent
+  terminal value prop. Removing it shrinks the bundle (axum + qrcode deps
+  dropped) and simplifies the security review.
+
 ## [0.5.1] - 2026-05-17
 
 ### Fixed

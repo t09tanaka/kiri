@@ -27,7 +27,6 @@ informal and can be added or removed freely.
 | `area:backend` | Tauri host (Rust under `src-tauri/`). |
 | `area:terminal` | PTY pipeline, xterm.js rendering. |
 | `area:fileviewer` | CodeMirror-based file panel. |
-| `area:remote` | Remote Access feature (Axum / Cloudflare Tunnel). |
 | `area:worktree` | Worktree integration. |
 | `area:ci` | GitHub Actions workflows and CI-only scripts. |
 | `area:docs` | Files under `docs/`, `CONTRIBUTING.md`, `README.md`. |
