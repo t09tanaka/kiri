@@ -1,25 +1,23 @@
-import { writable, derived } from 'svelte/store';
+// Backward-compatible facade over `projectState` (issue #42 phase 1).
+//
+// The canonical in-memory snapshot lives in `projectState.svelte.ts`.
+// This file owns all the side effects (Tauri Store IO, multi-window
+// event fan-out via eventService, window resizing via windowService)
+// because we don't want to drag those imports into the canonical class.
+
+import { writable, derived, get } from 'svelte/store';
 import { invoke } from '@tauri-apps/api/core';
 import { Store } from '@tauri-apps/plugin-store';
 import { windowService } from '@/lib/services/windowService';
 import { eventService } from '@/lib/services/eventService';
+import { projectState, type RecentProject, type ProjectStateShape } from './projectState.svelte';
+
+export type { RecentProject };
+export type ProjectState = ProjectStateShape;
 
 const MAX_RECENT_PROJECTS = 10;
 export const MAX_RECENT_MENU_ITEMS = 5;
 const STORE_PATH = 'kiri-settings.json';
-
-export interface RecentProject {
-  path: string;
-  name: string;
-  lastOpened: number;
-  gitBranch?: string | null;
-}
-
-interface ProjectState {
-  currentPath: string | null;
-  recentProjects: RecentProject[];
-  isLoading: boolean;
-}
 
 interface GitRepoInfo {
   root: string;
@@ -27,12 +25,18 @@ interface GitRepoInfo {
   statuses: unknown[];
 }
 
+function snapshot(): ProjectStateShape {
+  return { ...projectState.state };
+}
+
 function createProjectStore() {
-  const { subscribe, update } = writable<ProjectState>({
-    currentPath: null,
-    recentProjects: [],
-    isLoading: true,
-  });
+  const mirror = writable<ProjectStateShape>(snapshot());
+  const refresh = () => mirror.set(snapshot());
+
+  const patch = (partial: Partial<ProjectStateShape>) => {
+    projectState.patch(partial);
+    refresh();
+  };
 
   let store: Store | null = null;
 
@@ -47,7 +51,7 @@ function createProjectStore() {
    * Load recent projects from disk. Returns [] on any failure so the UI
    * still renders, but never use this result as the basis for a write — a
    * transient load failure would then overwrite the persisted list with
-   * an empty / partial value. Writers must use {@link readLatestForWrite}.
+   * an empty / partial value. Writers must use `readLatestForWrite`.
    */
   async function loadRecentProjects(): Promise<RecentProject[]> {
     try {
@@ -65,8 +69,7 @@ function createProjectStore() {
   /**
    * Strict variant used as the basis for a save. Propagates failures so
    * the caller can skip the write and avoid clobbering the on-disk list
-   * with stale or empty data. Returns [] only when the file genuinely has
-   * no `recentProjects` key.
+   * with stale or empty data.
    */
   async function readLatestForWrite(): Promise<RecentProject[]> {
     const s = await getStore();
@@ -100,15 +103,11 @@ function createProjectStore() {
   }
 
   return {
-    subscribe,
+    subscribe: mirror.subscribe,
 
     async init() {
       const recentProjects = await loadRecentProjects();
-      update((state) => ({
-        ...state,
-        recentProjects,
-        isLoading: false,
-      }));
+      patch({ recentProjects, isLoading: false });
       await emitRecentMenuUpdate(recentProjects);
     },
 
@@ -145,15 +144,12 @@ function createProjectStore() {
         console.error('Failed to read recentProjects for write; skipping save:', error);
       }
 
-      update((state) => ({
-        ...state,
+      patch({
         currentPath: path,
         ...(updatedProjects !== null ? { recentProjects: updatedProjects } : {}),
-      }));
+      });
 
       if (updatedProjects !== null) {
-        // Await the save so silent failures surface in logs and so the next
-        // operation observes the disk state we just wrote.
         await saveRecentProjects(updatedProjects);
         await emitRecentMenuUpdate(updatedProjects);
       }
@@ -193,20 +189,14 @@ function createProjectStore() {
         ...latestProjects.slice(existingIndex + 1),
       ].slice(0, MAX_RECENT_PROJECTS);
 
-      update((state) => ({
-        ...state,
-        recentProjects: updatedProjects,
-      }));
+      patch({ recentProjects: updatedProjects });
 
       await saveRecentProjects(updatedProjects);
       await emitRecentMenuUpdate(updatedProjects);
     },
 
     async closeProject() {
-      update((state) => ({
-        ...state,
-        currentPath: null,
-      }));
+      patch({ currentPath: null });
 
       // Resize window to start screen size and center when closing a project
       try {
@@ -217,37 +207,24 @@ function createProjectStore() {
     },
 
     /**
-     * Set current path directly (for restoring from persistence)
-     * Unlike openProject, this doesn't update recent projects
+     * Set current path directly (for restoring from persistence). Unlike
+     * openProject, this doesn't update recent projects.
      */
     setCurrentPath(path: string | null) {
-      update((state) => ({
-        ...state,
-        currentPath: path,
-      }));
+      patch({ currentPath: path });
     },
 
     async refreshRecentProjectsGitInfo() {
-      update((state) => ({ ...state }));
-
-      const currentState = await new Promise<ProjectState>((resolve) => {
-        const unsubscribe = subscribe((state) => {
-          resolve(state);
-          unsubscribe();
-        });
-      });
+      const current = get(mirror);
 
       const updatedProjects = await Promise.all(
-        currentState.recentProjects.map(async (project) => {
+        current.recentProjects.map(async (project) => {
           const gitBranch = await getGitBranch(project.path);
           return { ...project, gitBranch };
         })
       );
 
-      update((state) => ({
-        ...state,
-        recentProjects: updatedProjects,
-      }));
+      patch({ recentProjects: updatedProjects });
 
       await saveRecentProjects(updatedProjects);
     },
@@ -262,31 +239,21 @@ function createProjectStore() {
       }
       const updatedProjects = latestProjects.filter((p) => p.path !== path);
 
-      update((state) => ({
-        ...state,
-        recentProjects: updatedProjects,
-      }));
+      patch({ recentProjects: updatedProjects });
 
       await saveRecentProjects(updatedProjects);
       await emitRecentMenuUpdate(updatedProjects);
     },
 
     async clearRecentProjects() {
-      update((state) => ({
-        ...state,
-        recentProjects: [],
-      }));
+      patch({ recentProjects: [] });
 
       await saveRecentProjects([]);
       await emitRecentMenuUpdate([]);
     },
 
     getCurrentPath(): string | null {
-      let currentPath: string | null = null;
-      subscribe((state) => {
-        currentPath = state.currentPath;
-      })();
-      return currentPath;
+      return projectState.state.currentPath;
     },
   };
 }

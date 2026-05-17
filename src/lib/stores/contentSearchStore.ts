@@ -1,66 +1,53 @@
-import { writable, derived, get } from 'svelte/store';
-import {
-  searchService,
-  type ContentSearchResult,
-  type ContentMatch,
-} from '@/lib/services/searchService';
+// Backward-compatible facade over `contentSearchState` (issue #42 phase 1).
+//
+// The canonical state lives in `contentSearchState.svelte.ts`. This file
+// keeps the public surface intact: `subscribe` (writable contract), the
+// `derived(...)` exports below, and the async methods (`search`,
+// `addExcludePattern`, etc.) that drive both the canonical state and
+// the legacy writable mirror.
+
+import { writable, derived } from 'svelte/store';
+import { searchService } from '@/lib/services/searchService';
 import {
   loadProjectSettings,
   saveProjectSettings,
   DEFAULT_EXCLUDE_PATTERNS,
   type ProjectSettings,
 } from '@/lib/services/persistenceService';
+import {
+  contentSearchState,
+  initialContentSearchState,
+  type ContentSearchStateShape,
+  type ContentSearchResult,
+  type ContentMatch,
+} from './contentSearchState.svelte';
 
-/**
- * Re-export types for convenience
- */
 export type { ContentSearchResult, ContentMatch };
 
-interface ContentSearchState {
-  isOpen: boolean;
-  projectPath: string | null;
-  query: string;
-  results: ContentSearchResult[];
-  isSearching: boolean;
-  selectedFileIndex: number;
-  selectedMatchIndex: number;
-  excludePatterns: string[];
-  isSettingsOpen: boolean;
-  error: string | null;
+function snapshot(): ContentSearchStateShape {
+  return { ...contentSearchState.state };
 }
 
-const initialState: ContentSearchState = {
-  isOpen: false,
-  projectPath: null,
-  query: '',
-  results: [],
-  isSearching: false,
-  selectedFileIndex: 0,
-  selectedMatchIndex: 0,
-  excludePatterns: [...DEFAULT_EXCLUDE_PATTERNS],
-  isSettingsOpen: false,
-  error: null,
-};
-
 function createContentSearchStore() {
-  const { subscribe, update, set } = writable<ContentSearchState>(initialState);
+  const mirror = writable<ContentSearchStateShape>(snapshot());
+  const refresh = () => mirror.set(snapshot());
+
+  const patch = (partial: Partial<ContentSearchStateShape>) => {
+    contentSearchState.patch(partial);
+    refresh();
+  };
 
   let searchTimeout: ReturnType<typeof setTimeout> | null = null;
   let lastProjectPath: string | null = null;
 
-  return {
-    subscribe,
+  const store = {
+    subscribe: mirror.subscribe,
 
-    /**
-     * Open the content search modal for a project
-     */
     async open(projectPath: string) {
-      // Load project settings if different project
       if (lastProjectPath !== projectPath) {
         lastProjectPath = projectPath;
         const settings = await loadProjectSettings(projectPath);
-        update((state) => ({
-          ...state,
+        patch({
           isOpen: true,
           projectPath,
           query: '',
@@ -70,10 +57,9 @@ function createContentSearchStore() {
           excludePatterns: settings.searchExcludePatterns,
           isSettingsOpen: false,
           error: null,
-        }));
+        });
       } else {
-        update((state) => ({
-          ...state,
+        patch({
           isOpen: true,
           projectPath,
           query: '',
@@ -82,275 +68,198 @@ function createContentSearchStore() {
           selectedMatchIndex: 0,
           isSettingsOpen: false,
           error: null,
-        }));
+        });
       }
     },
 
-    /**
-     * Close the content search modal
-     */
     close() {
       if (searchTimeout) {
         clearTimeout(searchTimeout);
         searchTimeout = null;
       }
-      update((state) => ({
-        ...state,
-        isOpen: false,
-        isSearching: false,
-        isSettingsOpen: false,
-      }));
+      patch({ isOpen: false, isSearching: false, isSettingsOpen: false });
     },
 
-    /**
-     * Toggle the content search modal
-     */
     async toggle(projectPath: string) {
-      const state = get({ subscribe });
-      if (state.isOpen) {
+      if (contentSearchState.state.isOpen) {
         this.close();
       } else {
         await this.open(projectPath);
       }
     },
 
-    /**
-     * Perform content search with debouncing
-     */
     search(query: string) {
       if (searchTimeout) {
         clearTimeout(searchTimeout);
       }
 
-      update((state) => ({ ...state, query }));
+      patch({ query });
 
       if (query.length < 2) {
-        update((state) => ({
-          ...state,
-          results: [],
-          selectedFileIndex: 0,
-          selectedMatchIndex: 0,
-          isSearching: false,
-        }));
+        patch({ results: [], selectedFileIndex: 0, selectedMatchIndex: 0, isSearching: false });
         return;
       }
 
-      update((state) => ({ ...state, isSearching: true, error: null }));
+      patch({ isSearching: true, error: null });
 
       searchTimeout = setTimeout(async () => {
-        const state = get({ subscribe });
-        if (!state.projectPath) {
-          update((s) => ({ ...s, isSearching: false, error: 'No project path' }));
+        const current = contentSearchState.state;
+        if (!current.projectPath) {
+          patch({ isSearching: false, error: 'No project path' });
           return;
         }
 
         try {
           const results = await searchService.searchContent(
-            state.projectPath,
+            current.projectPath,
             query,
             100,
-            state.excludePatterns
+            current.excludePatterns
           );
-
-          update((s) => ({
-            ...s,
+          patch({
             results,
             isSearching: false,
             selectedFileIndex: 0,
             selectedMatchIndex: 0,
             error: null,
-          }));
+          });
         } catch (error) {
           console.error('Content search failed:', error);
-          update((s) => ({
-            ...s,
+          patch({
             isSearching: false,
             error: error instanceof Error ? error.message : 'Search failed',
-          }));
+          });
         }
       }, 200);
     },
 
-    /**
-     * Select previous file in results
-     */
     selectPreviousFile() {
-      update((state) => ({
-        ...state,
-        selectedFileIndex: Math.max(0, state.selectedFileIndex - 1),
+      const s = contentSearchState.state;
+      patch({
+        selectedFileIndex: Math.max(0, s.selectedFileIndex - 1),
         selectedMatchIndex: 0,
-      }));
+      });
     },
 
-    /**
-     * Select next file in results
-     */
     selectNextFile() {
-      update((state) => ({
-        ...state,
-        selectedFileIndex: Math.min(state.results.length - 1, state.selectedFileIndex + 1),
+      const s = contentSearchState.state;
+      patch({
+        selectedFileIndex: Math.min(s.results.length - 1, s.selectedFileIndex + 1),
         selectedMatchIndex: 0,
-      }));
+      });
     },
 
-    /**
-     * Select previous match in current file
-     */
     selectPreviousMatch() {
-      update((state) => {
-        const currentFile = state.results[state.selectedFileIndex];
-        if (!currentFile) return state;
-        return {
-          ...state,
-          selectedMatchIndex: Math.max(0, state.selectedMatchIndex - 1),
-        };
-      });
+      const s = contentSearchState.state;
+      const currentFile = s.results[s.selectedFileIndex];
+      if (!currentFile) return;
+      patch({ selectedMatchIndex: Math.max(0, s.selectedMatchIndex - 1) });
     },
 
-    /**
-     * Select next match in current file
-     */
     selectNextMatch() {
-      update((state) => {
-        const currentFile = state.results[state.selectedFileIndex];
-        if (!currentFile) return state;
-        return {
-          ...state,
-          selectedMatchIndex: Math.min(
-            currentFile.matches.length - 1,
-            state.selectedMatchIndex + 1
-          ),
-        };
+      const s = contentSearchState.state;
+      const currentFile = s.results[s.selectedFileIndex];
+      if (!currentFile) return;
+      patch({
+        selectedMatchIndex: Math.min(currentFile.matches.length - 1, s.selectedMatchIndex + 1),
       });
     },
 
-    /**
-     * Select a specific file by index
-     */
     selectFile(index: number) {
-      update((state) => ({
-        ...state,
-        selectedFileIndex: Math.max(0, Math.min(state.results.length - 1, index)),
+      const s = contentSearchState.state;
+      patch({
+        selectedFileIndex: Math.max(0, Math.min(s.results.length - 1, index)),
         selectedMatchIndex: 0,
-      }));
+      });
     },
 
-    /**
-     * Get the currently selected file
-     */
     getSelectedFile(): ContentSearchResult | null {
-      const state = get({ subscribe });
-      return state.results[state.selectedFileIndex] ?? null;
+      const s = contentSearchState.state;
+      return s.results[s.selectedFileIndex] ?? null;
     },
 
-    /**
-     * Get the currently selected match
-     */
     getSelectedMatch(): ContentMatch | null {
-      const state = get({ subscribe });
-      const file = state.results[state.selectedFileIndex];
+      const s = contentSearchState.state;
+      const file = s.results[s.selectedFileIndex];
       if (!file) return null;
-      return file.matches[state.selectedMatchIndex] ?? null;
+      return file.matches[s.selectedMatchIndex] ?? null;
     },
 
-    /**
-     * Toggle settings panel
-     */
     toggleSettings() {
-      update((state) => ({ ...state, isSettingsOpen: !state.isSettingsOpen }));
+      patch({ isSettingsOpen: !contentSearchState.state.isSettingsOpen });
     },
 
-    /**
-     * Close settings panel
-     */
     closeSettings() {
-      update((state) => ({ ...state, isSettingsOpen: false }));
+      patch({ isSettingsOpen: false });
     },
 
-    /**
-     * Add an exclude pattern
-     */
     async addExcludePattern(pattern: string) {
-      const state = get({ subscribe });
-      if (!pattern.trim() || state.excludePatterns.includes(pattern.trim())) {
-        return;
-      }
+      const trimmed = pattern.trim();
+      const current = contentSearchState.state;
+      if (!trimmed || current.excludePatterns.includes(trimmed)) return;
 
-      const newPatterns = [...state.excludePatterns, pattern.trim()];
-      update((s) => ({ ...s, excludePatterns: newPatterns }));
+      const newPatterns = [...current.excludePatterns, trimmed];
+      patch({ excludePatterns: newPatterns });
 
-      // Save to project settings
-      if (state.projectPath) {
-        await saveProjectSettings(state.projectPath, {
+      if (current.projectPath) {
+        await saveProjectSettings(current.projectPath, {
           searchExcludePatterns: newPatterns,
         });
       }
 
-      // Re-run search with new patterns
-      if (state.query.length >= 2) {
-        this.search(state.query);
+      if (current.query.length >= 2) {
+        this.search(current.query);
       }
     },
 
-    /**
-     * Remove an exclude pattern
-     */
     async removeExcludePattern(pattern: string) {
-      const state = get({ subscribe });
-      const newPatterns = state.excludePatterns.filter((p) => p !== pattern);
-      update((s) => ({ ...s, excludePatterns: newPatterns }));
+      const current = contentSearchState.state;
+      const newPatterns = current.excludePatterns.filter((p) => p !== pattern);
+      patch({ excludePatterns: newPatterns });
 
-      // Save to project settings
-      if (state.projectPath) {
-        await saveProjectSettings(state.projectPath, {
+      if (current.projectPath) {
+        await saveProjectSettings(current.projectPath, {
           searchExcludePatterns: newPatterns,
         });
       }
 
-      // Re-run search with new patterns
-      if (state.query.length >= 2) {
-        this.search(state.query);
+      if (current.query.length >= 2) {
+        this.search(current.query);
       }
     },
 
-    /**
-     * Reset exclude patterns to defaults
-     */
     async resetExcludePatterns() {
-      const state = get({ subscribe });
+      const current = contentSearchState.state;
       const newPatterns = [...DEFAULT_EXCLUDE_PATTERNS];
-      update((s) => ({ ...s, excludePatterns: newPatterns }));
+      patch({ excludePatterns: newPatterns });
 
-      // Save to project settings
-      if (state.projectPath) {
-        await saveProjectSettings(state.projectPath, {
+      if (current.projectPath) {
+        await saveProjectSettings(current.projectPath, {
           searchExcludePatterns: newPatterns,
         } as ProjectSettings);
       }
 
-      // Re-run search with new patterns
-      if (state.query.length >= 2) {
-        this.search(state.query);
+      if (current.query.length >= 2) {
+        this.search(current.query);
       }
     },
 
-    /**
-     * Reset the store to initial state
-     */
     reset() {
       if (searchTimeout) {
         clearTimeout(searchTimeout);
         searchTimeout = null;
       }
       lastProjectPath = null;
-      set(initialState);
+      contentSearchState.reset();
+      mirror.set(initialContentSearchState());
     },
   };
+
+  return store;
 }
 
 export const contentSearchStore = createContentSearchStore();
 
-// Derived stores for easy access
 export const isContentSearchOpen = derived(contentSearchStore, ($store) => $store.isOpen);
 
 export const contentSearchResults = derived(contentSearchStore, ($store) => $store.results);

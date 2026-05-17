@@ -1,40 +1,34 @@
-import { writable, derived } from 'svelte/store';
+// Backward-compatible facade over `diffViewState` (issue #42 phase 1).
+// See the canonical class in `diffViewState.svelte.ts`.
 
-export interface DiffViewState {
-  isOpen: boolean;
-  projectPath: string | null;
+import { writable, derived } from 'svelte/store';
+import { diffViewState, type DiffViewStateShape } from './diffViewState.svelte';
+
+export type DiffViewState = DiffViewStateShape;
+
+function snapshot(): DiffViewStateShape {
+  return { ...diffViewState.state };
 }
 
-const initialState: DiffViewState = {
-  isOpen: false,
-  projectPath: null,
-};
-
 function createDiffViewStore() {
-  const { subscribe, set } = writable<DiffViewState>(initialState);
+  const mirror = writable<DiffViewStateShape>(snapshot());
+  const refresh = () => mirror.set(snapshot());
 
   return {
-    subscribe,
+    subscribe: mirror.subscribe,
 
-    /**
-     * Open the diff view modal with the specified project path
-     * @param projectPath - Path to the project to display diffs for
-     */
     open: (projectPath: string) => {
-      set({
-        isOpen: true,
-        projectPath,
-      });
+      diffViewState.open(projectPath);
+      refresh();
     },
 
-    /**
-     * Close the diff view modal
-     */
-    close: () => set(initialState),
+    close: () => {
+      diffViewState.close();
+      refresh();
+    },
   };
 }
 
 export const diffViewStore = createDiffViewStore();
 
-// Derived store for checking if diff view is open
 export const isDiffViewOpen = derived(diffViewStore, ($diffView) => $diffView.isOpen);
