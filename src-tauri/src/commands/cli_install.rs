@@ -5,26 +5,19 @@
 //! Two consumers:
 //! 1. [`ensure_installed`] — run once at app startup (best-effort; logs
 //!    on failure but does not abort).
-//! 2. [`kiri_bin_dir`] / [`socket_path_for`] — used by the PTY env injector
-//!    in [`crate::commands::terminal::build_shell_command`].
+//! 2. [`kiri_bin_dir`] / [`socket_path_for`] — pure path helpers,
+//!    re-exported from [`crate::commands::cli_install_paths`] for
+//!    backwards compatibility and used by the PTY env injector in
+//!    [`crate::commands::terminal::build_shell_command`].
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
-/// `~/.kiri/bin` — the directory we prepend to PATH inside kiri PTYs.
-pub fn kiri_bin_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".kiri").join("bin"))
-}
-
-/// `~/.kiri/instances` — where per-window CLI sockets live.
-pub fn socket_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".kiri").join("instances"))
-}
-
-/// Per-window socket path. `label` is the Tauri window label.
-pub fn socket_path_for(label: &str) -> Option<PathBuf> {
-    socket_dir().map(|d| d.join(format!("{label}.sock")))
-}
+// Re-export the pure path helpers so existing call sites
+// (`cli_install::kiri_bin_dir`, etc.) keep working. The implementations
+// live in [`super::cli_install_paths`] so they can be unit-tested
+// without dragging in any Tauri runtime.
+pub use super::cli_install_paths::{kiri_bin_dir, needs_copy, socket_dir, socket_path_for};
 
 /// Find the `kiri-cli` binary that was built alongside this binary.
 ///
@@ -90,78 +83,3 @@ pub fn ensure_installed(app: &AppHandle) -> std::io::Result<Option<PathBuf>> {
     Ok(Some(dest))
 }
 
-fn needs_copy(src: &Path, dest: &Path) -> std::io::Result<bool> {
-    if !dest.exists() {
-        return Ok(true);
-    }
-    let src_meta = std::fs::metadata(src)?;
-    let dest_meta = std::fs::metadata(dest)?;
-    if src_meta.len() != dest_meta.len() {
-        return Ok(true);
-    }
-    let src_mtime = src_meta.modified().ok();
-    let dest_mtime = dest_meta.modified().ok();
-    Ok(match (src_mtime, dest_mtime) {
-        (Some(s), Some(d)) => s > d,
-        _ => true,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Returns a fresh tempdir whose lifetime the test owns; using `?`
-    /// throughout the test body propagates IO failures instead of
-    /// `unwrap()`ing them into opaque panic messages.
-    fn tempdir() -> std::io::Result<tempfile::TempDir> {
-        tempfile::TempDir::new()
-    }
-
-    #[test]
-    fn socket_path_uses_label() {
-        let p = socket_path_for("window-7")
-            .expect("HOME must be set for cli_install tests");
-        assert!(p.ends_with("window-7.sock"));
-        assert!(p.to_string_lossy().contains("/.kiri/instances/"));
-    }
-
-    #[test]
-    fn kiri_bin_dir_under_home() {
-        let p = kiri_bin_dir().expect("HOME must be set for cli_install tests");
-        assert!(p.ends_with(".kiri/bin"));
-    }
-
-    #[test]
-    fn needs_copy_when_dest_missing() -> std::io::Result<()> {
-        let tmp = tempdir()?;
-        let src = tmp.path().join("src");
-        let dest = tmp.path().join("dest");
-        std::fs::write(&src, b"hello")?;
-        assert!(needs_copy(&src, &dest)?);
-        Ok(())
-    }
-
-    #[test]
-    fn no_copy_when_identical() -> std::io::Result<()> {
-        let tmp = tempdir()?;
-        let src = tmp.path().join("src");
-        let dest = tmp.path().join("dest");
-        std::fs::write(&src, b"hello")?;
-        std::fs::copy(&src, &dest)?;
-        // dest mtime == src mtime (or later), so no copy needed
-        assert!(!needs_copy(&src, &dest)?);
-        Ok(())
-    }
-
-    #[test]
-    fn needs_copy_when_size_differs() -> std::io::Result<()> {
-        let tmp = tempdir()?;
-        let src = tmp.path().join("src");
-        let dest = tmp.path().join("dest");
-        std::fs::write(&src, b"hello")?;
-        std::fs::write(&dest, b"x")?;
-        assert!(needs_copy(&src, &dest)?);
-        Ok(())
-    }
-}
