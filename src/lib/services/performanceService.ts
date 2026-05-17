@@ -72,6 +72,15 @@ export const performanceService = {
     if (!isDev) return;
     appStartTime = performance.now();
     console.log('[Perf] Performance tracking initialized');
+    // Expose to window for offline tools (scripts/perf-measure.ts) that
+    // need to read the phase breakdown via MCP-bridge JS eval. Guarded
+    // behind isDev so production builds never see this symbol.
+    try {
+      (window as unknown as { __KIRI_PERF__?: typeof performanceService }).__KIRI_PERF__ =
+        performanceService;
+    } catch {
+      /* SSR / test environment without window */
+    }
   },
 
   /**

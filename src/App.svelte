@@ -173,6 +173,7 @@
         setPaneCollapsed: (paneId, value) => terminalStore.setCollapsed(paneId, value),
         setPaneLabel: (paneId, opts) => terminalStore.setPaneLabel(paneId, opts),
       });
+      performanceService.markStartupPhase('cli-bridge-ready');
       pushPaneMap();
       cliPaneMapUnsubTerminal = terminalStore.subscribe(pushPaneMap);
       cliPaneMapUnsubFocus = focusedPaneStore.subscribe(pushPaneMap);
@@ -398,10 +399,12 @@
 
     // Initialize project store first (loads recent projects)
     await projectStore.init();
+    performanceService.markStartupPhase('project-store-init');
 
     // Load global settings (font size)
     const settings = await loadSettings();
     settingsStore.restoreState(settings);
+    performanceService.markStartupPhase('settings-hydrated');
 
     const currentWindow = getCurrentWindow();
     windowLabel = currentWindow.label;
