@@ -1,6 +1,6 @@
 name: Bug report
 description: Something in kiri is broken or does not behave as documented.
-labels: ["bug"]
+labels: ['bug']
 body:
   - type: markdown
     attributes:
@@ -14,7 +14,7 @@ body:
     attributes:
       label: kiri version
       description: From the app's About panel, or the output of `kiri --version`.
-      placeholder: "v0.5.1"
+      placeholder: 'v0.5.1'
     validations:
       required: true
 
@@ -22,7 +22,7 @@ body:
     id: os
     attributes:
       label: OS and architecture
-      placeholder: "macOS 15.2 (Apple Silicon)"
+      placeholder: 'macOS 15.2 (Apple Silicon)'
     validations:
       required: true
 
@@ -31,7 +31,7 @@ body:
     attributes:
       label: What happened?
       description: What did you do, and what did kiri do that surprised you?
-      placeholder: "I split a pane with `kiri term split --dir v` and ..."
+      placeholder: 'I split a pane with `kiri term split --dir v` and ...'
     validations:
       required: true
 
