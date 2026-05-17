@@ -4,8 +4,8 @@
 use super::cli_install;
 use super::terminal::{
     create_pty_size, find_utf8_boundary, get_process_cwd, open_pty_with_shell, resolve_cwd,
-    resolve_terminal_size, CliEnv, PtyInstance, TerminalOutput, TerminalOutputBusState,
-    TerminalState,
+    resolve_terminal_size, CliEnv, PtyCleanupGuard, PtyInstance, TerminalOutput,
+    TerminalOutputBusState, TerminalState,
 };
 use lazy_static::lazy_static;
 use serde::Serialize;
@@ -127,20 +127,26 @@ pub fn create_terminal(
     let resolved_cwd = resolve_cwd(cwd);
     let cli_env = cli_env_for(window_label.as_deref());
 
-    // Use extracted function for PTY creation
-    let pty_with_shell = open_pty_with_shell(
+    // Wrap the freshly-spawned PTY in a cleanup guard so that any
+    // early-return below (reader/writer extraction, state lock failure)
+    // kills + reaps the shell instead of leaking the FD and process.
+    // The guard is `commit()`-ed once the PtyInstance is safely owned
+    // by the manager.
+    let mut pty_guard = PtyCleanupGuard::new(open_pty_with_shell(
         initial_cols,
         initial_rows,
         resolved_cwd.as_deref(),
         cli_env.as_ref(),
-    )?;
+    )?);
 
-    let mut reader = pty_with_shell
+    let mut reader = pty_guard
+        .as_mut()
         .pair
         .master
         .try_clone_reader()
         .map_err(|e| e.to_string())?;
-    let writer = pty_with_shell
+    let writer = pty_guard
+        .as_mut()
         .pair
         .master
         .take_writer()
@@ -151,7 +157,7 @@ pub fn create_terminal(
     manager.next_id += 1;
 
     // Get shell PID for foreground process checking
-    let shell_pid = pty_with_shell.child.process_id();
+    let shell_pid = pty_guard.as_mut().child.process_id();
 
     // Send bindkey -e to enable emacs mode for keyboard navigation
     // This ensures Option+Arrow and Cmd+Arrow work correctly regardless of user's shell config
@@ -160,6 +166,8 @@ pub fn create_terminal(
     let _ = writer.write_all(b"bindkey -e && clear\n");
     let _ = writer.flush();
 
+    // Take ownership out of the guard now that nothing else can fail.
+    let pty_with_shell = pty_guard.commit();
     manager.instances.insert(
         id,
         PtyInstance {
