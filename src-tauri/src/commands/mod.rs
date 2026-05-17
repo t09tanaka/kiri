@@ -1,4 +1,5 @@
 pub mod cli_install;
+pub mod cli_install_paths;
 pub mod cli_server;
 pub mod skill_install;
 pub mod cloudflare_tunnel;
