@@ -3,6 +3,7 @@ use std::path::Path;
 
 use base64::Engine;
 
+use super::error::{user_io_error, user_path_error};
 use super::file_io::read_file_contents;
 
 #[tauri::command]
@@ -10,11 +11,11 @@ pub fn read_file(path: String) -> Result<String, String> {
     let path = Path::new(&path);
 
     if !path.exists() {
-        return Err(format!("File does not exist: {}", path.display()));
+        return Err(user_path_error("File does not exist", path));
     }
 
     if !path.is_file() {
-        return Err(format!("Path is not a file: {}", path.display()));
+        return Err(user_path_error("Path is not a file", path));
     }
 
     read_file_contents(path)
@@ -25,14 +26,14 @@ pub fn read_file_as_base64(path: String) -> Result<String, String> {
     let path = Path::new(&path);
 
     if !path.exists() {
-        return Err(format!("File does not exist: {}", path.display()));
+        return Err(user_path_error("File does not exist", path));
     }
 
     if !path.is_file() {
-        return Err(format!("Path is not a file: {}", path.display()));
+        return Err(user_path_error("Path is not a file", path));
     }
 
-    let bytes = fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?;
+    let bytes = fs::read(path).map_err(|e| user_io_error("Failed to read file", e))?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
