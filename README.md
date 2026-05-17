@@ -141,7 +141,7 @@ Pre-built binaries on the [Releases](https://github.com/t09tanaka/kiri/releases)
 
 - macOS Apple Silicon (`aarch64.dmg`)
 
-Other platforms (Intel Mac, Windows, Linux) are not currently shipped — build from source if you need them.
+Other platforms (Intel Mac, Windows, Linux) are not currently shipped — build from source if you need them. See [`docs/platform-support.md`](docs/platform-support.md) for the per-platform tier, known gaps, and how to upgrade a Tier 3 platform to Tier 2 by running the smoke test.
 
 ### Build from source
 
