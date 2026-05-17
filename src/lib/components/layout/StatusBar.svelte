@@ -221,10 +221,16 @@
     transition: all var(--transition-fast);
   }
 
+  /* Status-bar buttons all share a single height so they line up visually.
+     Individual rules below only set horizontal padding now. */
+  .status-bar button.status-item {
+    height: var(--control-height-xs);
+  }
+
   .sidebar-toggle {
     background: transparent;
     border: none;
-    padding: 4px 6px;
+    padding: 0 6px;
     border-radius: var(--radius-sm);
     cursor: pointer;
     color: var(--text-muted);
@@ -272,7 +278,7 @@
   }
 
   .git-branch {
-    padding: 3px var(--space-2);
+    padding: 0 var(--space-2);
     background: rgba(74, 222, 128, 0.1);
     border: none;
     border-radius: var(--radius-sm);
@@ -303,7 +309,7 @@
   }
 
   .git-changes {
-    padding: 3px var(--space-2);
+    padding: 0 var(--space-2);
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
@@ -380,7 +386,7 @@
   .shortcut-hint {
     background: transparent;
     border: none;
-    padding: 4px 8px;
+    padding: 0 8px;
     border-radius: var(--radius-sm);
     cursor: pointer;
     color: var(--text-muted);
