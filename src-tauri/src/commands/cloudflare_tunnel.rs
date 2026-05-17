@@ -69,6 +69,33 @@ pub fn is_cloudflared_available() -> bool {
     }
 }
 
+/// Validate a Cloudflare tunnel token before passing it to `cloudflared`.
+///
+/// Although the token is passed via `Command::args()` (which avoids any shell
+/// interpretation), we still reject obviously malformed values as
+/// defense-in-depth:
+/// - Empty tokens
+/// - Tokens containing NUL bytes (would be truncated by the OS)
+/// - Tokens containing ASCII control characters or whitespace
+/// - Tokens longer than 4 KiB (Cloudflare tokens are well under this)
+pub(crate) fn validate_tunnel_token(token: &str) -> Result<(), String> {
+    if token.is_empty() {
+        return Err("Tunnel token must not be empty".to_string());
+    }
+    if token.len() > 4096 {
+        return Err("Tunnel token is unreasonably long".to_string());
+    }
+    if token
+        .chars()
+        .any(|c| c == '\0' || c.is_control() || c.is_whitespace())
+    {
+        return Err(
+            "Tunnel token contains invalid characters (control or whitespace)".to_string(),
+        );
+    }
+    Ok(())
+}
+
 /// Parse the Quick Tunnel URL from cloudflared's stderr output.
 ///
 /// cloudflared prints lines like:
@@ -147,6 +174,15 @@ pub(crate) fn parse_tunnel_url_from_stderr_with_timeout(
 /// - If `token` is `None`, starts a Quick Tunnel: `cloudflared tunnel --url http://localhost:<port>`
 ///
 /// Returns the Quick Tunnel URL when in Quick Tunnel mode, or `None` for Named Tunnel mode.
+///
+/// # Security
+///
+/// User-supplied arguments (`token`, `port`) are passed via
+/// [`std::process::Command::args`], which forwards each argument directly to
+/// `execvp` without any shell parsing. There is therefore no risk of shell
+/// metacharacter injection from these inputs. `validate_tunnel_token` provides
+/// an additional defense-in-depth check that the token contains only
+/// printable, non-whitespace bytes.
 #[tauri::command]
 pub async fn start_cloudflare_tunnel(
     state: tauri::State<'_, TunnelStateType>,
@@ -161,6 +197,9 @@ pub async fn start_cloudflare_tunnel(
     match token {
         Some(ref t) => {
             // Named Tunnel mode
+            // Validate token as defense-in-depth even though Command::args
+            // avoids shell interpretation entirely.
+            validate_tunnel_token(t)?;
             let child = std::process::Command::new(cloudflared_path())
                 .args(["tunnel", "run", "--token", t])
                 .stdout(std::process::Stdio::null())
@@ -831,6 +870,61 @@ done
     }
 
     // --- is_cloudflared_available edge case tests ---
+
+    // --- validate_tunnel_token tests ---
+
+    #[test]
+    fn test_validate_tunnel_token_accepts_typical_token() {
+        // Cloudflare tokens are typically long base64 strings of [A-Za-z0-9+/=]
+        let token = "eyJhIjoiYWJjMTIzIiwidCI6InhveW8iLCJzIjoiZGVmNDU2In0";
+        assert!(validate_tunnel_token(token).is_ok());
+    }
+
+    #[test]
+    fn test_validate_tunnel_token_rejects_empty() {
+        assert!(validate_tunnel_token("").is_err());
+    }
+
+    #[test]
+    fn test_validate_tunnel_token_rejects_nul_byte() {
+        assert!(validate_tunnel_token("abc\0def").is_err());
+    }
+
+    #[test]
+    fn test_validate_tunnel_token_rejects_newline() {
+        assert!(validate_tunnel_token("abc\ndef").is_err());
+    }
+
+    #[test]
+    fn test_validate_tunnel_token_rejects_space() {
+        assert!(validate_tunnel_token("abc def").is_err());
+    }
+
+    #[test]
+    fn test_validate_tunnel_token_rejects_tab() {
+        assert!(validate_tunnel_token("abc\tdef").is_err());
+    }
+
+    #[test]
+    fn test_validate_tunnel_token_rejects_shell_metachar_via_whitespace() {
+        // Common shell injection patterns are caught by the whitespace check
+        // because they require spaces between commands.
+        assert!(validate_tunnel_token("token; rm -rf /").is_err());
+        assert!(validate_tunnel_token("token && evil").is_err());
+        assert!(validate_tunnel_token("token | cat").is_err());
+    }
+
+    #[test]
+    fn test_validate_tunnel_token_rejects_overlong() {
+        let huge = "a".repeat(4097);
+        assert!(validate_tunnel_token(&huge).is_err());
+    }
+
+    #[test]
+    fn test_validate_tunnel_token_accepts_max_length() {
+        let max = "a".repeat(4096);
+        assert!(validate_tunnel_token(&max).is_ok());
+    }
 
     #[test]
     fn test_is_cloudflared_available_returns_bool() {
