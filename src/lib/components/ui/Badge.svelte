@@ -40,7 +40,12 @@
     font-weight: 500;
     letter-spacing: 0.02em;
     border-radius: var(--radius-sm);
-    transition: all var(--transition-fast);
+    transition:
+      transform var(--transition-fast),
+      background var(--transition-fast),
+      color var(--transition-fast),
+      border-color var(--transition-fast),
+      box-shadow var(--transition-fast);
     overflow: hidden;
   }
 

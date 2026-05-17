@@ -50,20 +50,60 @@
     }
   }
 
+  const VIEWPORT_PADDING = 8;
+
+  /**
+   * Pick a viewport position that keeps a `width x height` box visible
+   * starting at `(x, y)`. When the box would overflow on a side we
+   * first try flipping to the opposite side of the origin point (so the
+   * menu opens above / to the left of the cursor instead of hanging off
+   * the screen). Only if flipping would also overflow do we clamp.
+   */
+  function flipIfOutOfBounds(
+    originX: number,
+    originY: number,
+    width: number,
+    height: number,
+    viewportWidth: number,
+    viewportHeight: number
+  ): { x: number; y: number } {
+    let resolvedX = originX;
+    let resolvedY = originY;
+
+    if (originX + width + VIEWPORT_PADDING > viewportWidth) {
+      const flipped = originX - width;
+      resolvedX =
+        flipped >= VIEWPORT_PADDING
+          ? flipped
+          : Math.max(VIEWPORT_PADDING, viewportWidth - width - VIEWPORT_PADDING);
+    }
+
+    if (originY + height + VIEWPORT_PADDING > viewportHeight) {
+      const flipped = originY - height;
+      resolvedY =
+        flipped >= VIEWPORT_PADDING
+          ? flipped
+          : Math.max(VIEWPORT_PADDING, viewportHeight - height - VIEWPORT_PADDING);
+    }
+
+    return { x: resolvedX, y: resolvedY };
+  }
+
   onMount(() => {
     // Adjust position to keep menu within viewport
     requestAnimationFrame(() => {
       if (menuRef) {
         const rect = menuRef.getBoundingClientRect();
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-
-        if (x + rect.width > viewportWidth) {
-          adjustedX = viewportWidth - rect.width - 8;
-        }
-        if (y + rect.height > viewportHeight) {
-          adjustedY = viewportHeight - rect.height - 8;
-        }
+        const { x: nextX, y: nextY } = flipIfOutOfBounds(
+          x,
+          y,
+          rect.width,
+          rect.height,
+          window.innerWidth,
+          window.innerHeight
+        );
+        adjustedX = nextX;
+        adjustedY = nextY;
 
         visible = true;
       }

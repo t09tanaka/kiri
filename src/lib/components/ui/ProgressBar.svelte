@@ -12,7 +12,14 @@
 </script>
 
 <div class="progress-container" class:sm={size === 'sm'} class:md={size === 'md'}>
-  <div class="progress-track">
+  <div
+    class="progress-track"
+    role="progressbar"
+    aria-valuemin="0"
+    aria-valuemax="100"
+    aria-valuenow={indeterminate ? undefined : clampedValue}
+    aria-busy={indeterminate ? 'true' : undefined}
+  >
     <div class="track-glow"></div>
     {#if indeterminate}
       <div class="progress-indeterminate">

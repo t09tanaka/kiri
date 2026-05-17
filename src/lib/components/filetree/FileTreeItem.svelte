@@ -754,7 +754,7 @@
     align-items: center;
     gap: var(--space-1);
     width: 100%;
-    height: 28px;
+    height: var(--control-height-md);
     padding-right: var(--space-3);
     border: none;
     background: transparent;
@@ -1094,7 +1094,7 @@
     display: flex;
     align-items: center;
     gap: var(--space-1);
-    height: 28px;
+    height: var(--control-height-md);
     padding-right: var(--space-3);
     margin: 1px var(--space-1);
     animation: fadeIn 0.15s ease-out;

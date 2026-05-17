@@ -4,6 +4,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { eventService, type UnlistenFn } from '@/lib/services/eventService';
   import { Spinner } from '@/lib/components/ui';
+  import { trapFocus } from '@/lib/utils/focusTrap';
 
   interface Props {
     projectPath: string;
@@ -15,6 +16,8 @@
   // Local loading state for this modal
   let isLoading = $state(false);
   let mounted = $state(false);
+  let modalRef = $state<HTMLDivElement | null>(null);
+  let releaseFocusTrap: (() => void) | null = null;
 
   // Real-time update listeners
   let unlistenGitStatus: UnlistenFn | null = null;
@@ -23,6 +26,9 @@
 
   onMount(async () => {
     mounted = true;
+    if (modalRef) {
+      releaseFocusTrap = trapFocus(modalRef);
+    }
     await loadDiffs(projectPath);
 
     // Use capture phase to intercept before terminal handles it
@@ -48,6 +54,7 @@
 
   onDestroy(() => {
     document.removeEventListener('keydown', handleKeyDown, true);
+    releaseFocusTrap?.();
     // Cleanup listeners
     if (refreshDebounceTimer) {
       clearTimeout(refreshDebounceTimer);
@@ -113,7 +120,7 @@
   role="button"
   tabindex="-1"
 >
-  <div class="diffview-modal">
+  <div class="diffview-modal" bind:this={modalRef}>
     <div class="modal-glow"></div>
     <div class="modal-content">
       <div class="modal-header">
@@ -398,17 +405,6 @@
     display: flex;
     align-items: center;
     gap: var(--space-1);
-  }
-
-  .footer-item kbd {
-    padding: 2px 6px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--text-secondary);
-    box-shadow: 0 1px 0 var(--bg-primary);
   }
 
   .footer-item span {

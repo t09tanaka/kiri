@@ -91,7 +91,7 @@
     overflow: hidden;
     opacity: 0;
     transform: translateX(100%) scale(0.9);
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: all var(--transition-normal);
     box-shadow: var(--shadow-lg);
   }
 
@@ -103,7 +103,7 @@
   .toast.exiting {
     opacity: 0;
     transform: translateX(50%) scale(0.95);
-    transition: all 0.2s ease-out;
+    transition: all var(--transition-fast);
   }
 
   /* Type-specific border colors */
@@ -130,7 +130,7 @@
     opacity: 0.1;
     pointer-events: none;
     z-index: -1;
-    transition: opacity 0.3s ease;
+    transition: opacity var(--transition-normal);
   }
 
   .toast:hover .toast-glow {

@@ -1,5 +1,6 @@
 export { default as Badge } from './Badge.svelte';
 export { default as ContextMenu } from './ContextMenu.svelte';
+export { default as EmptyState } from './EmptyState.svelte';
 export { default as KeyboardShortcuts } from './KeyboardShortcuts.svelte';
 export { default as ProgressBar } from './ProgressBar.svelte';
 export { default as Skeleton } from './Skeleton.svelte';
