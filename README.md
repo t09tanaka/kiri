@@ -186,6 +186,12 @@ The server-side code is split into pure modules (`ring_buffer`, `run_logic`, `pa
 
 CI fails the build if the bundle exceeds the size budget.
 
+## Documentation
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — start here if you are sending a PR.
+- [`docs/`](docs/) — design plans, contributor reference, and maintainer-only material.
+  See [`docs/README.md`](docs/README.md) for the layout.
+
 ## Contributing
 
 Issues and PRs welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) — it
