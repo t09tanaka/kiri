@@ -4,6 +4,7 @@
   import { watcherService } from '@/lib/services/watcherService';
   import { eventService, type UnlistenFn } from '@/lib/services/eventService';
   import { dragDropService } from '@/lib/services/dragDropService';
+  import { fileOpUndoStore } from '@/lib/stores/fileOpUndoStore';
   import FileTreeItem from './FileTreeItem.svelte';
   import type { FileEntry } from './types';
   import {
@@ -500,6 +501,112 @@
     }
   }
 
+  // ----- Keyboard shortcuts: F2 / Delete / Cmd+N / Cmd+Shift+N / Cmd+Z -----
+  //
+  // These intentionally only fire when the file tree itself owns focus or
+  // the active element is the document body. We don't want F2 / Backspace
+  // / Cmd+Z to fight with the editor pane or a terminal that happens to
+  // be focused.
+  function isFileTreeFocusContext(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) return target === null;
+    // Skip if the user is typing into something editable elsewhere.
+    if (target.matches('input, textarea, [contenteditable="true"]')) return false;
+    // Allow the global hotkey when nothing is focused (body) or when the
+    // focus is inside the file tree itself.
+    if (target === document.body) return true;
+    return target.closest('.file-tree') !== null;
+  }
+
+  function dispatchFileTreeAction(
+    path: string,
+    action: 'rename' | 'delete' | 'new-file' | 'new-folder'
+  ) {
+    window.dispatchEvent(new CustomEvent('filetree-action', { detail: { path, action } }));
+  }
+
+  async function handleRootCreate(action: 'new-file' | 'new-folder') {
+    // Promotes Cmd+N / Cmd+Shift+N at the root level (no selected child).
+    // Picks a sensible default name and lets the watcher refresh the tree;
+    // an inline rename would be nicer but adds significant root-level UI
+    // surface that's out of scope here — tracked separately if desired.
+    if (!rootPath) return;
+    const baseName = action === 'new-file' ? 'untitled.txt' : 'untitled-folder';
+    const existing = new Set(entries.map((e) => e.name));
+    let name = baseName;
+    let counter = 1;
+    while (existing.has(name)) {
+      counter++;
+      if (action === 'new-file') {
+        const dot = baseName.lastIndexOf('.');
+        name =
+          dot > 0
+            ? `${baseName.slice(0, dot)}-${counter}${baseName.slice(dot)}`
+            : `${baseName}-${counter}`;
+      } else {
+        name = `${baseName}-${counter}`;
+      }
+    }
+    try {
+      if (action === 'new-file') {
+        const created = await fileService.createFile(rootPath, name);
+        onFileSelect?.(created);
+      } else {
+        await fileService.createDirectory(rootPath, name);
+      }
+    } catch (e) {
+      toastStore.error(`Failed to create: ${String(e)}`);
+    }
+  }
+
+  function handleGlobalKeyDown(event: KeyboardEvent) {
+    // Skip while the user is actively dragging — Escape there is the
+    // drag-cancel path handled by handleDragKeyDown.
+    if (isInternalDragging) return;
+    if (!isFileTreeFocusContext(event.target)) return;
+
+    const mod = event.metaKey || event.ctrlKey;
+    const target = selectedPath;
+
+    // Cmd+Z anywhere in the file tree → undo last trash op.
+    if (mod && !event.shiftKey && event.key.toLowerCase() === 'z') {
+      event.preventDefault();
+      fileOpUndoStore.undo();
+      return;
+    }
+
+    if (mod && event.shiftKey && event.key.toLowerCase() === 'n') {
+      event.preventDefault();
+      if (target) {
+        // Dispatch to the selected entry (or its parent if it's a file).
+        dispatchFileTreeAction(target, 'new-folder');
+      } else {
+        handleRootCreate('new-folder');
+      }
+      return;
+    }
+
+    if (mod && !event.shiftKey && event.key.toLowerCase() === 'n') {
+      event.preventDefault();
+      if (target) {
+        dispatchFileTreeAction(target, 'new-file');
+      } else {
+        handleRootCreate('new-file');
+      }
+      return;
+    }
+
+    if (event.key === 'F2' && target) {
+      event.preventDefault();
+      dispatchFileTreeAction(target, 'rename');
+      return;
+    }
+
+    if ((event.key === 'Delete' || event.key === 'Backspace') && target) {
+      event.preventDefault();
+      dispatchFileTreeAction(target, 'delete');
+    }
+  }
+
   async function setupDragDropListeners() {
     // Use window-scoped listeners to only handle drag events for THIS window
     unlistenDragEnter = await eventService.listenCurrentWindow<DragPayload>(
@@ -568,6 +675,7 @@
     setupDragDropListeners();
     window.addEventListener('filetree-mousedown', handleInternalMouseDownEvent);
     window.addEventListener('keydown', handleDragKeyDown);
+    window.addEventListener('keydown', handleGlobalKeyDown);
   });
 
   onDestroy(() => {
@@ -581,6 +689,7 @@
     cleanupDragDropListeners();
     window.removeEventListener('filetree-mousedown', handleInternalMouseDownEvent);
     window.removeEventListener('keydown', handleDragKeyDown);
+    window.removeEventListener('keydown', handleGlobalKeyDown);
   });
 
   // Reload when rootPath changes

@@ -4,7 +4,8 @@ use commands::{
     clear_performance_timings, cli_resolve_pending, cli_update_pane_map,
     close_terminal,
     get_foreground_process_name, get_terminal_cwd, get_terminal_process_info,
-    copy_paths_to_directory, create_directory, move_path,
+    copy_paths_to_directory, create_directory, create_file, move_path, move_to_trash,
+    open_terminal_here, rename_path, restore_from_trash, trash_restore_supported,
     create_terminal, create_window, delete_path, fetch_remote,
     focus_or_create_window, generate_remote_qr_code, get_all_git_diffs, get_behind_ahead_count,
     get_branch_ahead_count, get_commit_diff, get_commit_log, get_git_diff, get_git_file_status,
@@ -95,6 +96,13 @@ pub fn run() {
             get_performance_report,
             record_command_timing,
             clear_performance_timings,
+            // Core file operations (#82, #84, #90)
+            rename_path,
+            create_file,
+            move_to_trash,
+            restore_from_trash,
+            trash_restore_supported,
+            open_terminal_here,
             // Drag and drop
             copy_paths_to_directory,
             move_path,

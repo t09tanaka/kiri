@@ -19,6 +19,8 @@
   } from '@/lib/utils/fileIcons';
   import ContextMenu, { type MenuItem } from '@/lib/components/ui/ContextMenu.svelte';
   import { isDragging, dropTargetPath, draggedPaths } from '@/lib/stores/dragDropStore';
+  import { fileOpUndoStore } from '@/lib/stores/fileOpUndoStore';
+  import { toastStore } from '@/lib/stores/toastStore';
   import FileTreeItem from './FileTreeItem.svelte';
 
   interface Props {
@@ -54,6 +56,12 @@
   let isCreatingFolder = $state(false);
   let newFolderName = $state('');
   let newFolderInput = $state<HTMLInputElement | null>(null);
+  let isCreatingFile = $state(false);
+  let newFileName = $state('');
+  let newFileInput = $state<HTMLInputElement | null>(null);
+  let isRenaming = $state(false);
+  let renameValue = $state('');
+  let renameInput = $state<HTMLInputElement | null>(null);
 
   const isPending = $derived(entry.is_pending ?? false);
   const isSelected = $derived(selectedPath === entry.path);
@@ -170,6 +178,11 @@
 
   // Auto-expand listener for drag hover
   let autoExpandHandler: ((e: Event) => void) | null = null;
+  // Keyboard-shortcut bridge from FileTree. We listen globally and act
+  // only when the event targets this entry's path so each item handles
+  // its own state (rename input, inline new-file/new-folder) without
+  // FileTree needing refs into every nested item.
+  let actionHandler: ((e: Event) => void) | null = null;
 
   onMount(() => {
     if (entry.is_dir) {
@@ -181,11 +194,37 @@
       };
       window.addEventListener('drag-auto-expand', autoExpandHandler);
     }
+
+    actionHandler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as {
+        path: string;
+        action: 'rename' | 'delete' | 'new-file' | 'new-folder';
+      };
+      if (detail.path !== entry.path) return;
+      switch (detail.action) {
+        case 'rename':
+          startRenaming();
+          break;
+        case 'delete':
+          handleDelete();
+          break;
+        case 'new-file':
+          if (entry.is_dir) startCreatingFile();
+          break;
+        case 'new-folder':
+          if (entry.is_dir) startCreatingFolder();
+          break;
+      }
+    };
+    window.addEventListener('filetree-action', actionHandler);
   });
 
   onDestroy(() => {
     if (autoExpandHandler) {
       window.removeEventListener('drag-auto-expand', autoExpandHandler);
+    }
+    if (actionHandler) {
+      window.removeEventListener('filetree-action', actionHandler);
     }
   });
 
@@ -236,21 +275,27 @@
 
     if (entry.is_dir) {
       items.push(
-        { id: 'new-folder', label: 'New Folder' },
+        { id: 'new-file', label: 'New File', shortcut: '⌘N' },
+        { id: 'new-folder', label: 'New Folder', shortcut: '⌘⇧N' },
+        { id: 'separator0', label: '', separator: true },
+        { id: 'rename', label: 'Rename', shortcut: 'F2' },
         { id: 'separator1', label: '', separator: true },
         { id: 'copy-path', label: 'Copy Path', shortcut: '⌘C' },
         { id: 'reveal', label: 'Reveal in Finder', shortcut: '⌘⇧R' },
+        { id: 'open-terminal', label: 'Open in Terminal here' },
         { id: 'separator2', label: '', separator: true },
-        { id: 'delete', label: 'Delete', danger: true }
+        { id: 'delete', label: 'Delete', shortcut: '⌫', danger: true }
       );
     } else {
       items.push(
         { id: 'open', label: 'Open' },
+        { id: 'separator0', label: '', separator: true },
+        { id: 'rename', label: 'Rename', shortcut: 'F2' },
         { id: 'separator1', label: '', separator: true },
         { id: 'copy-path', label: 'Copy Path', shortcut: '⌘C' },
         { id: 'reveal', label: 'Reveal in Finder', shortcut: '⌘⇧R' },
         { id: 'separator2', label: '', separator: true },
-        { id: 'delete', label: 'Delete', danger: true }
+        { id: 'delete', label: 'Delete', shortcut: '⌫', danger: true }
       );
     }
 
@@ -268,8 +313,21 @@
       case 'reveal':
         await fileService.revealInFinder(entry.path);
         break;
+      case 'open-terminal':
+        try {
+          await fileService.openTerminalHere(entry.path);
+        } catch (e) {
+          toastStore.error(`Failed to open terminal: ${String(e)}`);
+        }
+        break;
       case 'delete':
         await handleDelete();
+        break;
+      case 'rename':
+        startRenaming();
+        break;
+      case 'new-file':
+        await startCreatingFile();
         break;
       case 'new-folder':
         await startCreatingFolder();
@@ -304,6 +362,7 @@
       newFolderName = '';
     } catch (e) {
       console.error('Failed to create folder:', e);
+      toastStore.error(`Failed to create folder: ${String(e)}`);
       // Keep input visible on error
     }
   }
@@ -326,14 +385,110 @@
     }
   }
 
+  async function startCreatingFile() {
+    if (!expanded) {
+      await toggleExpand();
+    }
+    isCreatingFile = true;
+    newFileName = '';
+    setTimeout(() => {
+      newFileInput?.focus();
+    }, 0);
+  }
+
+  async function handleCreateFile() {
+    const name = newFileName.trim();
+    if (!name) {
+      isCreatingFile = false;
+      return;
+    }
+    try {
+      const createdPath = await fileService.createFile(entry.path, name);
+      isCreatingFile = false;
+      newFileName = '';
+      // Auto-select the new file so the editor opens it.
+      onSelect?.(createdPath);
+    } catch (e) {
+      console.error('Failed to create file:', e);
+      toastStore.error(`Failed to create file: ${String(e)}`);
+    }
+  }
+
+  function handleNewFileKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleCreateFile();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      isCreatingFile = false;
+      newFileName = '';
+    }
+  }
+
+  function handleNewFileBlur() {
+    if (!newFileName.trim()) {
+      isCreatingFile = false;
+    }
+  }
+
+  function startRenaming() {
+    isRenaming = true;
+    renameValue = entry.name;
+    setTimeout(() => {
+      if (renameInput) {
+        renameInput.focus();
+        // Select the basename (without extension) so typing replaces it.
+        const dot = entry.name.lastIndexOf('.');
+        if (!entry.is_dir && dot > 0) {
+          renameInput.setSelectionRange(0, dot);
+        } else {
+          renameInput.select();
+        }
+      }
+    }, 0);
+  }
+
+  async function handleRename() {
+    const next = renameValue.trim();
+    if (!next || next === entry.name) {
+      isRenaming = false;
+      return;
+    }
+    try {
+      await fileService.renamePath(entry.path, next);
+      // File watcher will refresh the parent and replace this entry.
+      isRenaming = false;
+    } catch (e) {
+      console.error('Failed to rename:', e);
+      toastStore.error(`Failed to rename: ${String(e)}`);
+    }
+  }
+
+  function handleRenameKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleRename();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      isRenaming = false;
+    }
+  }
+
   async function handleDelete() {
-    // Hide from UI first (optimistic update)
+    // Hide from UI first (optimistic update). Watcher will reconcile.
     isDeleted = true;
 
     try {
-      await fileService.deletePath(entry.path);
+      await fileService.moveToTrash(entry.path);
+      fileOpUndoStore.push({
+        type: 'trash',
+        originalPath: entry.path,
+        displayName: entry.name,
+        trashedAt: Date.now(),
+      });
     } catch (e) {
-      console.error('Failed to delete:', e);
+      console.error('Failed to move to trash:', e);
+      toastStore.error(`Failed to move to trash: ${String(e)}`);
       // Restore visibility on error
       isDeleted = false;
     }
@@ -490,12 +645,29 @@
           </svg>
         </span>
       {/if}
-      <span
-        class="name"
-        class:git-modified={statusColor()}
-        class:test-file={isTestFile}
-        style:color={statusColor() || null}>{entry.name}</span
-      >
+      {#if isRenaming}
+        <input
+          bind:this={renameInput}
+          bind:value={renameValue}
+          type="text"
+          class="rename-input"
+          spellcheck="false"
+          autocomplete="off"
+          autocorrect="off"
+          autocapitalize="off"
+          onkeydown={handleRenameKeyDown}
+          onblur={handleRename}
+          onclick={(e) => e.stopPropagation()}
+          onmousedown={(e) => e.stopPropagation()}
+        />
+      {:else}
+        <span
+          class="name"
+          class:git-modified={statusColor()}
+          class:test-file={isTestFile}
+          style:color={statusColor() || null}>{entry.name}</span
+        >
+      {/if}
       {#if statusIcon}
         <span class="git-status" style="color: {statusColor()}">{statusIcon}</span>
       {/if}
@@ -540,6 +712,38 @@
               autocapitalize="off"
               onkeydown={handleNewFolderKeyDown}
               onblur={handleNewFolderBlur}
+            />
+          </div>
+        {/if}
+        {#if isCreatingFile}
+          <div class="new-folder-input-wrapper" style="padding-left: {12 + (depth + 1) * 16}px">
+            <span class="icon file" style="color: var(--text-muted)">
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                <polyline points="14 2 14 8 20 8"></polyline>
+              </svg>
+            </span>
+            <input
+              bind:this={newFileInput}
+              bind:value={newFileName}
+              type="text"
+              class="new-folder-input"
+              placeholder="File name"
+              spellcheck="false"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              onkeydown={handleNewFileKeyDown}
+              onblur={handleNewFileBlur}
             />
           </div>
         {/if}
@@ -984,6 +1188,27 @@
 
   .new-folder-input::placeholder {
     color: var(--text-muted);
+  }
+
+  .rename-input {
+    flex: 1;
+    min-width: 0;
+    height: 22px;
+    padding: 0 var(--space-2);
+    border: 1px solid var(--border-glow);
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 12px;
+    font-family: var(--font-sans);
+    outline: none;
+    position: relative;
+    top: -2px;
+  }
+
+  .rename-input:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(125, 211, 252, 0.15);
   }
 
   /* Drop target child (file whose parent is the drop target) */
