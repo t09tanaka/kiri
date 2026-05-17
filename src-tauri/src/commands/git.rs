@@ -40,16 +40,6 @@ pub struct GitRepoInfo {
     pub deletions: usize,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
-pub struct WorktreeInfo {
-    /// True when path is inside a linked worktree, false when in the main worktree
-    pub is_linked_worktree: bool,
-    /// Basename of the worktree's working directory (e.g. "feat-foo")
-    pub name: String,
-    /// Absolute path to the worktree's working directory
-    pub root: String,
-}
-
 fn find_repo_root(path: &Path) -> Option<String> {
     let mut current = path;
     loop {
@@ -61,44 +51,6 @@ fn find_repo_root(path: &Path) -> Option<String> {
             None => return None,
         }
     }
-}
-
-/// Detect git worktree information for a given path.
-///
-/// Returns `None` if the path is not inside any git working tree
-/// (e.g. non-git directory, nonexistent path, or bare repo).
-///
-/// Returns `Some(WorktreeInfo)` with `is_linked_worktree = true` when
-/// the path lies inside a linked worktree (the worktree's `.git` is a
-/// gitlink file pointing to `<common-dir>/worktrees/<name>`), or
-/// `is_linked_worktree = false` when inside the main worktree.
-fn detect_worktree_info(path: &Path) -> Option<WorktreeInfo> {
-    // Repository::discover walks up from `path` looking for a .git, and
-    // canonicalizes symlinks. Returns Err for non-git or nonexistent paths.
-    let repo = Repository::discover(path).ok()?;
-
-    // Bare repos have no working directory — nothing to display.
-    let workdir = repo.workdir()?;
-
-    let name = workdir.file_name()?.to_string_lossy().to_string();
-    let root = workdir.to_string_lossy().to_string();
-
-    // Linked worktrees use a gitlink: `<workdir>/.git` is a regular file
-    // containing `gitdir: <path>`. The main worktree has `<workdir>/.git`
-    // as a directory.
-    let dot_git = workdir.join(".git");
-    let is_linked_worktree = dot_git.is_file();
-
-    Some(WorktreeInfo {
-        is_linked_worktree,
-        name,
-        root,
-    })
-}
-
-#[tauri::command]
-pub fn get_worktree_info(path: String) -> Option<WorktreeInfo> {
-    detect_worktree_info(Path::new(&path))
 }
 
 /// Calculate total additions and deletions for the repository
@@ -1566,116 +1518,4 @@ mod tests {
         run_git(dir, &["commit", "-q", "-m", "init"]);
     }
 
-    #[test]
-    fn test_detect_worktree_info_outside_repo() {
-        let dir = tempdir().unwrap();
-        let result = detect_worktree_info(dir.path());
-        assert!(result.is_none(), "non-git dir must return None");
-    }
-
-    #[test]
-    fn test_detect_worktree_info_nonexistent_path() {
-        let result = detect_worktree_info(std::path::Path::new("/nonexistent/path/xyz"));
-        assert!(result.is_none(), "nonexistent path must return None");
-    }
-
-    #[test]
-    fn test_detect_worktree_info_main_repo() {
-        let dir = tempdir().unwrap();
-        init_repo_with_commit(dir.path());
-
-        let result = detect_worktree_info(dir.path()).expect("must detect repo");
-        assert!(!result.is_linked_worktree, "main repo must not be linked");
-        assert_eq!(
-            result.name,
-            dir.path().file_name().unwrap().to_string_lossy()
-        );
-    }
-
-    #[test]
-    fn test_detect_worktree_info_linked_worktree() {
-        let main_dir = tempdir().unwrap();
-        init_repo_with_commit(main_dir.path());
-
-        let wt_parent = tempdir().unwrap();
-        let wt_path = wt_parent.path().join("feat-foo");
-        run_git(
-            main_dir.path(),
-            &[
-                "worktree",
-                "add",
-                "-q",
-                "-b",
-                "feat-foo",
-                wt_path.to_str().unwrap(),
-            ],
-        );
-
-        let result = detect_worktree_info(&wt_path).expect("must detect linked worktree");
-        assert!(result.is_linked_worktree, "must be flagged linked");
-        assert_eq!(result.name, "feat-foo");
-        let expected = wt_path.canonicalize().unwrap();
-        assert_eq!(
-            result.root.trim_end_matches('/'),
-            expected.to_str().unwrap()
-        );
-    }
-
-    #[test]
-    fn test_detect_worktree_info_subdirectory_of_linked_worktree() {
-        let main_dir = tempdir().unwrap();
-        init_repo_with_commit(main_dir.path());
-
-        let wt_parent = tempdir().unwrap();
-        let wt_path = wt_parent.path().join("feat-bar");
-        run_git(
-            main_dir.path(),
-            &[
-                "worktree",
-                "add",
-                "-q",
-                "-b",
-                "feat-bar",
-                wt_path.to_str().unwrap(),
-            ],
-        );
-
-        // Create a subdirectory inside the worktree and query it
-        let sub = wt_path.join("src").join("nested");
-        fs::create_dir_all(&sub).unwrap();
-
-        let result = detect_worktree_info(&sub).expect("must detect via subdirectory");
-        assert!(result.is_linked_worktree);
-        assert_eq!(result.name, "feat-bar");
-    }
-
-    #[test]
-    fn test_detect_worktree_info_bare_repo() {
-        let dir = tempdir().unwrap();
-        run_git(dir.path(), &["init", "--bare", "-q"]);
-        let result = detect_worktree_info(dir.path());
-        assert!(result.is_none(), "bare repo has no workdir, must return None");
-    }
-
-    #[test]
-    fn test_detect_worktree_info_subdirectory_of_main_repo() {
-        let dir = tempdir().unwrap();
-        init_repo_with_commit(dir.path());
-        let sub = dir.path().join("src").join("nested");
-        fs::create_dir_all(&sub).unwrap();
-
-        let result = detect_worktree_info(&sub).expect("must detect via subdirectory");
-        assert!(!result.is_linked_worktree);
-        assert_eq!(
-            result.name,
-            dir.path().file_name().unwrap().to_string_lossy()
-        );
-    }
-
-    #[test]
-    fn test_get_worktree_info_command_returns_none_for_non_git() {
-        let dir = tempdir().unwrap();
-        let result = get_worktree_info(dir.path().to_string_lossy().to_string());
-        assert!(result.is_none());
-    }
 }
