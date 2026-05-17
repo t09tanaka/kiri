@@ -7,13 +7,7 @@
   import { fileOpUndoStore } from '@/lib/stores/fileOpUndoStore';
   import FileTreeItem from './FileTreeItem.svelte';
   import type { FileEntry } from './types';
-  import {
-    isConfigFile,
-    isMarkdownFile,
-    getTestFileBase,
-    getFileStem,
-    computeTestTreeLines,
-  } from '@/lib/utils/fileIcons';
+  import { computeTestTreeLines } from '@/lib/utils/fileIcons';
   import { gitStore, gitStatusMap } from '@/lib/stores/gitStore';
   import {
     dragDropStore,
@@ -24,6 +18,17 @@
   import { toastStore } from '@/lib/stores/toastStore';
   import { Skeleton } from '@/lib/components/ui';
   import { resolveDropTarget, isValidMoveTarget } from '@/lib/utils/dragDrop';
+  import { createFileTreeRegistry, provideFileTreeRegistry } from './fileTreeRegistry';
+  import { buildPreviewEntries, mergeWithPreview } from './fileTreeSort';
+  import { DragGhost } from './dragGhost';
+  import {
+    generateUntitledName,
+    isFileTreeFocusContext,
+    resolveKeyboardIntent,
+  } from './fileTreeKeyboard';
+
+  const fileTreeRegistry = createFileTreeRegistry();
+  provideFileTreeRegistry(fileTreeRegistry.registry);
 
   interface Props {
     rootPath?: string;
@@ -66,7 +71,7 @@
   let internalDragStartPos: { x: number; y: number } | null = null;
   let isInternalDragging = false;
   const DRAG_THRESHOLD = 5;
-  let ghostElement: HTMLDivElement | null = null;
+  const ghost = new DragGhost();
   let internalDragRafId: number | null = null;
 
   // Extract project name from rootPath
@@ -74,66 +79,14 @@
 
   // Preview entries shown during drag (before drop)
   const previewEntries = $derived.by(() => {
-    // Show preview when dragging and targeting root
     if (!$isDragging || !rootPath) return [];
     const targetIsRoot = !$dropTargetPath || $dropTargetPath === rootPath;
     if (!targetIsRoot) return [];
-
-    return $draggedPaths.map((sourcePath) => {
-      const name = sourcePath.split('/').pop() || sourcePath;
-      return {
-        name,
-        path: `${rootPath}/${name}`,
-        is_dir: false, // We don't know yet, but it doesn't matter for preview
-        is_hidden: name.startsWith('.'),
-        is_gitignored: false,
-        is_pending: true,
-      } satisfies FileEntry;
-    });
+    return buildPreviewEntries($draggedPaths, rootPath);
   });
-
-  // Sort entries: directories first, markdown files, regular files, config files last
-  function sortEntries(items: FileEntry[]): FileEntry[] {
-    return [...items].sort((a, b) => {
-      // Directories come first
-      if (a.is_dir !== b.is_dir) {
-        return a.is_dir ? -1 : 1;
-      }
-      if (a.is_dir) {
-        return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-      }
-      // For files: group test files with their parent (compare by stem to handle cross-extension matches like .spec.ts → .vue)
-      const aBase = getTestFileBase(a.name);
-      const bBase = getTestFileBase(b.name);
-      const aGroupKey = getFileStem(aBase || a.name).toLowerCase();
-      const bGroupKey = getFileStem(bBase || b.name).toLowerCase();
-      // Markdown files come first (after directories)
-      const aIsMd = isMarkdownFile(aBase || a.name);
-      const bIsMd = isMarkdownFile(bBase || b.name);
-      if (aIsMd !== bIsMd) return aIsMd ? -1 : 1;
-      // Config files (by group key) go last
-      const aIsConfig = isConfigFile(aBase || a.name);
-      const bIsConfig = isConfigFile(bBase || b.name);
-      if (aIsConfig !== bIsConfig) return aIsConfig ? 1 : -1;
-      // Sort by group key
-      if (aGroupKey !== bGroupKey) {
-        return aGroupKey.localeCompare(bGroupKey);
-      }
-      // Within same group: parent first, then tests alphabetically
-      if (!aBase && bBase) return -1;
-      if (aBase && !bBase) return 1;
-      return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-    });
-  }
 
   // Combined entries: real entries + preview entries (during drag), sorted
-  const displayEntries = $derived.by(() => {
-    if (previewEntries.length === 0) return sortEntries(entries);
-    // Filter out any entries that have the same path as preview entries (avoid duplicates)
-    const previewPaths = new Set(previewEntries.map((e) => e.path));
-    const filtered = entries.filter((e) => !previewPaths.has(e.path));
-    return sortEntries([...filtered, ...previewEntries]);
-  });
+  const displayEntries = $derived.by(() => mergeWithPreview(entries, previewEntries));
 
   const testTreeLines = $derived(computeTestTreeLines(displayEntries));
 
@@ -349,7 +302,7 @@
     // Start timer for new target directory (not root - root is always "expanded")
     if (targetDir && targetDir !== rootPath) {
       dragDropStore.startHoverTimer(targetDir, () => {
-        window.dispatchEvent(new CustomEvent('drag-auto-expand', { detail: { path: targetDir } }));
+        fileTreeRegistry.dispatchAutoExpand(targetDir);
       });
     }
   }
@@ -376,12 +329,12 @@
       if (Math.sqrt(dx * dx + dy * dy) < DRAG_THRESHOLD) return;
       isInternalDragging = true;
       dragDropStore.startDrag([internalDragSource.path]);
-      createGhostElement(internalDragSource.path);
+      ghost.create(internalDragSource.path);
       document.body.classList.add('internal-dragging');
     }
 
     // Always update ghost position for smooth visuals
-    updateGhostPosition(event.clientX, event.clientY);
+    ghost.move(event.clientX, event.clientY);
 
     // Throttle drop target resolution with rAF
     if (internalDragRafId !== null) return;
@@ -395,18 +348,14 @@
 
   function resolveInternalDropTarget(clientX: number, clientY: number) {
     const element = document.elementFromPoint(clientX, clientY);
-    if (!element) {
-      dragDropStore.setDropTarget(null);
-      handleAutoExpandOnTargetChange(null);
-      updateGhostValidity(false);
-      return;
-    }
-
-    const treeItem = element.closest('[data-drop-path]') as HTMLElement | null;
+    const treeItem =
+      element instanceof Element
+        ? (element.closest('[data-drop-path]') as HTMLElement | null)
+        : null;
     if (!treeItem) {
       dragDropStore.setDropTarget(null);
       handleAutoExpandOnTargetChange(null);
-      updateGhostValidity(false);
+      ghost.setValid(false);
       return;
     }
 
@@ -424,33 +373,7 @@
       dragDropStore.setDropTarget(null);
       handleAutoExpandOnTargetChange(null);
     }
-    updateGhostValidity(isValid);
-  }
-
-  function createGhostElement(sourcePath: string) {
-    const name = sourcePath.split('/').pop() || sourcePath;
-    ghostElement = document.createElement('div');
-    ghostElement.className = 'drag-ghost';
-    ghostElement.textContent = name;
-    document.body.appendChild(ghostElement);
-  }
-
-  function updateGhostPosition(x: number, y: number) {
-    if (!ghostElement) return;
-    ghostElement.style.left = `${x + 12}px`;
-    ghostElement.style.top = `${y - 10}px`;
-  }
-
-  function updateGhostValidity(valid: boolean) {
-    if (!ghostElement) return;
-    ghostElement.classList.toggle('invalid', !valid);
-  }
-
-  function removeGhostElement() {
-    if (ghostElement) {
-      ghostElement.remove();
-      ghostElement = null;
-    }
+    ghost.setValid(isValid);
   }
 
   async function handleInternalMouseUp() {
@@ -485,7 +408,7 @@
       cancelAnimationFrame(internalDragRafId);
       internalDragRafId = null;
     }
-    removeGhostElement();
+    ghost.remove();
     document.body.classList.remove('internal-dragging');
     dragDropStore.endDrag();
     internalDragSource = null;
@@ -501,51 +424,13 @@
     }
   }
 
-  // ----- Keyboard shortcuts: F2 / Delete / Cmd+N / Cmd+Shift+N / Cmd+Z -----
-  //
-  // These intentionally only fire when the file tree itself owns focus or
-  // the active element is the document body. We don't want F2 / Backspace
-  // / Cmd+Z to fight with the editor pane or a terminal that happens to
-  // be focused.
-  function isFileTreeFocusContext(target: EventTarget | null): boolean {
-    if (!(target instanceof Element)) return target === null;
-    // Skip if the user is typing into something editable elsewhere.
-    if (target.matches('input, textarea, [contenteditable="true"]')) return false;
-    // Allow the global hotkey when nothing is focused (body) or when the
-    // focus is inside the file tree itself.
-    if (target === document.body) return true;
-    return target.closest('.file-tree') !== null;
-  }
-
-  function dispatchFileTreeAction(
-    path: string,
-    action: 'rename' | 'delete' | 'new-file' | 'new-folder'
-  ) {
-    window.dispatchEvent(new CustomEvent('filetree-action', { detail: { path, action } }));
-  }
-
   async function handleRootCreate(action: 'new-file' | 'new-folder') {
     // Promotes Cmd+N / Cmd+Shift+N at the root level (no selected child).
     // Picks a sensible default name and lets the watcher refresh the tree;
     // an inline rename would be nicer but adds significant root-level UI
     // surface that's out of scope here — tracked separately if desired.
     if (!rootPath) return;
-    const baseName = action === 'new-file' ? 'untitled.txt' : 'untitled-folder';
-    const existing = new Set(entries.map((e) => e.name));
-    let name = baseName;
-    let counter = 1;
-    while (existing.has(name)) {
-      counter++;
-      if (action === 'new-file') {
-        const dot = baseName.lastIndexOf('.');
-        name =
-          dot > 0
-            ? `${baseName.slice(0, dot)}-${counter}${baseName.slice(dot)}`
-            : `${baseName}-${counter}`;
-      } else {
-        name = `${baseName}-${counter}`;
-      }
-    }
+    const name = generateUntitledName(action, new Set(entries.map((e) => e.name)));
     try {
       if (action === 'new-file') {
         const created = await fileService.createFile(rootPath, name);
@@ -564,46 +449,31 @@
     if (isInternalDragging) return;
     if (!isFileTreeFocusContext(event.target)) return;
 
-    const mod = event.metaKey || event.ctrlKey;
-    const target = selectedPath;
+    const intent = resolveKeyboardIntent(event);
+    if (!intent) return;
 
-    // Cmd+Z anywhere in the file tree → undo last trash op.
-    if (mod && !event.shiftKey && event.key.toLowerCase() === 'z') {
+    if (intent.kind === 'undo') {
       event.preventDefault();
       fileOpUndoStore.undo();
       return;
     }
 
-    if (mod && event.shiftKey && event.key.toLowerCase() === 'n') {
+    const target = selectedPath;
+    const { action } = intent;
+
+    if (action === 'rename' || action === 'delete') {
+      if (!target) return;
       event.preventDefault();
-      if (target) {
-        // Dispatch to the selected entry (or its parent if it's a file).
-        dispatchFileTreeAction(target, 'new-folder');
-      } else {
-        handleRootCreate('new-folder');
-      }
+      fileTreeRegistry.dispatchAction(target, action);
       return;
     }
 
-    if (mod && !event.shiftKey && event.key.toLowerCase() === 'n') {
-      event.preventDefault();
-      if (target) {
-        dispatchFileTreeAction(target, 'new-file');
-      } else {
-        handleRootCreate('new-file');
-      }
-      return;
-    }
-
-    if (event.key === 'F2' && target) {
-      event.preventDefault();
-      dispatchFileTreeAction(target, 'rename');
-      return;
-    }
-
-    if ((event.key === 'Delete' || event.key === 'Backspace') && target) {
-      event.preventDefault();
-      dispatchFileTreeAction(target, 'delete');
+    // new-file / new-folder
+    event.preventDefault();
+    if (target) {
+      fileTreeRegistry.dispatchAction(target, action);
+    } else {
+      handleRootCreate(action);
     }
   }
 
@@ -786,6 +656,9 @@
               projectRoot={rootPath}
               {refreshKey}
               testTreeLine={testTreeLines.get(entry.path) ?? null}
+              isDragging={$isDragging}
+              dropTargetPath={$dropTargetPath}
+              draggedPaths={$draggedPaths}
             />
           {/each}
         {/if}

@@ -8,20 +8,13 @@
     getStatusColor,
     getDirectoryStatusColor,
   } from '@/lib/stores/gitStore';
-  import {
-    getFileIconInfo,
-    getFolderColor,
-    isConfigFile,
-    isMarkdownFile,
-    getTestFileBase,
-    getFileStem,
-    computeTestTreeLines,
-  } from '@/lib/utils/fileIcons';
+  import { getFileIconInfo, getFolderColor, computeTestTreeLines } from '@/lib/utils/fileIcons';
   import ContextMenu, { type MenuItem } from '@/lib/components/ui/ContextMenu.svelte';
-  import { isDragging, dropTargetPath, draggedPaths } from '@/lib/stores/dragDropStore';
   import { fileOpUndoStore } from '@/lib/stores/fileOpUndoStore';
   import { toastStore } from '@/lib/stores/toastStore';
   import FileTreeItem from './FileTreeItem.svelte';
+  import { useFileTreeRegistry } from './fileTreeRegistry';
+  import { buildPreviewEntries, mergeWithPreview } from './fileTreeSort';
 
   interface Props {
     entry: FileEntry;
@@ -33,6 +26,9 @@
     projectRoot?: string;
     refreshKey?: number;
     testTreeLine?: 'branch' | 'last' | null;
+    isDragging?: boolean;
+    dropTargetPath?: string | null;
+    draggedPaths?: string[];
   }
 
   let {
@@ -45,7 +41,12 @@
     projectRoot = '',
     refreshKey = 0,
     testTreeLine = null,
+    isDragging = false,
+    dropTargetPath = null,
+    draggedPaths = [],
   }: Props = $props();
+
+  const registry = useFileTreeRegistry();
 
   let expanded = $state(false);
   let children = $state<FileEntry[]>([]);
@@ -108,100 +109,45 @@
   });
 
   // Drop target detection
-  const isDropTarget = $derived($isDragging && entry.is_dir && $dropTargetPath === entry.path);
+  const isDropTarget = $derived(isDragging && entry.is_dir && dropTargetPath === entry.path);
 
   // True when this file's parent directory is the current drop target
   const isDropTargetChild = $derived(
-    $isDragging &&
+    isDragging &&
       !entry.is_dir &&
-      $dropTargetPath !== null &&
-      entry.path.startsWith($dropTargetPath + '/') &&
-      !entry.path.slice($dropTargetPath.length + 1).includes('/')
+      dropTargetPath !== null &&
+      entry.path.startsWith(dropTargetPath + '/') &&
+      !entry.path.slice(dropTargetPath.length + 1).includes('/')
   );
 
   // Preview entries for this directory during drag
   const previewEntries = $derived.by(() => {
-    if (!$isDragging || !entry.is_dir || $dropTargetPath !== entry.path) return [];
+    if (!isDragging || !entry.is_dir || dropTargetPath !== entry.path) return [];
     if (!expanded) return [];
-
-    return $draggedPaths.map((sourcePath) => {
-      const name = sourcePath.split('/').pop() || sourcePath;
-      return {
-        name,
-        path: `${entry.path}/${name}`,
-        is_dir: false,
-        is_hidden: name.startsWith('.'),
-        is_gitignored: false,
-        is_pending: true,
-      } satisfies FileEntry;
-    });
+    return buildPreviewEntries(draggedPaths, entry.path);
   });
 
-  function sortEntries(items: FileEntry[]): FileEntry[] {
-    return [...items].sort((a, b) => {
-      if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-      if (a.is_dir) {
-        return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-      }
-      // Group test files with their parent (compare by stem to handle cross-extension matches like .spec.ts → .vue)
-      const aBase = getTestFileBase(a.name);
-      const bBase = getTestFileBase(b.name);
-      const aGroupKey = getFileStem(aBase || a.name).toLowerCase();
-      const bGroupKey = getFileStem(bBase || b.name).toLowerCase();
-      // Markdown files come first (after directories)
-      const aIsMd = isMarkdownFile(aBase || a.name);
-      const bIsMd = isMarkdownFile(bBase || b.name);
-      if (aIsMd !== bIsMd) return aIsMd ? -1 : 1;
-      // Config files (by group key) go last
-      const aIsConfig = isConfigFile(aBase || a.name);
-      const bIsConfig = isConfigFile(bBase || b.name);
-      if (aIsConfig !== bIsConfig) return aIsConfig ? 1 : -1;
-      // Sort by group key
-      if (aGroupKey !== bGroupKey) {
-        return aGroupKey.localeCompare(bGroupKey);
-      }
-      // Within same group: parent first, then tests alphabetically
-      if (!aBase && bBase) return -1;
-      if (aBase && !bBase) return 1;
-      return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
-    });
-  }
-
-  const displayChildren = $derived.by(() => {
-    if (previewEntries.length === 0) return sortEntries(children);
-    const previewPaths = new Set(previewEntries.map((e) => e.path));
-    const filtered = children.filter((e) => !previewPaths.has(e.path));
-    return sortEntries([...filtered, ...previewEntries]);
-  });
+  const displayChildren = $derived.by(() => mergeWithPreview(children, previewEntries));
 
   const childTestTreeLines = $derived(computeTestTreeLines(displayChildren));
 
-  // Auto-expand listener for drag hover
-  let autoExpandHandler: ((e: Event) => void) | null = null;
-  // Keyboard-shortcut bridge from FileTree. We listen globally and act
-  // only when the event targets this entry's path so each item handles
-  // its own state (rename input, inline new-file/new-folder) without
-  // FileTree needing refs into every nested item.
-  let actionHandler: ((e: Event) => void) | null = null;
+  // Registry-driven subscriptions for window events. FileTree owns the
+  // actual window listeners and dispatches via this registry, so we add
+  // 2 window listeners per tree instead of 2 per item.
+  let unregisterAutoExpand: (() => void) | null = null;
+  let unregisterAction: (() => void) | null = null;
 
   onMount(() => {
+    if (!registry) return;
+
     if (entry.is_dir) {
-      autoExpandHandler = (e: Event) => {
-        const detail = (e as CustomEvent).detail;
-        if (detail.path === entry.path && !expanded) {
-          toggleExpand();
-        }
-      };
-      window.addEventListener('drag-auto-expand', autoExpandHandler);
+      unregisterAutoExpand = registry.registerAutoExpand(entry.path, () => {
+        if (!expanded) toggleExpand();
+      });
     }
 
-    actionHandler = (e: Event) => {
-      const detail = (e as CustomEvent).detail as {
-        path: string;
-        action: 'rename' | 'delete' | 'new-file' | 'new-folder';
-      };
-      if (detail.path !== entry.path) return;
-      switch (detail.action) {
+    unregisterAction = registry.registerAction(entry.path, (action) => {
+      switch (action) {
         case 'rename':
           startRenaming();
           break;
@@ -215,17 +161,12 @@
           if (entry.is_dir) startCreatingFolder();
           break;
       }
-    };
-    window.addEventListener('filetree-action', actionHandler);
+    });
   });
 
   onDestroy(() => {
-    if (autoExpandHandler) {
-      window.removeEventListener('drag-auto-expand', autoExpandHandler);
-    }
-    if (actionHandler) {
-      window.removeEventListener('filetree-action', actionHandler);
-    }
+    unregisterAutoExpand?.();
+    unregisterAction?.();
   });
 
   async function toggleExpand() {
@@ -530,7 +471,7 @@
 {#if !isDeleted}
   <div
     class="tree-item-container"
-    class:dragging-source={$isDragging && $draggedPaths.includes(entry.path)}
+    class:dragging-source={isDragging && draggedPaths.includes(entry.path)}
     role="treeitem"
     aria-selected={isSelected}
     tabindex={isSelected ? 0 : -1}
@@ -759,6 +700,9 @@
               {projectRoot}
               {refreshKey}
               testTreeLine={childTestTreeLines.get(child.path) ?? null}
+              {isDragging}
+              {dropTargetPath}
+              {draggedPaths}
             />
           </div>
         {/each}
