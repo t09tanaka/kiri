@@ -1,37 +1,52 @@
-import { writable, derived, get } from 'svelte/store';
-import { DEFAULT_STARTUP_COMMAND, type StartupCommand } from '@/lib/services/persistenceService';
+// Backward-compatible facade over the split settings stores (issue #43).
+//
+// `settingsStore` historically mixed in-memory UI preferences (fontSize)
+// with disk-backed settings (startupCommand). Those responsibilities now
+// live in `uiPreferencesStore` and `persistedSettingsStore` respectively.
+//
+// This file is intentionally kept as a thin facade so existing consumers
+// (App.svelte, Terminal.svelte, PeekEditor.svelte, Editor.svelte,
+// StartScreen.svelte, plus the test suite) keep working without churn.
+// New code should import directly from the underlying stores; once all
+// consumers are migrated, this facade can be deleted.
+//
+// The internal `writable` exists *only* to keep the `subscribe`/`derived`
+// surface — it is treated as a fan-out mirror, never as a source of
+// truth. Mutations always go through the underlying stores first; the
+// mirror is refreshed afterwards so `$settingsStore`, `$fontSize`,
+// `$startupCommand`, and `get(settingsStore)` observe the new value.
 
-// Font size constraints (VSCode-like)
-const MIN_FONT_SIZE = 8;
-const MAX_FONT_SIZE = 32;
-const DEFAULT_FONT_SIZE = 13;
-const ZOOM_STEP = 1;
+import { writable, derived } from 'svelte/store';
+import { DEFAULT_STARTUP_COMMAND, type StartupCommand } from '@/lib/services/persistenceService';
+import { uiPreferencesStore, FONT_SIZE_CONSTRAINTS } from './uiPreferencesStore.svelte';
+import { persistedSettingsStore } from './persistedSettingsStore.svelte';
+
+export { FONT_SIZE_CONSTRAINTS };
 
 export interface SettingsState {
   fontSize: number;
   startupCommand: StartupCommand;
 }
 
-const initialState: SettingsState = {
-  fontSize: DEFAULT_FONT_SIZE,
-  startupCommand: DEFAULT_STARTUP_COMMAND,
-};
+function snapshot(): SettingsState {
+  return {
+    fontSize: uiPreferencesStore.fontSize,
+    startupCommand: persistedSettingsStore.startupCommand,
+  };
+}
 
 function createSettingsStore() {
-  const { subscribe, set, update } = writable<SettingsState>(initialState);
+  const mirror = writable<SettingsState>(snapshot());
+  const refresh = () => mirror.set(snapshot());
+
+  let unsubscribePersist: (() => void) | null = null;
 
   /**
-   * Once enabled, every state change after `restoreState` finishes is
-   * pushed to `handler` automatically, so callers never have to
-   * remember to invoke `saveSettings(getStateForPersistence())` after
-   * a mutation. Returns the unsubscribe function so the App can tear
-   * the auto-save down on window close.
-   *
-   * The 500ms delay before arming `ready` matches what App.svelte
-   * used to do inline: it avoids saving the snapshot we just hydrated
-   * from the persisted store.
+   * Once enabled, every state change after the post-restore delay is
+   * pushed to `handler` automatically. The 500ms default matches what
+   * App.svelte used to do inline: it avoids saving the snapshot we just
+   * hydrated from the persisted store.
    */
-  let unsubscribePersist: (() => void) | null = null;
   function enableAutoPersist(
     handler: (state: SettingsState) => unknown,
     options: { delayMs?: number } = {}
@@ -42,7 +57,7 @@ function createSettingsStore() {
     const timer = setTimeout(() => {
       ready = true;
     }, delayMs);
-    unsubscribePersist = subscribe((state) => {
+    unsubscribePersist = mirror.subscribe((state) => {
       if (!ready) return;
       void handler(state);
     });
@@ -56,112 +71,59 @@ function createSettingsStore() {
   }
 
   return {
-    subscribe,
+    subscribe: mirror.subscribe,
 
-    /**
-     * Wire up auto-persistence. Pass the same `saveSettings(state)`
-     * that callers used to invoke manually; from then on every store
-     * mutation - existing or future field - is pushed to the handler
-     * without the caller having to remember.
-     */
     enableAutoPersist,
 
-    /**
-     * Zoom in (increase font size)
-     */
     zoomIn: () => {
-      update((state) => ({
-        ...state,
-        fontSize: Math.min(state.fontSize + ZOOM_STEP, MAX_FONT_SIZE),
-      }));
+      uiPreferencesStore.zoomIn();
+      refresh();
     },
 
-    /**
-     * Zoom out (decrease font size)
-     */
     zoomOut: () => {
-      update((state) => ({
-        ...state,
-        fontSize: Math.max(state.fontSize - ZOOM_STEP, MIN_FONT_SIZE),
-      }));
+      uiPreferencesStore.zoomOut();
+      refresh();
     },
 
-    /**
-     * Reset zoom to default
-     */
     resetZoom: () => {
-      update((state) => ({
-        ...state,
-        fontSize: DEFAULT_FONT_SIZE,
-      }));
+      uiPreferencesStore.resetZoom();
+      refresh();
     },
 
-    /**
-     * Set startup command
-     */
     setStartupCommand: (command: StartupCommand) => {
-      update((state) => ({
-        ...state,
-        startupCommand: command,
-      }));
+      persistedSettingsStore.setStartupCommand(command);
+      refresh();
     },
 
-    /**
-     * Set font size directly
-     */
     setFontSize: (size: number) => {
-      const clampedSize = Math.max(MIN_FONT_SIZE, Math.min(size, MAX_FONT_SIZE));
-      update((state) => ({
-        ...state,
-        fontSize: clampedSize,
-      }));
+      uiPreferencesStore.setFontSize(size);
+      refresh();
     },
 
-    /**
-     * Get current font size
-     */
-    getFontSize: (): number => {
-      return get({ subscribe }).fontSize;
-    },
+    getFontSize: (): number => uiPreferencesStore.fontSize,
 
     /**
      * @deprecated Prefer `enableAutoPersist()` over calling this and
      * piping the result through `saveSettings(...)` by hand. Kept for
-     * tests and migration callers; the App wires `enableAutoPersist`
-     * during boot so mutations persist automatically.
+     * tests and migration callers.
      */
-    getStateForPersistence: (): SettingsState => {
-      return get({ subscribe });
-    },
+    getStateForPersistence: (): SettingsState => snapshot(),
 
-    /**
-     * Restore state from persistence
-     */
     restoreState: (state: Partial<SettingsState>) => {
-      update((current) => ({
-        ...current,
-        fontSize: state.fontSize ?? DEFAULT_FONT_SIZE,
-        startupCommand: state.startupCommand ?? DEFAULT_STARTUP_COMMAND,
-      }));
+      uiPreferencesStore.setFontSize(state.fontSize ?? FONT_SIZE_CONSTRAINTS.DEFAULT);
+      persistedSettingsStore.setStartupCommand(state.startupCommand ?? DEFAULT_STARTUP_COMMAND);
+      refresh();
     },
 
-    /**
-     * Reset to initial state
-     */
-    reset: () => set(initialState),
+    reset: () => {
+      uiPreferencesStore.reset();
+      persistedSettingsStore.reset();
+      mirror.set(snapshot());
+    },
   };
 }
 
 export const settingsStore = createSettingsStore();
 
-// Derived stores for convenience
 export const fontSize = derived(settingsStore, ($settings) => $settings.fontSize);
 export const startupCommand = derived(settingsStore, ($settings) => $settings.startupCommand);
-
-// Export constants for testing
-export const FONT_SIZE_CONSTRAINTS = {
-  MIN: MIN_FONT_SIZE,
-  MAX: MAX_FONT_SIZE,
-  DEFAULT: DEFAULT_FONT_SIZE,
-  STEP: ZOOM_STEP,
-};
