@@ -2,7 +2,6 @@
   import { dialogService } from '@/lib/services/dialogService';
   import {
     loadRemoteAccessSettings,
-    saveSettings,
     STARTUP_COMMANDS,
     type StartupCommand,
   } from '@/lib/services/persistenceService';
@@ -42,8 +41,9 @@
   }
 
   function handleStartupCommandChange(command: StartupCommand) {
+    // enableAutoPersist() in App.svelte boot pushes the change to disk
+    // through the store subscription; no manual save needed.
     settingsStore.setStartupCommand(command);
-    saveSettings(settingsStore.getStateForPersistence());
   }
 
   async function handleRemoteToggle() {

@@ -451,19 +451,12 @@
       }
     });
 
-    // Auto-save settings when they change (main window only)
-    let settingsSaveReady = false;
+    // Auto-save settings when they change (main window only). The
+    // store owns the subscription and the post-restore delay so
+    // adding a new field to SettingsState persists automatically.
     let unsubscribeSettingsStore: (() => void) | null = null;
     if (isMainWindow) {
-      // Delay enabling settings save to avoid saving the initial restore
-      setTimeout(() => {
-        settingsSaveReady = true;
-      }, 500);
-      unsubscribeSettingsStore = settingsStore.subscribe((state) => {
-        if (settingsSaveReady) {
-          saveSettings(state);
-        }
-      });
+      unsubscribeSettingsStore = settingsStore.enableAutoPersist(saveSettings);
     }
 
     // Handle window close
