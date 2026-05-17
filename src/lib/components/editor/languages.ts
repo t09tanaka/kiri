@@ -1,8 +1,36 @@
 import type { Extension } from '@codemirror/state';
 
 // Cache for loaded language extensions to avoid re-importing
-
 const languageCache = new Map<string, Extension>();
+
+/**
+ * Per-extension loader table.
+ *
+ * Each entry is an arrow that performs the dynamic `import()` lazily,
+ * so the eight `@codemirror/lang-*` chunks stay off the startup graph
+ * until a file of that type is actually opened. The keys are the file
+ * extension (lowercase, no leading dot).
+ *
+ * Re-using a single loader for `ts`/`tsx` and `js`/`jsx` means Rollup
+ * emits one `lang-javascript` chunk that the four extensions share,
+ * instead of duplicating the parser bytes per call site.
+ */
+const langLoaders: Record<string, () => Promise<Extension>> = {
+  ts: async () => (await import('@codemirror/lang-javascript')).javascript({ typescript: true }),
+  tsx: async () =>
+    (await import('@codemirror/lang-javascript')).javascript({ typescript: true, jsx: true }),
+  js: async () => (await import('@codemirror/lang-javascript')).javascript(),
+  jsx: async () => (await import('@codemirror/lang-javascript')).javascript({ jsx: true }),
+  rs: async () => (await import('@codemirror/lang-rust')).rust(),
+  json: async () => (await import('@codemirror/lang-json')).json(),
+  md: async () => (await import('@codemirror/lang-markdown')).markdown(),
+  css: async () => (await import('@codemirror/lang-css')).css(),
+  scss: async () => (await import('@codemirror/lang-css')).css(),
+  html: async () => (await import('@codemirror/lang-html')).html(),
+  svelte: async () => (await import('@codemirror/lang-html')).html(),
+  yaml: async () => (await import('@codemirror/lang-yaml')).yaml(),
+  yml: async () => (await import('@codemirror/lang-yaml')).yaml(),
+};
 
 /**
  * Get the file extension from a filename
@@ -12,74 +40,25 @@ function getFileExtension(filename: string): string | undefined {
 }
 
 /**
- * Get language extension for CodeMirror editor (async, lazy-loaded)
- * Languages are loaded on-demand and cached for reuse
+ * Get language extension for CodeMirror editor (async, lazy-loaded).
+ * Languages are loaded on-demand via {@link langLoaders} and cached.
  */
 export async function getLanguageExtension(filename: string): Promise<Extension | null> {
   const ext = getFileExtension(filename);
   if (!ext) return null;
 
-  // Check cache first
-  const cacheKey = ext;
-  if (languageCache.has(cacheKey)) {
-    return languageCache.get(cacheKey)!;
+  const cached = languageCache.get(ext);
+  if (cached !== undefined) {
+    return cached;
   }
 
-  let langExt: Extension | null = null;
-
-  switch (ext) {
-    case 'ts':
-    case 'tsx': {
-      const { javascript } = await import('@codemirror/lang-javascript');
-      langExt = javascript({ typescript: true, jsx: ext === 'tsx' });
-      break;
-    }
-    case 'js':
-    case 'jsx': {
-      const { javascript } = await import('@codemirror/lang-javascript');
-      langExt = javascript({ jsx: ext === 'jsx' });
-      break;
-    }
-    case 'rs': {
-      const { rust } = await import('@codemirror/lang-rust');
-      langExt = rust();
-      break;
-    }
-    case 'json': {
-      const { json } = await import('@codemirror/lang-json');
-      langExt = json();
-      break;
-    }
-    case 'md': {
-      const { markdown } = await import('@codemirror/lang-markdown');
-      langExt = markdown();
-      break;
-    }
-    case 'css':
-    case 'scss': {
-      const { css } = await import('@codemirror/lang-css');
-      langExt = css();
-      break;
-    }
-    case 'html':
-    case 'svelte': {
-      const { html } = await import('@codemirror/lang-html');
-      langExt = html();
-      break;
-    }
-    case 'yaml':
-    case 'yml': {
-      const { yaml } = await import('@codemirror/lang-yaml');
-      langExt = yaml();
-      break;
-    }
-    default:
-      return null;
+  const loader = langLoaders[ext];
+  if (!loader) {
+    return null;
   }
 
-  // Cache the loaded extension
-  languageCache.set(cacheKey, langExt);
-
+  const langExt = await loader();
+  languageCache.set(ext, langExt);
   return langExt;
 }
 

@@ -1,0 +1,15 @@
+# Heavier checks before pushing.
+# CI re-runs all of these, but catching a failure locally avoids
+# a round-trip through GitHub.
+
+# Frontend unit tests.
+npm run test
+
+# Rust tests in a clean environment so Husky's git env vars do not
+# leak into tests that spawn git processes (e.g. git_history tests).
+(unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_PREFIX; npm run test:rust)
+
+# Bundle-size budget — only if a fresh dist/ exists.
+if [ -d "dist" ]; then
+  npm run perf:check
+fi

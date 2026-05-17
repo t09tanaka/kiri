@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "mcp-bridge",
+  "description": "MCP bridge plugin. Only used by debug builds; gated behind the same `debug_assertions` check that registers the plugin in `lib.rs`. Limited to the main window because the bridge exposes IPC primitives that should not be reachable from arbitrary auxiliary webviews.",
+  "platforms": ["macOS", "linux", "windows"],
+  "windows": ["main"],
+  "permissions": ["mcp-bridge:default"]
+}

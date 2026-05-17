@@ -1,5 +1,6 @@
 //! Human-readable rendering for `--pretty` output.
 
+use crate::EnvSnapshot;
 use kiri_cli_proto::{PaneColor, PaneInfo, Response, SignalEntry};
 
 pub fn render_response_pretty(resp: &Response) {
@@ -44,7 +45,9 @@ pub fn render_response_pretty(resp: &Response) {
             }
             eprintln!("(cursor {cursor})");
             if *bytes_dropped > 0 {
-                eprintln!("(warning: {bytes_dropped} bytes dropped from buffer before requested cursor)");
+                eprintln!(
+                    "(warning: {bytes_dropped} bytes dropped from buffer before requested cursor)"
+                );
             }
         }
         Response::FollowChunk { data, .. } => {
@@ -84,6 +87,51 @@ pub fn render_response_pretty(resp: &Response) {
         Response::SignalList { signals } => render_signal_list(signals),
         Response::Error { code, message, .. } => {
             eprintln!("error [{code:?}]: {message}");
+        }
+    }
+}
+
+pub fn render_env_pretty(snap: &EnvSnapshot) {
+    println!(
+        "KIRI_TERMINAL  {}",
+        snap.kiri_terminal.as_deref().unwrap_or("(unset)")
+    );
+    println!(
+        "KIRI_SOCKET    {}",
+        snap.kiri_socket.as_deref().unwrap_or("(unset)")
+    );
+    println!(
+        "  in kiri terminal:   {}",
+        if snap.in_kiri_terminal { "yes" } else { "no" }
+    );
+    println!(
+        "  socket alive:       {}",
+        if snap.configured_socket_alive {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+    println!(
+        "  cwd project:        {}",
+        snap.cwd_project.as_deref().unwrap_or("(none)")
+    );
+    println!(
+        "  instances dir:      {}",
+        snap.instances_dir.as_deref().unwrap_or("(unknown)")
+    );
+    println!(
+        "  resolved socket:    {}",
+        snap.resolved_socket.as_deref().unwrap_or("(none)")
+    );
+    println!("  resolution:         {}", snap.resolution);
+    if snap.discovered_windows.is_empty() {
+        println!("  discovered windows: (none)");
+    } else {
+        println!("  discovered windows:");
+        for w in &snap.discovered_windows {
+            let project = w.project.as_deref().unwrap_or("(no project)");
+            println!("    {} — {project}", w.socket);
         }
     }
 }

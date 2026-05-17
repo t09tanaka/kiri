@@ -6,14 +6,25 @@
   import { dialogService } from '@/lib/services/dialogService';
   import { AppLayout, StartScreen } from '@/lib/components';
   import QuickOpen from '@/lib/components/search/QuickOpen.svelte';
-  import ContentSearchModal from '@/lib/components/search/ContentSearchModal.svelte';
   import KeyboardShortcuts from '@/lib/components/ui/KeyboardShortcuts.svelte';
   import ToastContainer from '@/lib/components/ui/ToastContainer.svelte';
-  import DiffViewModal from '@/lib/components/git/DiffViewModal.svelte';
-  import CommitHistoryModal from '@/lib/components/git/CommitHistoryModal.svelte';
-  import RemoteAccessSettings from '@/lib/components/settings/RemoteAccessSettings.svelte';
-  import QrCodeModal from '@/lib/components/remote/QrCodeModal.svelte';
-  import EditorModal from '@/lib/components/editor/EditorModal.svelte';
+
+  // Heavy modals that are not needed for first paint are loaded on
+  // demand via dynamic import. Each `lazy*` promise resolves to the
+  // component constructor and is reused across opens (the bundler
+  // memoises the chunk after the first fetch).
+  const lazyContentSearchModal = () =>
+    import('@/lib/components/search/ContentSearchModal.svelte').then((m) => m.default);
+  const lazyDiffViewModal = () =>
+    import('@/lib/components/git/DiffViewModal.svelte').then((m) => m.default);
+  const lazyCommitHistoryModal = () =>
+    import('@/lib/components/git/CommitHistoryModal.svelte').then((m) => m.default);
+  const lazyRemoteAccessSettings = () =>
+    import('@/lib/components/settings/RemoteAccessSettings.svelte').then((m) => m.default);
+  const lazyQrCodeModal = () =>
+    import('@/lib/components/remote/QrCodeModal.svelte').then((m) => m.default);
+  const lazyEditorModal = () =>
+    import('@/lib/components/editor/EditorModal.svelte').then((m) => m.default);
   import { searchStore, isQuickOpenVisible } from '@/lib/stores/searchStore';
   import { contentSearchStore, isContentSearchOpen } from '@/lib/stores/contentSearchStore';
   import { terminalStore } from '@/lib/stores/terminalStore';
@@ -130,12 +141,25 @@
     return out;
   }
 
+  // `cli_update_pane_map` already takes the full pane list in one shot
+  // (it's effectively a `bulk_set_pane_map`), but `pushPaneMap` was
+  // subscribed to both `terminalStore` and `focusedPaneStore`, so a
+  // restore-on-startup that ran N `splitPane` calls would fire N
+  // invokes in quick succession — exactly the N round-trips #41
+  // describes. Batch via microtask so any number of subscribe ticks in
+  // the same task coalesce into a single invoke with the final state.
+  let pushPaneMapScheduled = false;
   function pushPaneMap() {
-    if (!windowLabel) return;
-    const root = terminalStore.snapshot().rootPane;
-    void invoke('cli_update_pane_map', {
-      label: windowLabel,
-      panes: collectPaneEntries(root, focusedPaneStore.current()),
+    if (!windowLabel || pushPaneMapScheduled) return;
+    pushPaneMapScheduled = true;
+    queueMicrotask(() => {
+      pushPaneMapScheduled = false;
+      if (!windowLabel) return;
+      const root = terminalStore.snapshot().rootPane;
+      void invoke('cli_update_pane_map', {
+        label: windowLabel,
+        panes: collectPaneEntries(root, focusedPaneStore.current()),
+      });
     });
   }
 
@@ -162,6 +186,7 @@
         setPaneCollapsed: (paneId, value) => terminalStore.setCollapsed(paneId, value),
         setPaneLabel: (paneId, opts) => terminalStore.setPaneLabel(paneId, opts),
       });
+      performanceService.markStartupPhase('cli-bridge-ready');
       pushPaneMap();
       cliPaneMapUnsubTerminal = terminalStore.subscribe(pushPaneMap);
       cliPaneMapUnsubFocus = focusedPaneStore.subscribe(pushPaneMap);
@@ -387,10 +412,12 @@
 
     // Initialize project store first (loads recent projects)
     await projectStore.init();
+    performanceService.markStartupPhase('project-store-init');
 
     // Load global settings (font size)
     const settings = await loadSettings();
     settingsStore.restoreState(settings);
+    performanceService.markStartupPhase('settings-hydrated');
 
     const currentWindow = getCurrentWindow();
     windowLabel = currentWindow.label;
@@ -451,19 +478,12 @@
       }
     });
 
-    // Auto-save settings when they change (main window only)
-    let settingsSaveReady = false;
+    // Auto-save settings when they change (main window only). The
+    // store owns the subscription and the post-restore delay so
+    // adding a new field to SettingsState persists automatically.
     let unsubscribeSettingsStore: (() => void) | null = null;
     if (isMainWindow) {
-      // Delay enabling settings save to avoid saving the initial restore
-      setTimeout(() => {
-        settingsSaveReady = true;
-      }, 500);
-      unsubscribeSettingsStore = settingsStore.subscribe((state) => {
-        if (settingsSaveReady) {
-          saveSettings(state);
-        }
-      });
+      unsubscribeSettingsStore = settingsStore.enableAutoPersist(saveSettings);
     }
 
     // Handle window close
@@ -610,22 +630,36 @@
   {/if}
 
   {#if $diffViewStore.isOpen && $diffViewStore.projectPath}
-    <DiffViewModal projectPath={$diffViewStore.projectPath} onClose={() => diffViewStore.close()} />
+    {#await lazyDiffViewModal() then DiffViewModal}
+      <DiffViewModal
+        projectPath={$diffViewStore.projectPath}
+        onClose={() => diffViewStore.close()}
+      />
+    {/await}
   {/if}
 
   {#if $commitHistoryStore.isOpen && $commitHistoryStore.projectPath}
-    <CommitHistoryModal
-      projectPath={$commitHistoryStore.projectPath}
-      onClose={() => commitHistoryStore.close()}
-    />
+    {#await lazyCommitHistoryModal() then CommitHistoryModal}
+      <CommitHistoryModal
+        projectPath={$commitHistoryStore.projectPath}
+        onClose={() => commitHistoryStore.close()}
+      />
+    {/await}
   {/if}
 
   {#if $editorModalStore.isOpen && $editorModalStore.filePath}
-    <EditorModal filePath={$editorModalStore.filePath} onClose={() => editorModalStore.close()} />
+    {#await lazyEditorModal() then EditorModal}
+      <EditorModal filePath={$editorModalStore.filePath} onClose={() => editorModalStore.close()} />
+    {/await}
   {/if}
 
   {#if $isContentSearchOpen && projectStore.getCurrentPath()}
-    <ContentSearchModal onOpenFile={handleFileSelect} onClose={() => contentSearchStore.close()} />
+    {#await lazyContentSearchModal() then ContentSearchModal}
+      <ContentSearchModal
+        onOpenFile={handleFileSelect}
+        onClose={() => contentSearchStore.close()}
+      />
+    {/await}
   {/if}
 {:else}
   <StartScreen />
@@ -633,11 +667,15 @@
 {/if}
 
 {#if $remoteAccessViewStore.isSettingsOpen}
-  <RemoteAccessSettings onClose={() => remoteAccessViewStore.closeSettings()} />
+  {#await lazyRemoteAccessSettings() then RemoteAccessSettings}
+    <RemoteAccessSettings onClose={() => remoteAccessViewStore.closeSettings()} />
+  {/await}
 {/if}
 
 {#if $remoteAccessViewStore.isQrModalOpen}
-  <QrCodeModal onClose={() => remoteAccessViewStore.closeQrModal()} />
+  {#await lazyQrCodeModal() then QrCodeModal}
+    <QrCodeModal onClose={() => remoteAccessViewStore.closeQrModal()} />
+  {/await}
 {/if}
 
 {#if kiriSkillPrompt}

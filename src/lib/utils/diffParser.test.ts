@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseDiff, getAllChangedLines } from './diffParser';
+import { DIFF_SHAPE_FIXTURES } from './__fixtures__/diff-shapes';
 
 describe('parseDiff', () => {
   describe('empty input', () => {
@@ -213,4 +214,16 @@ describe('getAllChangedLines', () => {
     const result = getAllChangedLines(parsed);
     expect(result.size).toBe(0);
   });
+});
+
+describe('parseDiff: git diff shapes', () => {
+  it.each(DIFF_SHAPE_FIXTURES)(
+    '$name does not crash and matches expected line classification',
+    ({ diff, expectedAdded, expectedModified, expectedDeletedAt }) => {
+      const result = parseDiff(diff);
+      expect(result.addedLines).toEqual(expectedAdded);
+      expect(result.modifiedLines).toEqual(expectedModified);
+      expect(result.deletedAtLines).toEqual(expectedDeletedAt);
+    }
+  );
 });

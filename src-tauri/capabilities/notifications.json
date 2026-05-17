@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "notifications",
+  "description": "OS notification plugin permissions. Split out from `default.json` for clarity; today notifications can be fired from any window (`*`), but localising the grant here makes it easy to scope to specific labels later (e.g. main window only).",
+  "windows": ["*"],
+  "permissions": ["notification:default"]
+}

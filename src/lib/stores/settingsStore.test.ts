@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { settingsStore, fontSize, startupCommand, FONT_SIZE_CONSTRAINTS } from './settingsStore';
 
@@ -205,6 +205,66 @@ describe('settingsStore', () => {
       expect(get(startupCommand)).toBe('none');
       settingsStore.setStartupCommand('claude');
       expect(get(startupCommand)).toBe('claude');
+    });
+  });
+
+  describe('enableAutoPersist', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('does not persist until the post-restore delay elapses', () => {
+      const handler = vi.fn();
+      settingsStore.enableAutoPersist(handler, { delayMs: 100 });
+      // The subscribe registration fires the handler check immediately
+      // but `ready` is still false, so no save happens.
+      settingsStore.setFontSize(20);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it('persists every mutation after the delay', () => {
+      const handler = vi.fn();
+      settingsStore.enableAutoPersist(handler, { delayMs: 100 });
+      vi.advanceTimersByTime(150);
+
+      settingsStore.setFontSize(20);
+      expect(handler).toHaveBeenLastCalledWith(expect.objectContaining({ fontSize: 20 }));
+
+      settingsStore.setStartupCommand('claude');
+      expect(handler).toHaveBeenLastCalledWith(
+        expect.objectContaining({ startupCommand: 'claude' })
+      );
+
+      expect(handler).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns an unsubscribe that stops further saves', () => {
+      const handler = vi.fn();
+      const stop = settingsStore.enableAutoPersist(handler, { delayMs: 100 });
+      vi.advanceTimersByTime(150);
+
+      settingsStore.setFontSize(20);
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      stop();
+      settingsStore.setFontSize(22);
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+
+    it('a second enableAutoPersist replaces the first subscription', () => {
+      const first = vi.fn();
+      const second = vi.fn();
+      settingsStore.enableAutoPersist(first, { delayMs: 0 });
+      settingsStore.enableAutoPersist(second, { delayMs: 0 });
+      vi.advanceTimersByTime(10);
+
+      settingsStore.setFontSize(20);
+      expect(first).not.toHaveBeenCalled();
+      expect(second).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -20,8 +20,51 @@ const initialState: SettingsState = {
 function createSettingsStore() {
   const { subscribe, set, update } = writable<SettingsState>(initialState);
 
+  /**
+   * Once enabled, every state change after `restoreState` finishes is
+   * pushed to `handler` automatically, so callers never have to
+   * remember to invoke `saveSettings(getStateForPersistence())` after
+   * a mutation. Returns the unsubscribe function so the App can tear
+   * the auto-save down on window close.
+   *
+   * The 500ms delay before arming `ready` matches what App.svelte
+   * used to do inline: it avoids saving the snapshot we just hydrated
+   * from the persisted store.
+   */
+  let unsubscribePersist: (() => void) | null = null;
+  function enableAutoPersist(
+    handler: (state: SettingsState) => unknown,
+    options: { delayMs?: number } = {}
+  ): () => void {
+    if (unsubscribePersist) unsubscribePersist();
+    let ready = false;
+    const delayMs = options.delayMs ?? 500;
+    const timer = setTimeout(() => {
+      ready = true;
+    }, delayMs);
+    unsubscribePersist = subscribe((state) => {
+      if (!ready) return;
+      void handler(state);
+    });
+    return () => {
+      clearTimeout(timer);
+      if (unsubscribePersist) {
+        unsubscribePersist();
+        unsubscribePersist = null;
+      }
+    };
+  }
+
   return {
     subscribe,
+
+    /**
+     * Wire up auto-persistence. Pass the same `saveSettings(state)`
+     * that callers used to invoke manually; from then on every store
+     * mutation - existing or future field - is pushed to the handler
+     * without the caller having to remember.
+     */
+    enableAutoPersist,
 
     /**
      * Zoom in (increase font size)
@@ -82,7 +125,10 @@ function createSettingsStore() {
     },
 
     /**
-     * Get state for persistence
+     * @deprecated Prefer `enableAutoPersist()` over calling this and
+     * piping the result through `saveSettings(...)` by hand. Kept for
+     * tests and migration callers; the App wires `enableAutoPersist`
+     * during boot so mutations persist automatically.
      */
     getStateForPersistence: (): SettingsState => {
       return get({ subscribe });

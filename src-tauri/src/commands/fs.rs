@@ -1,6 +1,7 @@
 use serde::Serialize;
 use std::path::Path;
 
+use super::error::{user_io_error, user_path_error};
 use super::fs_gitignore::check_gitignore;
 use super::fs_io::{get_dir_entry, get_file_type, get_home_dir, open_repo, read_dir_entries};
 
@@ -45,30 +46,44 @@ fn is_excluded(name: &str) -> bool {
     EXCLUDED_NAMES.contains(&name)
 }
 
-#[tauri::command]
-pub fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
+/// Hard ceiling on entries returned by a single `read_directory` call.
+///
+/// The file tree is non-recursive and excludes `node_modules`, `target`,
+/// `.git`, etc. up-front, so the budget is comfortably above any sane
+/// project directory but tight enough to prevent a misconfigured "open
+/// /" call from streaming millions of entries back over IPC.
+const MAX_DIRECTORY_ENTRIES: usize = 10_000;
+
+/// Synchronous implementation of [`read_directory`], factored out so the
+/// async `#[tauri::command]` wrapper can drop into `spawn_blocking`.
+fn read_directory_blocking(path: String) -> Result<Vec<FileEntry>, String> {
     let path = Path::new(&path);
 
     if !path.exists() {
-        return Err(format!("Path does not exist: {}", path.display()));
+        return Err(user_path_error("Path does not exist", path));
     }
 
     if !path.is_dir() {
-        return Err(format!("Path is not a directory: {}", path.display()));
+        return Err(user_path_error("Path is not a directory", path));
     }
 
-    // Try to open git repository for gitignore checking
     let repo = find_repo_root(path).and_then(|root| open_repo(&root));
 
     let mut entries: Vec<FileEntry> = Vec::new();
-
     let read_dir = read_dir_entries(path)?;
 
     for entry in read_dir {
+        if entries.len() >= MAX_DIRECTORY_ENTRIES {
+            log::warn!(
+                "read_directory: truncating result at {} entries for {}",
+                MAX_DIRECTORY_ENTRIES,
+                path.display()
+            );
+            break;
+        }
         let entry = get_dir_entry(entry)?;
         let file_name = entry.file_name().to_string_lossy().to_string();
 
-        // Skip excluded directories
         if is_excluded(&file_name) {
             continue;
         }
@@ -77,7 +92,6 @@ pub fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
         let full_path = entry.path().to_string_lossy().to_string();
         let is_dir = file_type.is_dir();
 
-        // Check if path is gitignored
         let is_gitignored = repo
             .as_ref()
             .is_some_and(|r| check_gitignore(r, &entry.path(), is_dir));
@@ -91,16 +105,27 @@ pub fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
         });
     }
 
-    // Sort: directories first, then alphabetically
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
     Ok(entries)
+}
+
+/// Asynchronous Tauri wrapper around [`read_directory_blocking`].
+///
+/// The body performs `std::fs` calls and libgit2 work that can take tens
+/// of milliseconds on cold caches. Running it on a `spawn_blocking`
+/// thread keeps the tokio runtime — and therefore every other in-flight
+/// command and websocket frame — responsive even while a slow first
+/// `read_directory` is in progress.
+#[tauri::command]
+pub async fn read_directory(path: String) -> Result<Vec<FileEntry>, String> {
+    tokio::task::spawn_blocking(move || read_directory_blocking(path))
+        .await
+        .map_err(|e| format!("read_directory task panicked: {}", e))?
 }
 
 #[tauri::command]
@@ -113,18 +138,18 @@ pub fn create_directory(parent_path: String, name: String) -> Result<String, Str
     let parent = Path::new(&parent_path);
 
     if !parent.exists() {
-        return Err(format!("Parent path does not exist: {}", parent.display()));
+        return Err(user_path_error("Parent path does not exist", parent));
     }
 
     if !parent.is_dir() {
-        return Err(format!("Parent path is not a directory: {}", parent.display()));
+        return Err(user_path_error("Parent path is not a directory", parent));
     }
 
     // Support nested directory creation (e.g., "test/opt" creates both)
     let new_dir_path = parent.join(&name);
 
     std::fs::create_dir_all(&new_dir_path)
-        .map_err(|e| format!("Failed to create directory: {}", e))?;
+        .map_err(|e| user_io_error("Failed to create directory", e))?;
 
     Ok(new_dir_path.to_string_lossy().to_string())
 }
@@ -134,13 +159,13 @@ pub fn delete_path(path: String) -> Result<(), String> {
     let path = Path::new(&path);
 
     if !path.exists() {
-        return Err(format!("Path does not exist: {}", path.display()));
+        return Err(user_path_error("Path does not exist", path));
     }
 
     if path.is_dir() {
-        std::fs::remove_dir_all(path).map_err(|e| format!("Failed to delete directory: {}", e))
+        std::fs::remove_dir_all(path).map_err(|e| user_io_error("Failed to delete directory", e))
     } else {
-        std::fs::remove_file(path).map_err(|e| format!("Failed to delete file: {}", e))
+        std::fs::remove_file(path).map_err(|e| user_io_error("Failed to delete file", e))
     }
 }
 
@@ -236,7 +261,7 @@ mod tests {
         fs::write(dir.path().join("file2.rs"), "fn main() {}").unwrap();
         fs::create_dir(dir.path().join("subdir")).unwrap();
 
-        let result = read_directory(dir.path().to_string_lossy().to_string());
+        let result = read_directory_blocking(dir.path().to_string_lossy().to_string());
         assert!(result.is_ok());
 
         let entries = result.unwrap();
@@ -249,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_read_directory_nonexistent() {
-        let result = read_directory("/nonexistent/path".to_string());
+        let result = read_directory_blocking("/nonexistent/path".to_string());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("does not exist"));
     }
@@ -260,7 +285,7 @@ mod tests {
         let file_path = dir.path().join("file.txt");
         fs::write(&file_path, "content").unwrap();
 
-        let result = read_directory(file_path.to_string_lossy().to_string());
+        let result = read_directory_blocking(file_path.to_string_lossy().to_string());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not a directory"));
     }
@@ -272,7 +297,7 @@ mod tests {
         fs::create_dir(dir.path().join("src")).unwrap();
         fs::create_dir(dir.path().join("node_modules")).unwrap();
 
-        let result = read_directory(dir.path().to_string_lossy().to_string());
+        let result = read_directory_blocking(dir.path().to_string_lossy().to_string());
         assert!(result.is_ok());
 
         let entries = result.unwrap();
@@ -287,7 +312,7 @@ mod tests {
         fs::write(dir.path().join(".hidden"), "hidden").unwrap();
         fs::write(dir.path().join("visible.txt"), "visible").unwrap();
 
-        let result = read_directory(dir.path().to_string_lossy().to_string());
+        let result = read_directory_blocking(dir.path().to_string_lossy().to_string());
         assert!(result.is_ok());
 
         let entries = result.unwrap();
@@ -311,7 +336,7 @@ mod tests {
         fs::create_dir(dir.path().join("banana")).unwrap();
         fs::create_dir(dir.path().join("cherry")).unwrap();
 
-        let result = read_directory(dir.path().to_string_lossy().to_string());
+        let result = read_directory_blocking(dir.path().to_string_lossy().to_string());
         assert!(result.is_ok());
 
         let entries = result.unwrap();
@@ -342,7 +367,7 @@ mod tests {
 
         fs::write(dir.path().join("test.txt"), "content").unwrap();
 
-        let result = read_directory(dir.path().to_string_lossy().to_string());
+        let result = read_directory_blocking(dir.path().to_string_lossy().to_string());
         assert!(result.is_ok());
 
         let entries = result.unwrap();
@@ -365,7 +390,7 @@ mod tests {
         // Create files
         fs::write(dir.path().join("normal.txt"), "normal").unwrap();
 
-        let result = read_directory(dir.path().to_string_lossy().to_string());
+        let result = read_directory_blocking(dir.path().to_string_lossy().to_string());
         assert!(result.is_ok());
 
         let entries = result.unwrap();
@@ -384,7 +409,7 @@ mod tests {
         // Create files (not a git repo)
         fs::write(dir.path().join("file.txt"), "content").unwrap();
 
-        let result = read_directory(dir.path().to_string_lossy().to_string());
+        let result = read_directory_blocking(dir.path().to_string_lossy().to_string());
         assert!(result.is_ok());
 
         let entries = result.unwrap();
@@ -528,7 +553,7 @@ mod tests {
         // Create a non-ignored directory
         fs::create_dir(dir.path().join("normal_dir")).unwrap();
 
-        let result = read_directory(dir.path().to_string_lossy().to_string());
+        let result = read_directory_blocking(dir.path().to_string_lossy().to_string());
         assert!(result.is_ok());
 
         let entries = result.unwrap();
@@ -560,7 +585,7 @@ mod tests {
         // Create a non-ignored file
         fs::write(dir.path().join("normal.txt"), "normal data").unwrap();
 
-        let result = read_directory(dir.path().to_string_lossy().to_string());
+        let result = read_directory_blocking(dir.path().to_string_lossy().to_string());
         assert!(result.is_ok());
 
         let entries = result.unwrap();
@@ -588,7 +613,7 @@ mod tests {
         fs::write(nested_dir.join("file.txt"), "content").unwrap();
 
         // Read directory should handle the workdir path correctly
-        let result = read_directory(nested_dir.to_string_lossy().to_string());
+        let result = read_directory_blocking(nested_dir.to_string_lossy().to_string());
         assert!(result.is_ok());
 
         // Verify repo workdir is available
@@ -608,7 +633,7 @@ mod tests {
         fs::write(dir.path().join("file.txt"), "content").unwrap();
 
         // Read the repo root directory
-        let result = read_directory(dir.path().to_string_lossy().to_string());
+        let result = read_directory_blocking(dir.path().to_string_lossy().to_string());
         assert!(result.is_ok());
 
         let entries = result.unwrap();
@@ -727,5 +752,43 @@ mod tests {
         let file_result = check_gitignore(&repo, &test_file, false);
         // Should return false as no .gitignore is set up
         assert!(!file_result);
+    }
+
+    #[test]
+    fn test_read_directory_blocking_caps_at_max_entries() {
+        // Create more entries than the cap and verify the result is
+        // truncated rather than allowed to grow unbounded.
+        let dir = tempdir().unwrap();
+        // Use 5 over the cap to keep the test fast; libgit2 isn't
+        // involved here because the temp dir isn't a repo.
+        let total = MAX_DIRECTORY_ENTRIES + 5;
+        for i in 0..total {
+            fs::write(dir.path().join(format!("f{}.txt", i)), b"").unwrap();
+        }
+
+        let result = read_directory_blocking(dir.path().to_string_lossy().to_string()).unwrap();
+        assert!(
+            result.len() <= MAX_DIRECTORY_ENTRIES,
+            "expected at most {} entries, got {}",
+            MAX_DIRECTORY_ENTRIES,
+            result.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_read_directory_async_wrapper_returns_same_result() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.txt"), b"").unwrap();
+        fs::create_dir(dir.path().join("subdir")).unwrap();
+
+        let blocking = read_directory_blocking(dir.path().to_string_lossy().to_string()).unwrap();
+        let async_result = read_directory(dir.path().to_string_lossy().to_string())
+            .await
+            .unwrap();
+        assert_eq!(blocking.len(), async_result.len());
+        for (b, a) in blocking.iter().zip(async_result.iter()) {
+            assert_eq!(b.name, a.name);
+            assert_eq!(b.is_dir, a.is_dir);
+        }
     }
 }

@@ -1,0 +1,70 @@
+name: Performance issue
+description: kiri is slower than its performance budget or than you expect.
+labels: ["performance"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        kiri has explicit performance budgets (see the README). If you are
+        reporting a regression against one of them, please include the
+        measurement you are seeing alongside the budget.
+
+  - type: input
+    id: version
+    attributes:
+      label: kiri version
+      placeholder: "v0.5.1"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS and architecture
+      placeholder: "macOS 15.2 (Apple Silicon)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Scenario
+      description: What were you doing when you observed the slowdown?
+    validations:
+      required: true
+
+  - type: textarea
+    id: measurement
+    attributes:
+      label: Measurement
+      description: |
+        What did you measure, and how? Stopwatch numbers are fine; output
+        from `npm run perf:measure` is better. Include both the observed
+        value and the expected/budgeted value.
+      placeholder: |
+        Idle memory: 84 MB
+        Budget: <50 MB
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: false
+
+  - type: textarea
+    id: profile
+    attributes:
+      label: Profile / trace
+      description: |
+        Drag in a flamegraph, `npm run perf:measure:json` output, or any
+        other artefact that helps localise the cost. Skip if you do not
+        have one.
+    validations:
+      required: false

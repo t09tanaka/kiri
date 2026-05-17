@@ -1,6 +1,11 @@
 use serde::Serialize;
+use std::collections::HashSet;
 use std::ffi::OsStr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Maximum directory nesting depth followed during recursive copy/move.
+/// Guards against pathological deep trees and unexpected runtime cost.
+const MAX_COPY_DEPTH: usize = 64;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CopyResult {
@@ -99,16 +104,63 @@ fn copy_directory(source: &Path, target_dir: &Path) -> Result<String, String> {
     Ok(target_path.to_string_lossy().to_string())
 }
 
-/// Copy contents of source directory to target directory
+/// Copy contents of source directory to target directory.
+///
+/// Symlinks are NOT followed: traversing them could escape the source root,
+/// follow loops, or copy unrelated files outside the user's intent. They are
+/// skipped silently here; callers that need different behavior should walk
+/// the tree themselves.
+///
+/// `visited` tracks canonical paths already entered during this copy to
+/// detect symlink loops as defense-in-depth even though we don't follow
+/// symlinks (a hard-link cycle, or any future code path that does follow,
+/// would still be caught).
 fn copy_directory_contents(source: &Path, target: &Path) -> Result<(), String> {
+    let mut visited = HashSet::new();
+    copy_directory_contents_inner(source, target, &mut visited, 0)
+}
+
+fn copy_directory_contents_inner(
+    source: &Path,
+    target: &Path,
+    visited: &mut HashSet<PathBuf>,
+    depth: usize,
+) -> Result<(), String> {
+    if depth > MAX_COPY_DEPTH {
+        return Err(format!(
+            "Refusing to copy: directory depth exceeds {}",
+            MAX_COPY_DEPTH
+        ));
+    }
+
+    // Mark source as visited by canonical path to detect cycles.
+    if let Ok(canon) = source.canonicalize() {
+        if !visited.insert(canon) {
+            return Err("Refusing to copy: directory loop detected".to_string());
+        }
+    }
+
     let entries = std::fs::read_dir(source)
         .map_err(|e| format!("Failed to read directory: {}", e))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        // entry.file_type() does NOT follow symlinks (unlike path.is_dir()).
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("Failed to read entry type: {}", e))?;
         let path = entry.path();
 
-        if path.is_dir() {
+        if file_type.is_symlink() {
+            // Skip symlinks entirely to avoid escaping the source tree.
+            log::warn!(
+                "copy_directory_contents: skipping symlink {}",
+                path.display()
+            );
+            continue;
+        }
+
+        if file_type.is_dir() {
             let dir_name = path
                 .file_name()
                 .and_then(OsStr::to_str)
@@ -116,8 +168,8 @@ fn copy_directory_contents(source: &Path, target: &Path) -> Result<(), String> {
             let new_target = target.join(dir_name);
             std::fs::create_dir(&new_target)
                 .map_err(|e| format!("Failed to create subdirectory: {}", e))?;
-            copy_directory_contents(&path, &new_target)?;
-        } else {
+            copy_directory_contents_inner(&path, &new_target, visited, depth + 1)?;
+        } else if file_type.is_file() {
             let file_name = path
                 .file_name()
                 .and_then(OsStr::to_str)
@@ -126,6 +178,7 @@ fn copy_directory_contents(source: &Path, target: &Path) -> Result<(), String> {
             std::fs::copy(&path, &target_file)
                 .map_err(|e| format!("Failed to copy file: {}", e))?;
         }
+        // Other entry kinds (sockets, fifos, devices) are skipped silently.
     }
 
     Ok(())
@@ -1977,5 +2030,96 @@ mod tests {
         // Restore permissions for cleanup
         fs::set_permissions(&sub, fs::Permissions::from_mode(0o755)).unwrap();
         fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    // --- Symlink hardening tests for copy_directory_contents ---
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_directory_skips_file_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let outside = tempdir().unwrap();
+        let secret = outside.path().join("secret.txt");
+        fs::write(&secret, "should not be copied").unwrap();
+
+        let src = tempdir().unwrap();
+        fs::write(src.path().join("ok.txt"), "ok").unwrap();
+        symlink(&secret, src.path().join("link_to_outside.txt")).unwrap();
+
+        let dst = tempdir().unwrap();
+        let result = copy_directory_contents(src.path(), dst.path());
+        assert!(result.is_ok(), "copy should succeed, got {:?}", result);
+
+        // ok.txt copied, symlink NOT followed (no file from `outside` copied).
+        assert!(dst.path().join("ok.txt").exists());
+        assert!(!dst.path().join("link_to_outside.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_directory_skips_dir_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let outside = tempdir().unwrap();
+        let outside_sub = outside.path().join("subdir");
+        fs::create_dir(&outside_sub).unwrap();
+        fs::write(outside_sub.join("leaked.txt"), "leaked").unwrap();
+
+        let src = tempdir().unwrap();
+        fs::write(src.path().join("normal.txt"), "normal").unwrap();
+        symlink(&outside_sub, src.path().join("escape")).unwrap();
+
+        let dst = tempdir().unwrap();
+        let result = copy_directory_contents(src.path(), dst.path());
+        assert!(result.is_ok());
+
+        assert!(dst.path().join("normal.txt").exists());
+        // The directory symlink is NOT followed.
+        assert!(!dst.path().join("escape").exists());
+        // And, importantly, "leaked.txt" did not slip into the destination.
+        assert!(!dst.path().join("leaked.txt").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_copy_directory_detects_symlink_loop_without_hanging() {
+        use std::os::unix::fs::symlink;
+
+        // src/loop -> src  (classic self-referential symlink)
+        let src = tempdir().unwrap();
+        fs::write(src.path().join("real.txt"), "ok").unwrap();
+        symlink(src.path(), src.path().join("loop")).unwrap();
+
+        let dst = tempdir().unwrap();
+        // Must terminate (we skip symlinks entirely, but the visited-set
+        // sanity check also guarantees no infinite recursion if anyone
+        // ever changes the symlink policy).
+        let result = copy_directory_contents(src.path(), dst.path());
+        assert!(result.is_ok(), "expected copy to terminate; got {:?}", result);
+        assert!(dst.path().join("real.txt").exists());
+        assert!(!dst.path().join("loop").exists());
+    }
+
+    #[test]
+    fn test_copy_directory_depth_limit() {
+        // Build a tree deeper than MAX_COPY_DEPTH to ensure we error out
+        // instead of recursing unboundedly. We construct 70 nested dirs.
+        let src = tempdir().unwrap();
+        let mut p = src.path().to_path_buf();
+        for i in 0..MAX_COPY_DEPTH + 5 {
+            p = p.join(format!("d{}", i));
+            fs::create_dir(&p).unwrap();
+        }
+
+        let dst = tempdir().unwrap();
+        let result = copy_directory_contents(src.path(), dst.path());
+        assert!(result.is_err(), "depth limit should trip");
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("depth"),
+            "expected depth error, got: {}",
+            msg
+        );
     }
 }
