@@ -188,7 +188,13 @@ CI fails the build if the bundle exceeds the size budget.
 
 ## Contributing
 
-Issues and PRs welcome. Useful commands during development:
+Issues and PRs welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) — it
+covers setup, scripts, the test policy, branch/commit conventions, and the PR
+checklist. Longer-form contributor docs live under
+[`docs/contributing/`](docs/contributing/); release and other maintainer
+notes live under [`docs/maintainers/`](docs/maintainers/).
+
+Most-used commands while iterating:
 
 | Command | Description |
 |---------|-------------|
@@ -199,8 +205,6 @@ Issues and PRs welcome. Useful commands during development:
 | `npm run test:rust` | Rust tests |
 | `npm run lint` / `lint:fix` | ESLint + Svelte check |
 | `npm run format` | Prettier + rustfmt |
-
-See [`CLAUDE.md`](CLAUDE.md) for project conventions and [`.claude/rules/`](.claude/rules/) for the design rules CI enforces (testing policy, multi-window data flow, design tokens, etc.).
 
 ## License
 
