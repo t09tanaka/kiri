@@ -188,7 +188,13 @@ CI fails the build if the bundle exceeds the size budget.
 
 ## Contributing
 
-Issues and PRs welcome. Useful commands during development:
+Issues and PRs welcome. Start with [`CONTRIBUTING.md`](CONTRIBUTING.md) — it
+covers setup, scripts, the test policy, branch/commit conventions, and the PR
+checklist. Longer-form contributor docs live under
+[`docs/contributing/`](docs/contributing/); release and other maintainer
+notes live under [`docs/maintainers/`](docs/maintainers/).
+
+Most-used commands while iterating:
 
 | Command | Description |
 |---------|-------------|
