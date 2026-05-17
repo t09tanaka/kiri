@@ -31,6 +31,19 @@ async fn run() -> Result<i32> {
     let args = Cli::parse();
     let pretty = args.pretty;
 
+    // `env` does not need a live kiri socket, so handle it before
+    // resolve_socket() — that lets users run it outside a kiri
+    // terminal or when KIRI_SOCKET is stale.
+    if matches!(&args.command, Top::Env) {
+        let snapshot = collect_env_snapshot().await;
+        if pretty {
+            render::render_env_pretty(&snapshot);
+        } else {
+            println!("{}", serde_json::to_string(&snapshot)?);
+        }
+        return Ok(0);
+    }
+
     // `signal wait --print-data` decodes the payload only on the success
     // path; capture it now so we can branch on it after the response
     // arrives.
@@ -41,6 +54,7 @@ async fn run() -> Result<i32> {
 
     let req = match args.command {
         Top::Term(t) => build_request(t)?,
+        Top::Env => unreachable!("env is handled above"),
     };
 
     let socket = resolve_socket().await?;
@@ -217,6 +231,119 @@ async fn query_window_project(sock: &Path) -> Option<PathBuf> {
     None
 }
 
+/// Snapshot of the kiri environment as seen by the CLI.
+///
+/// Returned by `kiri env`. Captures the env vars the CLI relies on, the
+/// state of the configured socket, and every kiri window the CLI can
+/// see, so callers can debug "why can't `kiri term split` find my
+/// window" without running a privileged subcommand.
+#[derive(Debug, serde::Serialize)]
+pub struct EnvSnapshot {
+    /// `KIRI_SOCKET` env var as set by the parent process, or `None`
+    /// when unset. Inside a kiri terminal this points at the parent
+    /// window's UDS.
+    pub kiri_socket: Option<String>,
+    /// `KIRI_TERMINAL` env var. The kiri host sets this to `"1"` in
+    /// every PTY it spawns, so it is the cheapest "am I running inside
+    /// kiri?" check.
+    pub kiri_terminal: Option<String>,
+    /// True when this process is running inside a kiri-spawned shell
+    /// (`KIRI_TERMINAL=1`). The host sets this on every PTY, so the
+    /// check is reliable even when `KIRI_SOCKET` is missing.
+    pub in_kiri_terminal: bool,
+    /// True when `KIRI_SOCKET` points at a file that exists on disk
+    /// **and** accepts a connection. Stale sockets (file present but
+    /// no listener) appear as `false` here.
+    pub configured_socket_alive: bool,
+    /// `~/.kiri/instances/` if the home directory can be resolved.
+    pub instances_dir: Option<String>,
+    /// All live kiri windows found by scanning `instances_dir`. Each
+    /// entry includes the absolute socket path and the project the
+    /// window has open, when the host reports one.
+    pub discovered_windows: Vec<DiscoveredWindow>,
+    /// Project root inferred from the current working directory by
+    /// walking up looking for `.git`. `None` outside any repo.
+    pub cwd_project: Option<String>,
+    /// Path of the socket that `kiri term` would target right now,
+    /// computed with the same priority order as `resolve_socket`. Null
+    /// when no usable target exists.
+    pub resolved_socket: Option<String>,
+    /// Human-readable explanation of how `resolved_socket` was chosen
+    /// (or why it could not be). Stable enough to grep in scripts but
+    /// not part of the JSON schema contract.
+    pub resolution: String,
+}
+
+/// One row in `EnvSnapshot::discovered_windows`.
+#[derive(Debug, serde::Serialize)]
+pub struct DiscoveredWindow {
+    pub socket: String,
+    pub project: Option<String>,
+}
+
+/// Build an [`EnvSnapshot`] without sending any state-changing
+/// requests. Probes are best-effort: a failure to read a directory or
+/// query a window leaves the corresponding field empty rather than
+/// aborting.
+pub async fn collect_env_snapshot() -> EnvSnapshot {
+    let kiri_socket = std::env::var("KIRI_SOCKET").ok().filter(|s| !s.is_empty());
+    let kiri_terminal = std::env::var("KIRI_TERMINAL")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let in_kiri_terminal = kiri_terminal.as_deref() == Some("1");
+
+    let configured_socket_alive = match kiri_socket.as_deref() {
+        Some(p) => {
+            let path = PathBuf::from(p);
+            path.exists() && socket_alive(&path).await
+        }
+        None => false,
+    };
+
+    let instances_dir = dirs::home_dir().map(|h| h.join(".kiri").join("instances"));
+    let instances_dir_str = instances_dir.as_ref().map(|p| p.display().to_string());
+
+    let mut discovered: Vec<DiscoveredWindow> = Vec::new();
+    if let Some(dir) = instances_dir.as_ref() {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) != Some("sock") {
+                    continue;
+                }
+                if !socket_alive(&path).await {
+                    continue;
+                }
+                let project = query_window_project(&path).await;
+                discovered.push(DiscoveredWindow {
+                    socket: path.display().to_string(),
+                    project: project.map(|p| p.display().to_string()),
+                });
+            }
+        }
+    }
+
+    let cwd = std::env::current_dir().ok();
+    let cwd_project = cwd.as_deref().and_then(current_project_root);
+
+    let (resolved_socket, resolution) = match resolve_socket().await {
+        Ok(p) => (Some(p.display().to_string()), "resolved".to_string()),
+        Err(e) => (None, format!("{e:#}")),
+    };
+
+    EnvSnapshot {
+        kiri_socket,
+        kiri_terminal,
+        in_kiri_terminal,
+        configured_socket_alive,
+        instances_dir: instances_dir_str,
+        discovered_windows: discovered,
+        cwd_project: cwd_project.map(|p| p.display().to_string()),
+        resolved_socket,
+        resolution,
+    }
+}
+
 /// Cheap liveness probe: try to connect, drop the connection immediately.
 async fn socket_alive(path: &std::path::Path) -> bool {
     use interprocess::local_socket::tokio::prelude::*;
@@ -322,6 +449,7 @@ mod tests {
         let cli = Cli::try_parse_from(args).unwrap();
         match cli.command {
             Top::Term(t) => t,
+            Top::Env => panic!("expected Top::Term, got Top::Env"),
         }
     }
 
@@ -445,5 +573,40 @@ mod tests {
         // that has since been removed from disk; this must not panic.
         let phantom = Path::new("/this/path/does/not/exist/anywhere");
         assert!(is_same_or_within_project(phantom, phantom));
+    }
+
+    #[test]
+    fn env_top_parses_with_no_args() {
+        // `kiri env` is the entry point used outside a kiri terminal,
+        // so it must parse without any subcommand or flag.
+        let cli = Cli::try_parse_from(["kiri", "env"]).unwrap();
+        assert!(matches!(cli.command, Top::Env));
+    }
+
+    #[test]
+    fn env_top_supports_pretty_flag() {
+        // The global --pretty flag must apply to `env` the same way it
+        // applies to `term` subcommands.
+        let cli = Cli::try_parse_from(["kiri", "--pretty", "env"]).unwrap();
+        assert!(cli.pretty);
+        assert!(matches!(cli.command, Top::Env));
+    }
+
+    #[tokio::test]
+    async fn env_snapshot_serialises_outside_a_kiri_terminal() {
+        // CI runs without KIRI_SOCKET / KIRI_TERMINAL set; the snapshot
+        // must still serialise to valid JSON so machine callers can
+        // detect "not in a kiri terminal" from a stable schema.
+        //
+        // Side note: collect_env_snapshot reads process-level env vars
+        // and the home directory. The CI sandbox makes both predictable
+        // enough for a smoke test; we do not assert specific values
+        // beyond "fields are present and JSON is valid".
+        let snap = collect_env_snapshot().await;
+        let json = serde_json::to_value(&snap).expect("serialises");
+        assert!(json.get("kiri_socket").is_some());
+        assert!(json.get("in_kiri_terminal").is_some());
+        assert!(json.get("discovered_windows").is_some());
+        assert!(json.get("resolution").is_some());
     }
 }
