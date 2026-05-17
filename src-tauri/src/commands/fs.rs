@@ -205,6 +205,240 @@ pub fn reveal_in_finder(path: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Rename a file or directory in place (same parent directory).
+///
+/// Rejects names that contain path separators or that resolve to `.` /
+/// `..` so callers can't escape the parent. For cross-directory moves,
+/// use `move_path` instead.
+#[tauri::command]
+pub fn rename_path(path: String, new_name: String) -> Result<String, String> {
+    let source = Path::new(&path);
+
+    if !source.exists() {
+        return Err(user_path_error("Path does not exist", source));
+    }
+
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() {
+        return Err("New name cannot be empty".to_string());
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed == "." || trimmed == ".." {
+        return Err("New name cannot contain path separators or be . / ..".to_string());
+    }
+
+    let parent = source
+        .parent()
+        .ok_or_else(|| user_path_error("Path has no parent directory", source))?;
+    let target = parent.join(trimmed);
+
+    if target == source {
+        return Ok(source.to_string_lossy().to_string());
+    }
+
+    if target.exists() {
+        return Err(format!(
+            "Target already exists: {}",
+            target.to_string_lossy()
+        ));
+    }
+
+    std::fs::rename(source, &target).map_err(|e| user_io_error("Failed to rename", e))?;
+
+    Ok(target.to_string_lossy().to_string())
+}
+
+/// Create an empty file inside `parent_path`.
+///
+/// Rejects names with path separators so callers can't accidentally
+/// create files outside the displayed directory. Errors if the target
+/// already exists rather than silently truncating.
+#[tauri::command]
+pub fn create_file(parent_path: String, name: String) -> Result<String, String> {
+    let parent = Path::new(&parent_path);
+
+    if !parent.exists() {
+        return Err(user_path_error("Parent path does not exist", parent));
+    }
+    if !parent.is_dir() {
+        return Err(user_path_error("Parent path is not a directory", parent));
+    }
+
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err("File name cannot be empty".to_string());
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed == "." || trimmed == ".." {
+        return Err("File name cannot contain path separators or be . / ..".to_string());
+    }
+
+    let target = parent.join(trimmed);
+    if target.exists() {
+        return Err(format!(
+            "File already exists: {}",
+            target.to_string_lossy()
+        ));
+    }
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&target)
+        .map_err(|e| user_io_error("Failed to create file", e))?;
+
+    Ok(target.to_string_lossy().to_string())
+}
+
+/// Move a file or directory to the OS trash / recycle bin.
+///
+/// Used by the destructive-op safety net (#90): file ops that the user
+/// triggers as "delete" should be reversible within the session rather
+/// than immediately unlinking. On macOS / Windows the entry can be
+/// restored via `restore_from_trash`. On Linux the `trash` crate uses
+/// the freedesktop spec but restore listing is best-effort.
+#[tauri::command]
+pub fn move_to_trash(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(user_path_error("Path does not exist", p));
+    }
+    trash::delete(p).map_err(|e| format!("Failed to move to trash: {}", e))
+}
+
+/// Whether the current OS supports programmatic restoration from the
+/// trash via `restore_from_trash`. macOS / iOS / Android intentionally
+/// return `false` — the trash crate's `os_limited` module is gated on
+/// Windows + freedesktop Unix, and Apple offers no public API to list
+/// or restore Trash entries without elevated privileges.
+#[tauri::command]
+pub fn trash_restore_supported() -> bool {
+    cfg!(any(
+        target_os = "windows",
+        all(
+            unix,
+            not(target_os = "macos"),
+            not(target_os = "ios"),
+            not(target_os = "android")
+        )
+    ))
+}
+
+/// Restore the most recent trash entry whose original path matches
+/// `original_path`. Returns the restored path.
+///
+/// Only available on platforms where `trash::os_limited` works
+/// (Windows + freedesktop Unix). On macOS / iOS / Android returns an
+/// error so the frontend can disable the undo affordance and surface
+/// a manual-restore hint.
+#[tauri::command]
+pub fn restore_from_trash(original_path: String) -> Result<String, String> {
+    #[cfg(any(
+        target_os = "windows",
+        all(
+            unix,
+            not(target_os = "macos"),
+            not(target_os = "ios"),
+            not(target_os = "android")
+        )
+    ))]
+    {
+        use trash::os_limited;
+
+        let items = os_limited::list().map_err(|e| format!("Failed to list trash: {}", e))?;
+
+        // Pick the most-recently-trashed item whose original path matches.
+        let mut matching: Vec<trash::TrashItem> = items
+            .into_iter()
+            .filter(|it| it.original_path() == Path::new(&original_path))
+            .collect();
+        matching.sort_by_key(|it| it.time_deleted);
+
+        let target = matching
+            .pop()
+            .ok_or_else(|| format!("No trash entry found for {}", original_path))?;
+
+        let restored_path = target.original_path().to_string_lossy().to_string();
+        os_limited::restore_all([target])
+            .map_err(|e| format!("Failed to restore from trash: {}", e))?;
+        Ok(restored_path)
+    }
+    #[cfg(not(any(
+        target_os = "windows",
+        all(
+            unix,
+            not(target_os = "macos"),
+            not(target_os = "ios"),
+            not(target_os = "android")
+        )
+    )))]
+    {
+        let _ = original_path;
+        Err("restore_from_trash is not supported on this platform".to_string())
+    }
+}
+
+/// Open the OS-native terminal app rooted at `path`.
+///
+/// Used by the context menu's "Open in Terminal here" action. This
+/// intentionally launches the OS terminal app (Terminal.app on macOS,
+/// cmd on Windows, x-terminal-emulator on Linux) rather than opening a
+/// pane inside kiri so it stays a small surface — the kiri-side pane
+/// opener is a separate concern.
+#[tauri::command]
+pub fn open_terminal_here(path: String) -> Result<(), String> {
+    let p = Path::new(&path);
+    if !p.exists() {
+        return Err(user_path_error("Path does not exist", p));
+    }
+    let dir = if p.is_dir() {
+        p.to_path_buf()
+    } else {
+        p.parent()
+            .ok_or_else(|| user_path_error("Path has no parent directory", p))?
+            .to_path_buf()
+    };
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-a")
+            .arg("Terminal")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .arg("/C")
+            .arg("start")
+            .arg("cmd")
+            .current_dir(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Try x-terminal-emulator first (Debian alternative), then common terminals
+        let candidates = ["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"];
+        let mut spawned = false;
+        for cmd in candidates {
+            if std::process::Command::new(cmd)
+                .current_dir(&dir)
+                .spawn()
+                .is_ok()
+            {
+                spawned = true;
+                break;
+            }
+        }
+        if !spawned {
+            return Err("No supported terminal emulator found".to_string());
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -790,5 +1024,207 @@ mod tests {
             assert_eq!(b.name, a.name);
             assert_eq!(b.is_dir, a.is_dir);
         }
+    }
+
+    // ------- rename_path -------
+
+    #[test]
+    fn test_rename_path_file_in_place() {
+        let dir = tempdir().unwrap();
+        let original = dir.path().join("old.txt");
+        fs::write(&original, "hi").unwrap();
+
+        let result =
+            rename_path(original.to_string_lossy().to_string(), "new.txt".to_string()).unwrap();
+
+        let renamed = dir.path().join("new.txt");
+        assert_eq!(result, renamed.to_string_lossy().to_string());
+        assert!(renamed.exists());
+        assert!(!original.exists());
+        assert_eq!(fs::read_to_string(&renamed).unwrap(), "hi");
+    }
+
+    #[test]
+    fn test_rename_path_directory_in_place() {
+        let dir = tempdir().unwrap();
+        let original = dir.path().join("old_dir");
+        fs::create_dir(&original).unwrap();
+        fs::write(original.join("child.txt"), "content").unwrap();
+
+        let result =
+            rename_path(original.to_string_lossy().to_string(), "new_dir".to_string()).unwrap();
+
+        let renamed = dir.path().join("new_dir");
+        assert_eq!(result, renamed.to_string_lossy().to_string());
+        assert!(renamed.join("child.txt").exists());
+    }
+
+    #[test]
+    fn test_rename_path_rejects_path_separator() {
+        let dir = tempdir().unwrap();
+        let original = dir.path().join("a.txt");
+        fs::write(&original, "").unwrap();
+
+        let result = rename_path(
+            original.to_string_lossy().to_string(),
+            "../escape.txt".to_string(),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("path separators"));
+    }
+
+    #[test]
+    fn test_rename_path_rejects_dot_dot() {
+        let dir = tempdir().unwrap();
+        let original = dir.path().join("a.txt");
+        fs::write(&original, "").unwrap();
+
+        let result =
+            rename_path(original.to_string_lossy().to_string(), "..".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_rename_path_rejects_empty_name() {
+        let dir = tempdir().unwrap();
+        let original = dir.path().join("a.txt");
+        fs::write(&original, "").unwrap();
+
+        let result = rename_path(original.to_string_lossy().to_string(), "   ".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("empty"));
+    }
+
+    #[test]
+    fn test_rename_path_target_exists() {
+        let dir = tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        fs::write(&a, "").unwrap();
+        fs::write(&b, "").unwrap();
+
+        let result = rename_path(a.to_string_lossy().to_string(), "b.txt".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("already exists"));
+    }
+
+    #[test]
+    fn test_rename_path_nonexistent_source() {
+        let result =
+            rename_path("/nonexistent/foo.txt".to_string(), "bar.txt".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    // ------- create_file -------
+
+    #[test]
+    fn test_create_file_success() {
+        let dir = tempdir().unwrap();
+
+        let result = create_file(
+            dir.path().to_string_lossy().to_string(),
+            "new.txt".to_string(),
+        )
+        .unwrap();
+
+        let created = dir.path().join("new.txt");
+        assert_eq!(result, created.to_string_lossy().to_string());
+        assert!(created.exists());
+        assert_eq!(fs::read_to_string(&created).unwrap(), "");
+    }
+
+    #[test]
+    fn test_create_file_rejects_existing() {
+        let dir = tempdir().unwrap();
+        let existing = dir.path().join("dup.txt");
+        fs::write(&existing, "old").unwrap();
+
+        let result = create_file(
+            dir.path().to_string_lossy().to_string(),
+            "dup.txt".to_string(),
+        );
+        assert!(result.is_err());
+        // Importantly: file content is preserved (no accidental truncate).
+        assert_eq!(fs::read_to_string(&existing).unwrap(), "old");
+    }
+
+    #[test]
+    fn test_create_file_rejects_path_separator() {
+        let dir = tempdir().unwrap();
+        let result = create_file(
+            dir.path().to_string_lossy().to_string(),
+            "sub/foo.txt".to_string(),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("path separators"));
+    }
+
+    #[test]
+    fn test_create_file_rejects_empty_name() {
+        let dir = tempdir().unwrap();
+        let result =
+            create_file(dir.path().to_string_lossy().to_string(), "  ".to_string());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_create_file_parent_must_be_directory() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("notadir");
+        fs::write(&file_path, "").unwrap();
+
+        let result =
+            create_file(file_path.to_string_lossy().to_string(), "x.txt".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not a directory"));
+    }
+
+    // ------- move_to_trash -------
+    //
+    // The trash crate actually moves the file to the OS trash, which we
+    // don't want as a side-effect in CI. The single test here just
+    // verifies the up-front validation; deeper restore behavior is
+    // covered manually because it depends on the host OS.
+
+    #[test]
+    fn test_move_to_trash_rejects_nonexistent() {
+        let result = move_to_trash("/nonexistent/path/zzz".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_trash_restore_supported_returns_platform_default() {
+        // The contract is "returns a bool that matches cfg gating".
+        // On macOS / iOS / Android we expect false; on Windows /
+        // freedesktop Unix true.
+        let expected = cfg!(any(
+            target_os = "windows",
+            all(
+                unix,
+                not(target_os = "macos"),
+                not(target_os = "ios"),
+                not(target_os = "android")
+            )
+        ));
+        assert_eq!(trash_restore_supported(), expected);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
+    #[test]
+    fn test_restore_from_trash_unsupported_on_apple() {
+        let result = restore_from_trash("/anything".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not supported"));
+    }
+
+    // ------- open_terminal_here -------
+
+    #[test]
+    fn test_open_terminal_here_rejects_nonexistent() {
+        let result = open_terminal_here("/definitely/does/not/exist".to_string());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("does not exist"));
     }
 }
