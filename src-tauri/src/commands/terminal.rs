@@ -1,3 +1,4 @@
+use super::lock_ext::LockExt;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtyPair, PtySize};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -62,7 +63,7 @@ impl TerminalOutputBus {
     /// Subscribe to a terminal's output. Creates the channel if it does
     /// not exist yet so callers can subscribe before any output arrives.
     pub fn subscribe(&self, terminal_id: u32) -> tokio::sync::broadcast::Receiver<Vec<u8>> {
-        let mut map = self.senders.lock().expect("terminal bus mutex poisoned");
+        let mut map = self.senders.lock_recover();
         let sender = map
             .entry(terminal_id)
             .or_insert_with(|| tokio::sync::broadcast::channel(TERMINAL_BUS_CAPACITY).0);
@@ -72,7 +73,7 @@ impl TerminalOutputBus {
     /// Publish a chunk. Returns the number of receivers that got it
     /// (zero is fine — nobody was listening).
     pub fn publish(&self, terminal_id: u32, data: &[u8]) -> usize {
-        let map = self.senders.lock().expect("terminal bus mutex poisoned");
+        let map = self.senders.lock_recover();
         match map.get(&terminal_id) {
             Some(sender) => sender.send(data.to_vec()).unwrap_or(0),
             None => 0,
@@ -82,7 +83,7 @@ impl TerminalOutputBus {
     /// Drop the channel for a terminal that has been closed. Existing
     /// receivers will see `RecvError::Closed` on their next call.
     pub fn close(&self, terminal_id: u32) {
-        let mut map = self.senders.lock().expect("terminal bus mutex poisoned");
+        let mut map = self.senders.lock_recover();
         map.remove(&terminal_id);
     }
 }

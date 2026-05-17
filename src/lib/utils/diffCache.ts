@@ -12,7 +12,7 @@
  * `state_unsafe_mutation`. Callers receive a typed, narrow API instead of a
  * raw Map.
  */
-// eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive memoisation; see file header
+
 type CacheStore<V> = Map<string, V>;
 
 export interface DiffCache<V> {
@@ -25,7 +25,6 @@ export interface DiffCache<V> {
 }
 
 export function createDiffCache<V>(): DiffCache<V> {
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive memoisation; see file header
   const store: CacheStore<V> = new Map<string, V>();
 
   return {

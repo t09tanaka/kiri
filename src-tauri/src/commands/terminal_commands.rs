@@ -2,6 +2,7 @@
 //! These are thin wrappers that delegate to the core logic in terminal.rs
 
 use super::cli_install;
+use super::lock_ext::LockExt;
 use super::terminal::{
     create_pty_size, find_utf8_boundary, get_process_cwd, open_pty_with_shell, resolve_cwd,
     resolve_terminal_size, CliEnv, PtyCleanupGuard, PtyInstance, TerminalOutput,
@@ -47,9 +48,7 @@ lazy_static! {
 }
 
 fn process_snapshot_records() -> Arc<Vec<ProcessRecord>> {
-    let mut cache = PROCESS_SNAPSHOT_CACHE
-        .lock()
-        .expect("process snapshot cache mutex poisoned");
+    let mut cache = PROCESS_SNAPSHOT_CACHE.lock_recover();
     if let (Some(records), Some(refreshed_at)) = (&cache.records, cache.refreshed_at) {
         if refreshed_at.elapsed() < PROCESS_SNAPSHOT_TTL {
             return Arc::clone(records);

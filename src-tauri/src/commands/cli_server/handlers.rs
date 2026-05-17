@@ -3,6 +3,7 @@
 use super::dispatch::DispatchContext;
 use super::run_logic::{extract_output, tail_lines, Sentinel};
 use super::signals::{now_ms, Signal, MAX_SIGNAL_WAIT_SECS};
+use crate::commands::lock_ext::LockExt;
 use kiri_cli_proto::{ErrorCode, PaneRef, Request, Response, SignalTarget, SplitDirection};
 use tauri::Emitter;
 use tokio::sync::broadcast;
@@ -262,7 +263,7 @@ async fn read(
         return pane_not_found(p);
     };
     let rb = ctx.buffers.ensure_subscribed(pane.terminal_id, &ctx.bus);
-    let buf = rb.lock().expect("ring buffer mutex poisoned");
+    let buf = rb.lock_recover();
     let cursor = buf.cursor();
     let (bytes, dropped) = if let Some(n) = tail {
         let (b, _) = buf.tail_lines(n);
@@ -284,7 +285,7 @@ async fn follow(ctx: &DispatchContext, p: PaneRef) -> Vec<Response> {
     let rb = ctx.buffers.ensure_subscribed(pane.terminal_id, &ctx.bus);
     // v1: snapshot + end. Real streaming will land in a follow-up.
     let (bytes, cursor) = {
-        let guard = rb.lock().expect("rb");
+        let guard = rb.lock_recover();
         let cursor = guard.cursor();
         let (bytes, _) = guard.read_since(0);
         (bytes, cursor)
