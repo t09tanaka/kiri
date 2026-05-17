@@ -4,6 +4,7 @@
   import { projectStore, recentProjects, type RecentProject } from '@/lib/stores/projectStore';
   import { settingsStore, startupCommand } from '@/lib/stores/settingsStore';
   import { terminalStore } from '@/lib/stores/terminalStore';
+  import { EmptyState } from '@/lib/components/ui';
   import RecentProjectItem from './RecentProjectItem.svelte';
   import { onMount } from 'svelte';
 
@@ -204,22 +205,24 @@
       </section>
     {:else}
       <section class="empty-section">
-        <div class="empty-icon">
-          <svg
-            width="40"
-            height="40"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-          </svg>
-        </div>
-        <p class="empty-text">No recent projects</p>
-        <p class="empty-hint">Open a directory to start exploring</p>
+        <EmptyState title="No recent projects" hint="Open a directory to start exploring">
+          {#snippet icon()}
+            <svg
+              width="40"
+              height="40"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path
+                d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+              />
+            </svg>
+          {/snippet}
+        </EmptyState>
       </section>
     {/if}
   </div>
@@ -747,31 +750,5 @@
   /* ===== Empty Section ===== */
   .empty-section {
     margin-top: var(--space-7);
-    text-align: center;
-    padding: var(--space-6);
-  }
-
-  .empty-icon {
-    color: var(--accent-color);
-    opacity: 0.25;
-    margin-bottom: var(--space-4);
-    transition: all var(--transition-normal);
-  }
-
-  .empty-section:hover .empty-icon {
-    opacity: 0.35;
-    transform: scale(1.05);
-  }
-
-  .empty-text {
-    color: var(--text-secondary);
-    font-size: 15px;
-    font-weight: 500;
-    margin-bottom: var(--space-1);
-  }
-
-  .empty-hint {
-    color: var(--text-muted);
-    font-size: 13px;
   }
 </style>

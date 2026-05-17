@@ -4,6 +4,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { openSearchPanel } from '@codemirror/search';
   import { EditorView } from '@codemirror/view';
+  import { trapFocus } from '@/lib/utils/focusTrap';
 
   interface Props {
     filePath: string;
@@ -14,6 +15,8 @@
 
   let mounted = $state(false);
   let copied = $state(false);
+  let modalRef = $state<HTMLDivElement | null>(null);
+  let releaseFocusTrap: (() => void) | null = null;
 
   function getFileName(path: string): string {
     return path.split('/').pop() || path;
@@ -66,12 +69,17 @@
 
   onMount(() => {
     mounted = true;
+    if (modalRef) {
+      // Editor.svelte focuses CodeMirror on mount; don't steal focus.
+      releaseFocusTrap = trapFocus(modalRef, { autoFocus: false });
+    }
     // Use capture phase to intercept before other handlers
     document.addEventListener('keydown', handleKeyDown, true);
   });
 
   onDestroy(() => {
     document.removeEventListener('keydown', handleKeyDown, true);
+    releaseFocusTrap?.();
   });
 </script>
 
@@ -83,7 +91,7 @@
   role="button"
   tabindex="-1"
 >
-  <div class="editor-modal">
+  <div class="editor-modal" bind:this={modalRef}>
     <div class="modal-glow"></div>
     <div class="modal-content">
       <div class="modal-header">
@@ -344,17 +352,6 @@
     display: flex;
     align-items: center;
     gap: var(--space-1);
-  }
-
-  .footer-item kbd {
-    padding: 2px 6px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--text-secondary);
-    box-shadow: 0 1px 0 var(--bg-primary);
   }
 
   .footer-item span {

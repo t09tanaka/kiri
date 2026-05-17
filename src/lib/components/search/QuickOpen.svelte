@@ -1,7 +1,8 @@
 <script lang="ts">
   import { searchStore, type FileSearchResult } from '@/lib/stores/searchStore';
-  import { onMount } from 'svelte';
-  import { Spinner } from '@/lib/components/ui';
+  import { onMount, onDestroy } from 'svelte';
+  import { Spinner, EmptyState } from '@/lib/components/ui';
+  import { trapFocus } from '@/lib/utils/focusTrap';
 
   interface Props {
     onSelect: (path: string) => void;
@@ -12,6 +13,8 @@
   let query = $state('');
   let inputRef = $state<HTMLInputElement | null>(null);
   let mounted = $state(false);
+  let modalRef = $state<HTMLDivElement | null>(null);
+  let releaseFocusTrap: (() => void) | null = null;
 
   const results = $derived($searchStore.fileResults);
   const selectedIndex = $derived($searchStore.selectedIndex);
@@ -19,6 +22,14 @@
 
   onMount(() => {
     mounted = true;
+    if (modalRef) {
+      // The input self-focuses via $effect; skip auto-focus here.
+      releaseFocusTrap = trapFocus(modalRef, { autoFocus: false });
+    }
+  });
+
+  onDestroy(() => {
+    releaseFocusTrap?.();
   });
 
   $effect(() => {
@@ -98,7 +109,7 @@
   role="button"
   tabindex="-1"
 >
-  <div class="quick-open">
+  <div class="quick-open" bind:this={modalRef}>
     <div class="modal-glow"></div>
     <div class="modal-content">
       <div class="search-input-container">
@@ -160,8 +171,11 @@
             <span>No files found for "<strong>{query}</strong>"</span>
           </div>
         {:else if results.length === 0 && query.length === 0}
-          <div class="empty-state">
-            <div class="empty-icon">
+          <EmptyState
+            title="Type to search files..."
+            hint="Use fuzzy matching to find files quickly"
+          >
+            {#snippet icon()}
               <svg
                 width="40"
                 height="40"
@@ -175,10 +189,8 @@
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                 <polyline points="14 2 14 8 20 8"></polyline>
               </svg>
-            </div>
-            <span class="empty-text">Type to search files...</span>
-            <span class="empty-hint">Use fuzzy matching to find files quickly</span>
-          </div>
+            {/snippet}
+          </EmptyState>
         {:else}
           {#each results as result, index (result.path)}
             <button
@@ -394,32 +406,6 @@
     color: var(--accent-color);
   }
 
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-6);
-    text-align: center;
-  }
-
-  .empty-icon {
-    color: var(--accent-color);
-    opacity: 0.4;
-    margin-bottom: var(--space-2);
-  }
-
-  .empty-text {
-    font-size: 14px;
-    color: var(--text-secondary);
-  }
-
-  .empty-hint {
-    color: var(--text-muted);
-    font-size: 12px;
-    opacity: 0.8;
-  }
-
   .result-item {
     position: relative;
     display: flex;
@@ -530,18 +516,6 @@
     display: flex;
     align-items: center;
     gap: var(--space-1);
-  }
-
-  .footer-item kbd {
-    padding: 2px 6px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--text-secondary);
-    box-shadow: 0 1px 0 var(--bg-primary);
-    transition: all var(--transition-fast);
   }
 
   .footer-item:hover kbd {

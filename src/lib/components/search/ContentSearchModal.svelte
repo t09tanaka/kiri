@@ -4,6 +4,7 @@
   import { contentSearchStore, isContentSearchSettingsOpen } from '@/lib/stores/contentSearchStore';
   import { onMount, onDestroy } from 'svelte';
   import { Spinner } from '@/lib/components/ui';
+  import { trapFocus } from '@/lib/utils/focusTrap';
 
   interface Props {
     onOpenFile: (path: string, line?: number) => void;
@@ -14,12 +15,18 @@
 
   let mounted = $state(false);
   let searchInput: HTMLTextAreaElement | null = $state(null);
+  let modalRef = $state<HTMLDivElement | null>(null);
+  let releaseFocusTrap: (() => void) | null = null;
 
   const store = $derived($contentSearchStore);
   const isSettingsOpen = $derived($isContentSearchSettingsOpen);
 
   onMount(() => {
     mounted = true;
+    if (modalRef) {
+      // searchInput is focused below; skip auto-focus to avoid stealing it.
+      releaseFocusTrap = trapFocus(modalRef, { autoFocus: false });
+    }
     // Use capture phase to intercept before terminal handles it
     document.addEventListener('keydown', handleKeyDown, true);
 
@@ -31,6 +38,7 @@
 
   onDestroy(() => {
     document.removeEventListener('keydown', handleKeyDown, true);
+    releaseFocusTrap?.();
   });
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -120,7 +128,7 @@
   role="button"
   tabindex="-1"
 >
-  <div class="content-search-modal">
+  <div class="content-search-modal" bind:this={modalRef}>
     <div class="modal-glow"></div>
     <div class="modal-content">
       <div class="modal-header">
@@ -443,17 +451,6 @@
     display: flex;
     align-items: center;
     gap: var(--space-1);
-  }
-
-  .footer-item kbd {
-    padding: 2px 6px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--text-secondary);
-    box-shadow: 0 1px 0 var(--bg-primary);
   }
 
   .footer-item span {

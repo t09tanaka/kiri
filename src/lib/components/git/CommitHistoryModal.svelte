@@ -671,17 +671,6 @@
     gap: var(--space-1);
   }
 
-  .footer-item kbd {
-    padding: 2px 6px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--text-secondary);
-    box-shadow: 0 1px 0 var(--bg-primary);
-  }
-
   .footer-item span {
     margin-left: 2px;
   }
