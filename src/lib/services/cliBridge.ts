@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { eventService } from '@/lib/services/eventService';
 import type { PaneColor } from '@/lib/stores/terminalStore';
 
 /**
@@ -37,6 +37,11 @@ const FOCUSED_SENTINEL = 'focused';
  * them to the local terminalStore, and reply via the `cli_resolve_pending`
  * Tauri command keyed by `requestId`.
  *
+ * Each listener is scoped to the current window (via
+ * `eventService.listenCurrentWindow`) so events that the Rust side targets
+ * with `emit_to(label, ...)` do not leak into other open windows. See
+ * `.claude/rules/multi-window.md`.
+ *
  * Returns a teardown that removes all event listeners. Call it from the
  * caller's cleanup path (typically the App.svelte onMount return).
  */
@@ -54,7 +59,7 @@ export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
     });
   };
 
-  const unlistenSplit = await listen<{
+  const unlistenSplit = await eventService.listenCurrentWindow<{
     requestId: string;
     paneId: string;
     direction: 'horizontal' | 'vertical';
@@ -73,21 +78,21 @@ export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
     reply(requestId, { newPaneId, newPaneIndex: deps.indexOf(newPaneId) });
   });
 
-  const unlistenClose = await listen<{ requestId: string; paneId: string }>(
-    'cli:pane-close',
-    (event) => {
-      const { requestId, paneId } = event.payload;
-      const target = resolveTarget(paneId);
-      if (!target) {
-        reply(requestId, { error: 'no_focused_pane' });
-        return;
-      }
-      deps.closePane(target);
-      reply(requestId, {});
+  const unlistenClose = await eventService.listenCurrentWindow<{
+    requestId: string;
+    paneId: string;
+  }>('cli:pane-close', (event) => {
+    const { requestId, paneId } = event.payload;
+    const target = resolveTarget(paneId);
+    if (!target) {
+      reply(requestId, { error: 'no_focused_pane' });
+      return;
     }
-  );
+    deps.closePane(target);
+    reply(requestId, {});
+  });
 
-  const unlistenMinimize = await listen<{
+  const unlistenMinimize = await eventService.listenCurrentWindow<{
     requestId: string;
     paneId: string;
     minimized: boolean;
@@ -102,7 +107,7 @@ export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
     reply(requestId, {});
   });
 
-  const unlistenSetLabel = await listen<{
+  const unlistenSetLabel = await eventService.listenCurrentWindow<{
     requestId: string;
     paneId: string;
     setName?: string | null;
