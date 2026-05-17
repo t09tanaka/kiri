@@ -7,18 +7,15 @@ use commands::{
     copy_paths_to_directory, create_directory, create_file, move_path, move_to_trash,
     open_terminal_here, rename_path, restore_from_trash, trash_restore_supported,
     create_terminal, create_window, delete_path, fetch_remote,
-    focus_or_create_window, generate_remote_qr_code, get_all_git_diffs, get_behind_ahead_count,
+    focus_or_create_window, get_all_git_diffs, get_behind_ahead_count,
     get_branch_ahead_count, get_commit_diff, get_commit_log, get_git_diff, get_git_file_status,
     get_git_status, get_home_directory, get_memory_metrics, get_performance_report, get_worktree_info,
     install_kiri_skill, is_terminal_alive, kiri_skill_status, pull_commits,
     push_commits, read_directory, read_file, read_file_as_base64, record_command_timing,
-    regenerate_remote_token, register_window, resize_terminal, reveal_in_finder,
+    register_window, resize_terminal, reveal_in_finder,
     search_content, search_files, setup_menu, start_watching, stop_all_watching,
-    is_cloudflared_available, start_cloudflare_tunnel, start_remote_server,
-    stop_cloudflare_tunnel, stop_remote_server, is_remote_server_running,
     stop_watching, unregister_window, write_terminal, CliServerRegistry, CliServerRegistryState,
-    RemoteServerState, RemoteServerStateType,
-    TerminalOutputBus, TerminalOutputBusState, TerminalState, TunnelState, TunnelStateType,
+    TerminalOutputBus, TerminalOutputBusState, TerminalState,
     WatcherState, WindowRegistry, WindowRegistryState,
 };
 use std::sync::{Arc, Mutex};
@@ -35,8 +32,6 @@ pub fn run() {
         .manage(Arc::new(CliServerRegistry::new()) as CliServerRegistryState)
         .manage(Arc::new(Mutex::new(commands::WatcherManager::new())) as WatcherState)
         .manage(Arc::new(Mutex::new(WindowRegistry::new())) as WindowRegistryState)
-        .manage(Arc::new(tokio::sync::Mutex::new(RemoteServerState::new())) as RemoteServerStateType)
-        .manage(Arc::new(tokio::sync::Mutex::new(TunnelState::new())) as TunnelStateType)
         .setup(|app| {
             // Setup menu bar
             setup_menu(app)?;
@@ -114,16 +109,6 @@ pub fn run() {
             get_behind_ahead_count,
             get_branch_ahead_count,
             pull_commits,
-            // Remote access
-            start_remote_server,
-            stop_remote_server,
-            is_remote_server_running,
-            generate_remote_qr_code,
-            regenerate_remote_token,
-            // Cloudflare Tunnel
-            is_cloudflared_available,
-            start_cloudflare_tunnel,
-            stop_cloudflare_tunnel,
             // CLI server (per-window socket)
             cli_resolve_pending,
             cli_update_pane_map,

@@ -38,7 +38,6 @@ fn emit_to_focused_window<S: serde::Serialize + Clone>(
 }
 
 struct ToolsState {
-    remote_access_on: bool,
     startup_command: String,
 }
 
@@ -169,30 +168,6 @@ fn rebuild_menu(
     let view_menu = Submenu::with_items(handle, "View", true, &[&toggle_fullscreen])?;
 
     // Tools menu
-    let remote_enabled = CheckMenuItem::with_id(
-        handle,
-        "toggle_remote_access",
-        "Enabled",
-        true,
-        tools.remote_access_on,
-        None::<&str>,
-    )?;
-    let show_qr = MenuItem::with_id(
-        handle,
-        "show_qr_code",
-        "Show QR Code",
-        tools.remote_access_on, // only enabled when remote is on
-        None::<&str>,
-    )?;
-
-    let remote_submenu = Submenu::with_id_and_items(
-        handle,
-        "remote_access",
-        "Remote Access",
-        true,
-        &[&remote_enabled, &show_qr],
-    )?;
-
     let cmd_none = CheckMenuItem::with_id(
         handle,
         "startup_cmd_none",
@@ -230,10 +205,7 @@ fn rebuild_menu(
         handle,
         "Tools",
         true,
-        &[
-            &remote_submenu,
-            &startup_submenu,
-        ],
+        &[&startup_submenu],
     )?;
 
     // Window menu
@@ -294,7 +266,6 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     let recent_projects_state: Arc<Mutex<Vec<RecentProject>>> =
         Arc::new(Mutex::new(initial_projects.clone()));
     let tools_state: Arc<Mutex<ToolsState>> = Arc::new(Mutex::new(ToolsState {
-        remote_access_on: false,
         startup_command: initial_startup_cmd,
     }));
 
@@ -322,13 +293,6 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
             }
             "clear_recent" => {
                 let _ = app_handle.emit("menu-clear-recent", ());
-            }
-            "toggle_remote_access" => {
-                // Emit to focused window only to avoid duplicate toggles in multi-window
-                let _ = emit_to_focused_window(app_handle, "menu-toggle-remote", ());
-            }
-            "show_qr_code" => {
-                let _ = emit_to_focused_window(app_handle, "menu-show-qr-code", ());
             }
             "startup_cmd_none" | "startup_cmd_claude" | "startup_cmd_codex" => {
                 let cmd = id.strip_prefix("startup_cmd_").unwrap().to_string();
@@ -387,14 +351,10 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase")]
             struct ToolsUpdate {
-                remote_access_on: Option<bool>,
                 startup_command: Option<String>,
             }
             if let Ok(update) = serde_json::from_str::<ToolsUpdate>(event.payload()) {
                 if let Ok(mut t) = tools.lock() {
-                    if let Some(on) = update.remote_access_on {
-                        t.remote_access_on = on;
-                    }
                     if let Some(cmd) = update.startup_command {
                         t.startup_command = cmd;
                     }

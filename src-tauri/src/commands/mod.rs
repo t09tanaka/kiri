@@ -4,7 +4,6 @@ pub mod cli_server;
 pub mod error;
 pub mod lock_ext;
 pub mod skill_install;
-pub mod cloudflare_tunnel;
 pub mod drag_drop;
 pub mod file;
 pub mod file_io;
@@ -19,8 +18,6 @@ pub mod git_status_map;
 pub mod menu;
 pub mod performance;
 pub mod performance_commands;
-pub mod remote_access;
-pub mod remote_access_commands;
 pub mod search;
 pub mod terminal;
 pub mod terminal_commands;
@@ -40,8 +37,6 @@ pub use terminal_commands::*;
 pub use watcher::*;
 pub use watcher_commands::*;
 pub use git_history_commands::*;
-pub use remote_access_commands::*;
-pub use cloudflare_tunnel::*;
 pub use window::*;
 pub use cli_server::{
     cli_resolve_pending, cli_update_pane_map, CliServerRegistry, CliServerRegistryState,
