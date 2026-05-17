@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store';
+import { writable, get } from 'svelte/store';
 
 export type PaneColor = 'sky' | 'iris' | 'jade' | 'amber' | 'coral' | 'rose';
 
@@ -274,7 +274,8 @@ const initialState: TerminalState = {
 const collapsedByPaneId = new Map<string, boolean>();
 
 function createTerminalStore() {
-  const { subscribe, set, update } = writable<TerminalState>(initialState);
+  const store = writable<TerminalState>(initialState);
+  const { subscribe, set, update } = store;
 
   /** Force-notify subscribers without changing the tree shape. */
   function notify() {
@@ -283,6 +284,15 @@ function createTerminalStore() {
 
   return {
     subscribe,
+
+    /**
+     * Synchronous snapshot of the current state. Use this in tests and
+     * non-reactive contexts (CLI bridge, lifecycle callbacks) instead
+     * of `get(terminalStore)` so the access stays type-safe and the
+     * intent is explicit. Prefer the higher-level helpers
+     * (`indexOf`, `terminalIdFor`, `snapshot`) when they fit.
+     */
+    getState: (): TerminalState => get(store),
 
     /**
      * Initialize a fresh single-terminal pane tree.

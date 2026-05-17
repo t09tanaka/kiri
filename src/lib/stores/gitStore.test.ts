@@ -216,7 +216,7 @@ describe('gitStore async methods', () => {
       const refreshPromise = gitStore.refresh('/test/repo');
 
       // Check isLoading is true during the async operation
-      const stateBeforeResolve = get(gitStore);
+      const stateBeforeResolve = gitStore.getState();
       expect(stateBeforeResolve.isLoading).toBe(true);
       expect(stateBeforeResolve.error).toBeNull();
 
@@ -236,7 +236,7 @@ describe('gitStore async methods', () => {
 
       await gitStore.refresh('/test/repo');
 
-      const state = get(gitStore);
+      const state = gitStore.getState();
       expect(state.repoInfo).toEqual(mockRepoInfo);
       expect(state.isLoading).toBe(false);
       expect(state.error).toBeNull();
@@ -248,7 +248,7 @@ describe('gitStore async methods', () => {
 
       await gitStore.refresh('/test/repo');
 
-      const state = get(gitStore);
+      const state = gitStore.getState();
       expect(state.repoInfo).toBeNull();
       expect(state.isLoading).toBe(false);
       expect(state.error).toBe('Git not found');
@@ -259,7 +259,7 @@ describe('gitStore async methods', () => {
 
       await gitStore.refresh('/test/repo');
 
-      const state = get(gitStore);
+      const state = gitStore.getState();
       expect(state.repoInfo).toBeNull();
       expect(state.isLoading).toBe(false);
       expect(state.error).toBe('String error');
@@ -270,7 +270,7 @@ describe('gitStore async methods', () => {
     it('should return early with error when no repoInfo', async () => {
       await gitStore.loadAllDiffs();
 
-      const state = get(gitStore);
+      const state = gitStore.getState();
       expect(state.isDiffsLoading).toBe(false);
       expect(state.error).toBe('Repository root not found');
       expect(mockInvoke).not.toHaveBeenCalled();
@@ -293,7 +293,7 @@ describe('gitStore async methods', () => {
       const loadPromise = gitStore.loadAllDiffs();
       await loadPromise;
 
-      const state = get(gitStore);
+      const state = gitStore.getState();
       expect(state.isDiffsLoading).toBe(false);
     });
 
@@ -316,7 +316,7 @@ describe('gitStore async methods', () => {
 
       await gitStore.loadAllDiffs();
 
-      const state = get(gitStore);
+      const state = gitStore.getState();
       expect(state.allDiffs).toEqual(mockDiffs);
       expect(state.isDiffsLoading).toBe(false);
       expect(state.error).toBeNull();
@@ -340,7 +340,7 @@ describe('gitStore async methods', () => {
 
       await gitStore.loadAllDiffs();
 
-      const state = get(gitStore);
+      const state = gitStore.getState();
       expect(state.allDiffs).toEqual([]);
       expect(state.isDiffsLoading).toBe(false);
       expect(state.error).toBe('Diff failed');
@@ -361,7 +361,7 @@ describe('gitStore async methods', () => {
 
       await gitStore.loadAllDiffs();
 
-      const state = get(gitStore);
+      const state = gitStore.getState();
       expect(state.allDiffs).toEqual([]);
       expect(state.isDiffsLoading).toBe(false);
       expect(state.error).toBe('String diff error');
@@ -378,7 +378,7 @@ describe('gitStore state management', () => {
     it('should reset store to initial state', () => {
       gitStore.clear();
 
-      const state = get(gitStore);
+      const state = gitStore.getState();
       expect(state.repoInfo).toBeNull();
       expect(state.isLoading).toBe(false);
       expect(state.error).toBeNull();
@@ -391,7 +391,7 @@ describe('gitStore state management', () => {
     it('should clear diffs and currentVisibleFile', () => {
       gitStore.clearDiffs();
 
-      const state = get(gitStore);
+      const state = gitStore.getState();
       expect(state.allDiffs).toEqual([]);
       expect(state.isDiffsLoading).toBe(false);
       expect(state.currentVisibleFile).toBeNull();
@@ -402,7 +402,7 @@ describe('gitStore state management', () => {
     it('should set current visible file', () => {
       gitStore.setCurrentVisibleFile('/path/to/file.ts');
 
-      const state = get(gitStore);
+      const state = gitStore.getState();
       expect(state.currentVisibleFile).toBe('/path/to/file.ts');
     });
 
@@ -410,7 +410,7 @@ describe('gitStore state management', () => {
       gitStore.setCurrentVisibleFile('/path/to/file.ts');
       gitStore.setCurrentVisibleFile(null);
 
-      const state = get(gitStore);
+      const state = gitStore.getState();
       expect(state.currentVisibleFile).toBeNull();
     });
   });

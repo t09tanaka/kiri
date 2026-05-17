@@ -161,7 +161,7 @@
    * Check if this pane still exists in the terminal store
    */
   function paneExistsInStore(): boolean {
-    const state = get(terminalStore);
+    const state = terminalStore.getState();
     if (!state.rootPane) return false;
     return getAllPaneIds(state.rootPane).includes(paneId);
   }
@@ -170,7 +170,7 @@
    * Get existing terminal ID from the pane in store
    */
   function getExistingTerminalId(): number | null {
-    const state = get(terminalStore);
+    const state = terminalStore.getState();
     if (!state.rootPane) return null;
 
     const findTerminalId = (pane: typeof state.rootPane): number | null => {
@@ -576,11 +576,13 @@
       // Only for newly created terminals (not reattached from registry),
       // and only when this is the root terminal pane (no splits yet)
       if (existingTerminalId === null) {
-        const state = get(terminalStore);
+        const state = terminalStore.getState();
         const isRootTerminalPane =
           state.rootPane?.type === 'terminal' && state.rootPane.id === paneId;
 
         if (isRootTerminalPane) {
+          // get(startupCommand) here is a one-shot read of a derived
+          // settings store, not a reactivity bypass on terminalStore.
           const commandStr = getStartupCommandString(get(startupCommand));
           if (commandStr) {
             // Wait for shell to be ready before sending command
