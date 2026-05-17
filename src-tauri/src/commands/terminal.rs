@@ -261,6 +261,11 @@ impl PtyCleanupGuard {
     }
 
     /// Borrow the wrapped PTY (for reader/writer extraction etc.).
+    ///
+    /// The signature deliberately matches `AsMut::as_mut` for ergonomics,
+    /// but we cannot implement that trait because we panic when the guard
+    /// has already been `commit()`ted — `AsMut` is expected to be infallible.
+    #[allow(clippy::should_implement_trait)]
     pub fn as_mut(&mut self) -> &mut PtyWithShell {
         self.inner
             .as_mut()

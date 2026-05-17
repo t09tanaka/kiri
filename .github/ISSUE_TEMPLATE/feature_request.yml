@@ -1,6 +1,6 @@
 name: Feature request
 description: Suggest a new feature, command, or behaviour for kiri.
-labels: ["enhancement"]
+labels: ['enhancement']
 body:
   - type: markdown
     attributes:
@@ -16,7 +16,7 @@ body:
       description: |
         What workflow does not work today, or works badly? Describe the
         situation a user is in when they hit this — not the solution yet.
-      placeholder: "When I want to ..., I have to ..."
+      placeholder: 'When I want to ..., I have to ...'
     validations:
       required: true
 
