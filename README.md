@@ -56,7 +56,7 @@ Without the CLI, every step would have been a paste-the-output round-trip with y
 
 ## CLI
 
-`kiri` is installed at `~/.kiri/bin/kiri` on first launch. Inside kiri terminals it is on PATH automatically (via `KIRI_TERMINAL=1` and `KIRI_SOCKET=…`); outside one it errors out cleanly.
+`kiri` is installed at `~/.kiri/bin/kiri` on first launch. Inside kiri terminals it is on PATH automatically (via `KIRI_TERMINAL=1` and `KIRI_SOCKET=…`); outside one, `kiri env` still works and the other verbs fall back to socket discovery against the running windows. See [`docs/external-terminals.md`](docs/external-terminals.md) for the WezTerm / Zed / Cursor handshake.
 
 ### Verbs
 
@@ -70,6 +70,7 @@ Without the CLI, every step would have been a paste-the-output round-trip with y
 | `kiri term cancel` | no | Send Ctrl-C to the foreground process |
 | `kiri term split [--dir h\|v]` | no | Open a sibling pane |
 | `kiri term close` | no | Close a pane |
+| `kiri env` | no | Print socket / kiri-terminal state — works outside a kiri terminal too. Use it to debug the external-terminal handshake. |
 
 **`run` vs `send`** is the distinction that matters most. `run` is for things that finish (`git status`, `cargo build`) and gives you the exit code. `send` is for things that don't (`npm run dev`, `docker compose up`, replying to an interactive prompt). Mix them up and `run` will hang on its 5-minute default timeout.
 
