@@ -1,6 +1,6 @@
 [package]
 name = "kiri"
-version = "0.5.1"
+version = "0.6.0"
 description = "A lightweight file manager and terminal application"
 authors = ["t09tanaka"]
 license = "MIT"

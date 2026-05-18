@@ -7,6 +7,111 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-18
+
+### Added
+
+#### File operations
+- File tree right-click context menu (`Open`, `Rename`, `New File`,
+  `New Folder`, `Copy Path`, `Reveal in Finder`, `Open in Terminal here`,
+  `Delete`) with inline rename / new-file editing and keyboard shortcuts
+  (`F2`, `⌘N`, `⌘⇧N`, `⌫`, `⌘C`, `⌘⇧R`). Closes #82 / #84 / #90.
+- New Tauri commands (`rename`, `create_file`, `trash`, `open_terminal`)
+  with matching `fileService` invokers and a single-step undo for the
+  most recent destructive operation.
+- ContextMenu flips to the opposite side of the cursor when it would
+  overflow the viewport edge, instead of being clamped under the cursor.
+  Closes #60.
+
+#### Accessibility
+- `<ProgressBar>` now exposes `role="progressbar"`, `aria-valuemin/max`,
+  `aria-valuenow` for determinate mode, and `aria-busy="true"` (without
+  `aria-valuenow`) for indeterminate mode. Closes #52.
+- Modal focus is trapped inside `DiffViewModal`, `EditorModal`,
+  `ContentSearchModal`, and `QuickOpen`. Tab cycles through the modal's
+  focusable elements and is pulled back if focus escapes. Closes #55.
+- `--text-muted` bumped from `#484f58` to `#828993` so muted labels
+  clear WCAG AA 4.5:1 contrast against `--bg-secondary` / `--bg-tertiary`.
+  Closes #56.
+
+#### UI polish
+- Shared `<EmptyState>` component (mist micro-animation + tone variants)
+  used by `StartScreen` ("No recent projects") and `QuickOpen` ("Type to
+  search files..."). Closes #57.
+- Global `<kbd>` styling applied via `app.css`; per-modal duplicate kbd
+  styles in `DiffViewModal`, `EditorModal`, `ContentSearchModal`,
+  `QuickOpen`, `CommitHistoryModal`, and `PeekEditor` removed. Closes #59.
+- Foundation tokens added: `--control-height-{xs,sm,md,lg}` scale,
+  `--terminal-padding-x/y`, plus a defaults `<kbd>` rule.
+
+#### CLI
+- `kiri env` prints the active project, window socket path, and the
+  kiri-cli binary location for debugging external-terminal integrations.
+
+#### Lint
+- New `windowService`-specific ESLint rule enforces multi-window data
+  passing patterns (URL params / events) over implicit store sharing.
+  Closes #50.
+
+### Changed
+
+#### UI/UX polish (#51 #53 #54 #58)
+- `Toast` and `Badge` transition timing replaced hardcoded
+  `0.3s cubic-bezier` / `0.2s ease-out` values with `--transition-fast` /
+  `--transition-normal` so timings stay tunable in one place.
+- `Badge` `transition: all` replaced with an explicit property list
+  (`transform`, `background`, `color`, `border-color`, `box-shadow`).
+- StatusBar buttons (sidebar-toggle, git-branch, git-changes,
+  shortcut-hint) now line up exactly via `--control-height-xs`; ad-hoc
+  vertical padding removed.
+- Terminal padding (`12px 16px`) now consumes `--terminal-padding-y/x`
+  tokens; PTY runtime constants moved into `terminalConstants.ts`.
+- Sidebar header shimmer opacity bumped from `0.03` to `0.08` so the
+  animation is perceptible.
+
+#### Refactors
+- Migrated 7 stores to Svelte 5 `$state` classes via a backward-compatible
+  facade so consumers stay unchanged. Closes #42.
+- Split `settingsStore` into `uiPreferences` and `persistedSettings`.
+  Closes #43.
+- Split `DiffView` into sidebar / section / image-panel components, and
+  extracted a `diffCache` helper. Closes #46 / #47.
+- Extracted FileTree sort/drag-ghost/keyboard helpers and centralized the
+  drag store + window listeners. Closes #48.
+- Extracted Terminal theme / sync output / layout / setup helpers from
+  `Terminal.svelte`. Closes #45.
+- `getState()` helper replaces ad-hoc `get()` calls in components and
+  settings persistence now lives in the store via auto-subscription.
+
+#### Performance
+- App: lazy-load heavy modal components from `App.svelte`.
+- Editor: collapse CodeMirror language loaders into a shared lazy table.
+- Filesystem: `read_directory` runs off the runtime thread with an entry
+  cap; content search enforces server-side default + ceiling.
+- Terminal: defer `WebLinks` + `Canvas` xterm addons. Closes #36.
+- Rust: cut `String`/`Vec` churn on `git_history` and process snapshots;
+  disable unused `git2` default features.
+- CLI: coalesce burst pane-map invokes into one microtask.
+- DX: `perf:measure` now emits a startup phase breakdown; new
+  `perf:bundle-report` script.
+
+#### Security & hardening
+- Cloudflare tunnel token now validated as defense-in-depth before
+  invocation.
+- Drag-and-drop copy skips symlinks and bounds recursion depth.
+- Tauri capabilities split per-feature; redundant grants dropped.
+- IPC error messages redact filesystem paths.
+- Rust startup exits gracefully on Tauri runtime failure; std `Mutex`
+  poisoning is recovered instead of panicking; spawned PTY now uses an
+  RAII cleanup guard on setup failure.
+
+### Fixed
+
+- `PtyCleanupGuard::as_mut` clippy `should_implement_trait` warning
+  silenced.
+- CI now builds `kiri-cli` before `cargo test`/`check` so the build.rs
+  resource assertion does not race.
+
 ### Removed
 
 #### Remote Access
