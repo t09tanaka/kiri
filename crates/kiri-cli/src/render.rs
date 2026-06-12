@@ -83,6 +83,30 @@ pub fn render_response_pretty(resp: &Response) {
             }
         }
         Response::SignalList { signals } => render_signal_list(signals),
+        Response::OpenWindow {
+            label,
+            socket,
+            project,
+            created,
+            socket_ready,
+        } => {
+            let verb = if *created { "opened" } else { "focused" };
+            println!("{verb} {label} — {project}");
+            println!("  socket: {socket}");
+            if !*socket_ready {
+                eprintln!(
+                    "(warning: window socket not ready yet — retry against the socket before sending commands)"
+                );
+            }
+        }
+        Response::AgentStatus { kind, busy, screen } => {
+            let state = if *busy { "busy" } else { "idle" };
+            eprintln!("[{kind} · {state}]");
+            print!("{screen}");
+            if !screen.ends_with('\n') {
+                println!();
+            }
+        }
         Response::Error { code, message, .. } => {
             eprintln!("error [{code:?}]: {message}");
         }

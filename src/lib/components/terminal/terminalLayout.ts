@@ -22,11 +22,17 @@ export function applyPtyRowMargin(rows: number): number {
  * Fit xterm to its container, guarding against 0-size fits that happen
  * momentarily while tabs switch or panes close. Returns true if a fit
  * was attempted.
+ *
+ * When `pinToBottom` is set, the viewport is scrolled to the bottom after
+ * a dimension change. Growing or shrinking a pane reflows the buffer and
+ * can leave the viewport showing stale rows instead of the live prompt;
+ * pinning keeps the latest output in view on every resize.
  */
 export function fitTerminalToContainer(
   terminal: TerminalType,
   fitAddon: FitAddonType,
-  container: HTMLElement
+  container: HTMLElement,
+  options: { pinToBottom?: boolean } = {}
 ): boolean {
   const rect = container.getBoundingClientRect();
   if (rect.width < 2 || rect.height < 2) {
@@ -40,6 +46,9 @@ export function fitTerminalToContainer(
     const { cols, rows } = dimensions;
     if (terminal.cols !== cols || terminal.rows !== rows) {
       terminal.resize(cols, rows);
+      if (options.pinToBottom) {
+        terminal.scrollToBottom();
+      }
     }
     return true;
   } catch (e) {

@@ -6,6 +6,6 @@ pub mod types;
 pub mod wire;
 
 pub use types::{ErrorCode, PaneColor, PaneRef, SplitDirection};
-pub use wire::{PaneInfo, Request, Response, SignalEntry, SignalTarget};
+pub use wire::{PaneInfo, Request, Response, SignalEntry, SignalTarget, MAX_STATUS_LINES};
 
 pub const SCHEMA_VERSION: u32 = 1;

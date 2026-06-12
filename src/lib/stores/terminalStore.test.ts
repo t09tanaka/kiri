@@ -4,6 +4,8 @@ import {
   terminalStore,
   closePaneInTree,
   getAllPaneIds,
+  getAllLeaves,
+  findPaneLeaf,
   getAllSplitIds,
   getFirstTerminalId,
   getAllTerminalIds,
@@ -415,5 +417,175 @@ describe('pane tree helpers', () => {
         expect(after.sizes[1]).toBeCloseTo(71.4285, 3);
       }
     });
+  });
+});
+
+describe('getAllLeaves', () => {
+  it('returns the single leaf for a terminal pane', () => {
+    const leaf: TerminalPaneLeaf = { type: 'terminal', id: 'pane-1', terminalId: 1 };
+    expect(getAllLeaves(leaf)).toEqual([leaf]);
+  });
+
+  it('flattens leaves depth-first across nested splits', () => {
+    const a: TerminalPaneLeaf = { type: 'terminal', id: 'a', terminalId: 1 };
+    const b: TerminalPaneLeaf = { type: 'terminal', id: 'b', terminalId: 2 };
+    const c: TerminalPaneLeaf = { type: 'terminal', id: 'c', terminalId: 3 };
+    const tree: TerminalPaneSplit = {
+      type: 'split',
+      id: 'split-1',
+      direction: 'vertical',
+      children: [
+        a,
+        {
+          type: 'split',
+          id: 'split-2',
+          direction: 'horizontal',
+          children: [b, c],
+          sizes: [50, 50],
+        },
+      ],
+      sizes: [50, 50],
+    };
+    expect(getAllLeaves(tree).map((l) => l.id)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('findPaneLeaf', () => {
+  const a: TerminalPaneLeaf = { type: 'terminal', id: 'a', terminalId: 1, name: 'docker' };
+  const b: TerminalPaneLeaf = { type: 'terminal', id: 'b', terminalId: 2 };
+  const tree: TerminalPaneSplit = {
+    type: 'split',
+    id: 'split-1',
+    direction: 'vertical',
+    children: [a, b],
+    sizes: [50, 50],
+  };
+
+  it('finds a nested leaf by id', () => {
+    expect(findPaneLeaf(tree, 'a')).toBe(a);
+  });
+
+  it('returns null when the id is a split or missing', () => {
+    expect(findPaneLeaf(tree, 'split-1')).toBeNull();
+    expect(findPaneLeaf(tree, 'missing')).toBeNull();
+  });
+});
+
+describe('terminalStore minimized state', () => {
+  beforeEach(() => {
+    terminalStore.reset();
+  });
+
+  /** Build a root pane with `count` sibling panes; returns their ids. */
+  function seedPanes(count: number): string[] {
+    terminalStore.init();
+    const rootId = (get(terminalStore).rootPane as { id: string }).id;
+    const ids = [rootId];
+    for (let i = 1; i < count; i++) {
+      ids.push(terminalStore.splitPane(ids[i - 1], 'vertical'));
+    }
+    return ids;
+  }
+
+  it('isMinimized returns false for unknown panes', () => {
+    expect(terminalStore.isMinimized('pane-unknown')).toBe(false);
+  });
+
+  it('setMinimized parks a pane while another stays visible', () => {
+    const [a, b] = seedPanes(2);
+    terminalStore.setMinimized(b, true);
+    expect(terminalStore.isMinimized(b)).toBe(true);
+    expect(terminalStore.isMinimized(a)).toBe(false);
+  });
+
+  it('setMinimized(false) restores a parked pane', () => {
+    const [, b] = seedPanes(2);
+    terminalStore.setMinimized(b, true);
+    terminalStore.setMinimized(b, false);
+    expect(terminalStore.isMinimized(b)).toBe(false);
+  });
+
+  it('refuses to minimize the last visible pane', () => {
+    const [a, b] = seedPanes(2);
+    terminalStore.setMinimized(b, true);
+    // Only `a` remains visible — minimizing it would empty the layout.
+    terminalStore.setMinimized(a, true);
+    expect(terminalStore.isMinimized(a)).toBe(false);
+  });
+
+  it('refuses to minimize a lone root pane', () => {
+    const [a] = seedPanes(1);
+    terminalStore.setMinimized(a, true);
+    expect(terminalStore.isMinimized(a)).toBe(false);
+  });
+
+  it('visiblePaneCount excludes minimized panes', () => {
+    const [, b, c] = seedPanes(3);
+    expect(terminalStore.visiblePaneCount()).toBe(3);
+    terminalStore.setMinimized(b, true);
+    expect(terminalStore.visiblePaneCount()).toBe(2);
+    terminalStore.setMinimized(c, true);
+    expect(terminalStore.visiblePaneCount()).toBe(1);
+  });
+
+  it('minimizedLeaves returns parked leaves in tree order', () => {
+    const [, b, c] = seedPanes(3);
+    terminalStore.setMinimized(c, true);
+    terminalStore.setMinimized(b, true);
+    expect(terminalStore.minimizedLeaves().map((l) => l.id)).toEqual([b, c]);
+  });
+
+  it('getLeaf resolves a pane id to its leaf', () => {
+    const [a] = seedPanes(2);
+    const leaf = terminalStore.getLeaf(a);
+    expect(leaf?.id).toBe(a);
+    expect(terminalStore.getLeaf('missing')).toBeNull();
+  });
+
+  it('closePane clears the minimized bit for that pane', () => {
+    const [, b] = seedPanes(2);
+    terminalStore.setMinimized(b, true);
+    terminalStore.closePane(b);
+    expect(terminalStore.isMinimized(b)).toBe(false);
+    expect(terminalStore.minimizedLeaves()).toEqual([]);
+  });
+
+  it('closePane un-minimizes the sole survivor to avoid a blank layout', () => {
+    const [a, b] = seedPanes(2);
+    terminalStore.setMinimized(a, true);
+    // Closing the only visible pane (b) would otherwise leave minimized `a`
+    // as the root with nothing rendered — `a` must be restored to the layout.
+    terminalStore.closePane(b);
+    expect(terminalStore.isMinimized(a)).toBe(false);
+    expect(terminalStore.visiblePaneCount()).toBe(1);
+  });
+
+  it('closePane un-minimizes all survivors when every one was minimized', () => {
+    const [a, b, c] = seedPanes(3);
+    terminalStore.setMinimized(a, true);
+    terminalStore.setMinimized(b, true);
+    terminalStore.closePane(c);
+    expect(terminalStore.isMinimized(a)).toBe(false);
+    expect(terminalStore.isMinimized(b)).toBe(false);
+    expect(terminalStore.minimizedLeaves()).toEqual([]);
+  });
+
+  it('setMinimized notifies subscribers when state changes', () => {
+    const [, b] = seedPanes(2);
+    let calls = 0;
+    const unsub = terminalStore.subscribe(() => {
+      calls++;
+    });
+    const baseline = calls;
+    terminalStore.setMinimized(b, true);
+    expect(calls).toBeGreaterThan(baseline);
+    unsub();
+  });
+
+  it('reset clears all minimized entries', () => {
+    const [, b] = seedPanes(2);
+    terminalStore.setMinimized(b, true);
+    terminalStore.reset();
+    expect(terminalStore.isMinimized(b)).toBe(false);
   });
 });

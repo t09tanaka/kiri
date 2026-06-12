@@ -75,7 +75,11 @@ fn window_title(project_path: Option<&str>) -> String {
     }
 }
 
-/// Internal implementation of window creation (used by both command and menu)
+/// Internal implementation of window creation (used by both command and menu).
+///
+/// Returns the generated window label (e.g. `"window-3"`) so callers that
+/// need to address the new window afterwards — such as the CLI's
+/// `open_window` handler — can do so without guessing.
 pub fn create_window_impl(
     app: &AppHandle,
     registry: Option<&WindowRegistryState>,
@@ -84,7 +88,7 @@ pub fn create_window_impl(
     width: Option<f64>,
     height: Option<f64>,
     project_path: Option<String>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let id = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("window-{}", id);
 
@@ -131,7 +135,7 @@ pub fn create_window_impl(
         }
     }
 
-    Ok(())
+    Ok(label)
 }
 
 #[tauri::command]
@@ -144,7 +148,7 @@ pub fn create_window(
     height: Option<f64>,
     project_path: Option<String>,
 ) -> Result<(), String> {
-    create_window_impl(&app, Some(&registry), x, y, width, height, project_path)
+    create_window_impl(&app, Some(&registry), x, y, width, height, project_path).map(|_| ())
 }
 
 /// Focus an existing window for the given project path, or create a new one if not found
