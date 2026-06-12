@@ -27,6 +27,7 @@
   import type { TerminalPane, PaneColor } from '@/lib/stores/terminalStore';
   import { focusedPaneStore } from '@/lib/stores/focusedPaneStore';
   import { startCliBridge } from '@/lib/services/cliBridge';
+  import { snapshotBuffer } from '@/lib/services/paneSnapshot';
   import { editorModalStore } from '@/lib/stores/editorModalStore';
   import { peekStore } from '@/lib/stores/peekStore';
   import { diffViewStore } from '@/lib/stores/diffViewStore';
@@ -177,6 +178,11 @@
         resolveFocusedPaneId: () => focusedPaneStore.current(),
         setPaneCollapsed: (paneId, value) => terminalStore.setCollapsed(paneId, value),
         setPaneLabel: (paneId, opts) => terminalStore.setPaneLabel(paneId, opts),
+        snapshotPane: (paneId, lines) => {
+          const inst = terminalRegistry.get(paneId);
+          if (!inst) return null;
+          return snapshotBuffer(inst.terminal.buffer.active, lines);
+        },
       });
       performanceService.markStartupPhase('cli-bridge-ready');
       pushPaneMap();
