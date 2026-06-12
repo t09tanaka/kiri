@@ -85,6 +85,23 @@ fn parse_signal_data(s: &str) -> Result<serde_json::Value, String> {
     serde_json::from_str(s).map_err(|e| format!("invalid JSON for --data: {e}"))
 }
 
+/// Clap value parser for `--lines` on `term status`.
+///
+/// 1–200. The server clamps too (raw-JSON clients bypass this), but we
+/// reject out-of-range values at the CLI boundary for a clear message.
+fn parse_status_lines(s: &str) -> Result<usize, String> {
+    let v: usize = s
+        .parse()
+        .map_err(|e| format!("--lines must be a positive integer: {e}"))?;
+    if v == 0 {
+        return Err("--lines must be at least 1".into());
+    }
+    if v > 200 {
+        return Err("--lines must be 200 or fewer".into());
+    }
+    Ok(v)
+}
+
 /// Clap value parser for `--timeout` on `term signal wait`.
 ///
 /// Server-side enforces an upper bound of 600 seconds; we reject larger
@@ -109,6 +126,18 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub pretty: bool,
 
+    /// Target a *different* window, addressed by project name or path.
+    ///
+    /// Overrides the normal socket resolution (which targets this
+    /// terminal's own window, or the window open for the current
+    /// project). Use it to operate on a window for an unrelated project.
+    /// Matches a window whose open project path equals the value, or
+    /// whose project directory's basename equals it. Ambiguous matches
+    /// (the same project open twice) are rejected — set `KIRI_SOCKET`
+    /// explicitly in that case. Has no effect on `window` / `env`.
+    #[arg(long, global = true, value_name = "PROJECT")]
+    pub window: Option<String>,
+
     #[command(subcommand)]
     pub command: Top,
 }
@@ -118,12 +147,32 @@ pub enum Top {
     /// Operate on terminal panes inside this kiri window.
     #[command(subcommand)]
     Term(TermCmd),
+    /// Open or manage kiri windows.
+    #[command(subcommand)]
+    Window(WindowCmd),
     /// Print the kiri environment (socket path, in-terminal flag, discovered windows).
     ///
     /// `env` does not talk to the kiri host. It is safe to run from any
     /// shell — including outside a kiri terminal — to debug why the CLI
     /// cannot find a window or to script an external-terminal handshake.
     Env,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum WindowCmd {
+    /// Open a kiri window for a directory (or focus an existing one).
+    Open(WindowOpenArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct WindowOpenArgs {
+    /// Directory to open. Must exist; resolved relative to the current
+    /// working directory before being sent to the kiri host.
+    #[arg(long)]
+    pub dir: String,
+    /// Force a brand-new window even if one is already open for `--dir`.
+    #[arg(long)]
+    pub new: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -157,6 +206,8 @@ pub enum TermCmd {
     Restore(PaneOpt),
     /// Rename and/or recolor an existing pane (including the focused one).
     SetLabel(SetLabelArgs),
+    /// Snapshot a pane's current screen (what an agent in it is doing).
+    Status(StatusArgs),
     /// Exchange named messages between this pane and its parent / children.
     #[command(subcommand)]
     Signal(SignalCmd),
@@ -220,6 +271,15 @@ pub struct ReadArgs {
 pub struct FollowArgs {
     #[command(flatten)]
     pub pane: PaneOpt,
+}
+
+#[derive(Args, Debug)]
+pub struct StatusArgs {
+    #[command(flatten)]
+    pub pane: PaneOpt,
+    /// Number of trailing on-screen rows to return (1–200).
+    #[arg(long, default_value_t = 40, value_parser = parse_status_lines)]
+    pub lines: usize,
 }
 
 #[derive(Args, Debug)]
@@ -804,5 +864,85 @@ mod tests {
         // Clap doesn't enforce "at least one flag" here — main.rs and the
         // backend handler are the ones who reject this as InvalidArgument.
         assert!(args.is_empty_update());
+    }
+
+    // --- window / --window / status tests ---
+
+    #[test]
+    fn parse_window_open_with_dir() {
+        let cli = Cli::try_parse_from(["kiri", "window", "open", "--dir", "/tmp/proj"]).unwrap();
+        let Top::Window(WindowCmd::Open(a)) = cli.command else {
+            panic!("expected window open");
+        };
+        assert_eq!(a.dir, "/tmp/proj");
+        assert!(!a.new);
+    }
+
+    #[test]
+    fn parse_window_open_new_flag() {
+        let cli =
+            Cli::try_parse_from(["kiri", "window", "open", "--dir", "/tmp/proj", "--new"]).unwrap();
+        let Top::Window(WindowCmd::Open(a)) = cli.command else {
+            panic!("expected window open");
+        };
+        assert!(a.new);
+    }
+
+    #[test]
+    fn window_open_requires_dir() {
+        let err = Cli::try_parse_from(["kiri", "window", "open"]);
+        assert!(err.is_err(), "window open must require --dir");
+    }
+
+    #[test]
+    fn parse_global_window_selector() {
+        let cli = Cli::try_parse_from(["kiri", "--window", "myproj", "term", "ls"]).unwrap();
+        assert_eq!(cli.window.as_deref(), Some("myproj"));
+        assert!(matches!(cli.command, Top::Term(TermCmd::Ls)));
+    }
+
+    #[test]
+    fn window_selector_is_global_after_subcommand() {
+        // global = true means it parses on either side of the subcommand.
+        let cli =
+            Cli::try_parse_from(["kiri", "term", "send", "--window", "proj", "hi"]).unwrap();
+        assert_eq!(cli.window.as_deref(), Some("proj"));
+        match cli.command {
+            Top::Term(TermCmd::Send(a)) => assert_eq!(a.data, vec!["hi".to_string()]),
+            _ => panic!("expected term send"),
+        }
+    }
+
+    #[test]
+    fn parse_status_default_lines() {
+        let cli = Cli::try_parse_from(["kiri", "term", "status"]).unwrap();
+        let Top::Term(TermCmd::Status(a)) = cli.command else {
+            panic!("expected status");
+        };
+        assert_eq!(a.lines, 40);
+        assert_eq!(parse_pane(&a.pane), PaneRef::focused());
+    }
+
+    #[test]
+    fn parse_status_with_pane_and_lines() {
+        let cli =
+            Cli::try_parse_from(["kiri", "term", "status", "--pane", "2", "--lines", "10"]).unwrap();
+        let Top::Term(TermCmd::Status(a)) = cli.command else {
+            panic!("expected status");
+        };
+        assert_eq!(a.lines, 10);
+        assert_eq!(parse_pane(&a.pane), PaneRef::Index(2));
+    }
+
+    #[test]
+    fn status_rejects_zero_lines() {
+        let err = Cli::try_parse_from(["kiri", "term", "status", "--lines", "0"]);
+        assert!(err.is_err(), "lines=0 should be rejected");
+    }
+
+    #[test]
+    fn status_rejects_lines_over_200() {
+        let err = Cli::try_parse_from(["kiri", "term", "status", "--lines", "201"]);
+        assert!(err.is_err(), "lines>200 should be rejected");
     }
 }

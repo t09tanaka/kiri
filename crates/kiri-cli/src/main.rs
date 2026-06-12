@@ -4,7 +4,7 @@ mod transport;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
-use cli::{Cli, SignalCmd, SignalTargetArg, TermCmd, Top};
+use cli::{Cli, SignalCmd, SignalTargetArg, TermCmd, Top, WindowCmd};
 use kiri_cli_proto::{PaneColor, Request, Response, SignalTarget, SplitDirection};
 use std::path::{Path, PathBuf};
 
@@ -52,12 +52,28 @@ async fn run() -> Result<i32> {
         Top::Term(TermCmd::Signal(SignalCmd::Wait(w))) if w.print_data
     );
 
-    let req = match args.command {
-        Top::Term(t) => build_request(t)?,
-        Top::Env => unreachable!("env is handled above"),
-    };
+    let window_selector = args.window.clone();
 
-    let socket = resolve_socket().await?;
+    // Resolve the request and the socket together: `window` is an
+    // app-global command (relay through any live window), `term` honors
+    // the `--window` selector when present, otherwise the normal
+    // project-scoped resolution.
+    let (req, socket) = match args.command {
+        Top::Env => unreachable!("env is handled above"),
+        Top::Window(w) => {
+            let req = build_window_request(w);
+            let socket = resolve_any_socket().await?;
+            (req, socket)
+        }
+        Top::Term(t) => {
+            let req = build_request(t)?;
+            let socket = match window_selector.as_deref() {
+                Some(sel) => resolve_socket_for_window(sel).await?,
+                None => resolve_socket().await?,
+            };
+            (req, socket)
+        }
+    };
 
     let responses = transport::send(&socket, &req).await?;
     let mut last_was_error = false;
@@ -415,6 +431,10 @@ fn build_request(cmd: TermCmd) -> Result<Request> {
                 clear_color: a.clear_color,
             }
         }
+        TermCmd::Status(a) => Request::AgentStatus {
+            pane: cli::parse_pane(&a.pane),
+            lines: a.lines,
+        },
         TermCmd::Signal(s) => match s {
             SignalCmd::Send(a) => Request::SignalSend {
                 from: cli::parse_pane_string(&a.from),
@@ -438,6 +458,152 @@ fn build_request(cmd: TermCmd) -> Result<Request> {
     })
 }
 
+fn build_window_request(cmd: WindowCmd) -> Request {
+    match cmd {
+        WindowCmd::Open(a) => Request::OpenWindow {
+            dir: absolutize(&a.dir),
+            force_new: a.new,
+        },
+    }
+}
+
+/// Resolve `dir` to an absolute path relative to the CLI's current
+/// directory. The kiri host canonicalizes again, but it runs with a
+/// different cwd than the user's shell, so a relative path must be made
+/// absolute here or it would resolve against the host process.
+fn absolutize(dir: &str) -> String {
+    let p = Path::new(dir);
+    if p.is_absolute() {
+        return dir.to_string();
+    }
+    std::env::current_dir()
+        .map(|c| c.join(dir).to_string_lossy().into_owned())
+        .unwrap_or_else(|_| dir.to_string())
+}
+
+/// All live per-window sockets under `~/.kiri/instances`, with no project
+/// filtering. Returns an empty vec (not an error) when the directory is
+/// missing so callers can produce their own "no windows" message.
+async fn live_sockets() -> Result<Vec<PathBuf>> {
+    let dir = dirs::home_dir()
+        .map(|h| h.join(".kiri").join("instances"))
+        .ok_or_else(|| anyhow!("no home directory"))?;
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(it) => it,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut alive = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("sock") {
+            continue;
+        }
+        if socket_alive(&path).await {
+            alive.push(path);
+        }
+    }
+    Ok(alive)
+}
+
+/// Resolve a socket for an app-global request (`window open`). The
+/// request reaches the shared `AppHandle`, so any live window will do —
+/// prefer `$KIRI_SOCKET`, fall back to any discovered live window.
+async fn resolve_any_socket() -> Result<PathBuf> {
+    if let Ok(value) = std::env::var("KIRI_SOCKET") {
+        if !value.is_empty() {
+            let p = PathBuf::from(&value);
+            if p.exists() && socket_alive(&p).await {
+                return Ok(p);
+            }
+        }
+    }
+    let alive = live_sockets().await?;
+    alive
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow!("no kiri windows are running — open a kiri window first"))
+}
+
+/// Resolve a socket from a `--window <project>` selector, bypassing the
+/// normal project guard. Matches a window by its open project path or by
+/// that path's basename. Ambiguous matches are an error.
+async fn resolve_socket_for_window(selector: &str) -> Result<PathBuf> {
+    let alive = live_sockets().await?;
+    if alive.is_empty() {
+        return Err(anyhow!(
+            "no kiri windows are running — open a kiri window first"
+        ));
+    }
+    // If the selector is itself an existing path, canonicalize it once so
+    // we can match it against the window's canonical project path.
+    let canonical_selector = std::fs::canonicalize(selector)
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned());
+
+    let mut matches: Vec<(PathBuf, String)> = Vec::new();
+    for sock in &alive {
+        if let Some((label, project)) = query_window_identity(sock).await {
+            if window_matches(selector, canonical_selector.as_deref(), project.as_deref()) {
+                matches.push((sock.clone(), label));
+            }
+        }
+    }
+    match matches.len() {
+        1 => Ok(matches.into_iter().next().unwrap().0),
+        0 => Err(anyhow!("no kiri window is open for '{selector}'")),
+        _ => {
+            let labels: Vec<String> = matches.iter().map(|(_, l)| l.clone()).collect();
+            let socks: Vec<String> = matches
+                .iter()
+                .map(|(s, _)| s.display().to_string())
+                .collect();
+            Err(anyhow!(
+                "multiple kiri windows match '{selector}' ({}). Set KIRI_SOCKET explicitly to one of: {:?}",
+                labels.join(", "),
+                socks
+            ))
+        }
+    }
+}
+
+/// Does a window with open project `project` match the `--window`
+/// selector? True when the project path equals the raw selector, equals
+/// its canonicalized form, or its basename equals the selector. Pure so
+/// it can be unit-tested without a live socket.
+fn window_matches(selector: &str, canonical_selector: Option<&str>, project: Option<&str>) -> bool {
+    let Some(project) = project else {
+        return false;
+    };
+    if project == selector {
+        return true;
+    }
+    if canonical_selector == Some(project) {
+        return true;
+    }
+    Path::new(project)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|base| base == selector)
+        .unwrap_or(false)
+}
+
+/// Ask the window on `sock` for its label and open project. Errors are
+/// swallowed (returns `None`) so one unresponsive socket does not abort
+/// the scan of the others.
+async fn query_window_identity(sock: &Path) -> Option<(String, Option<String>)> {
+    let responses = transport::send(sock, &Request::WhoAmI).await.ok()?;
+    for resp in responses {
+        if let Response::WhoAmI {
+            window_label,
+            project_path,
+        } = resp
+        {
+            return Some((window_label, project_path));
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,8 +615,80 @@ mod tests {
         let cli = Cli::try_parse_from(args).unwrap();
         match cli.command {
             Top::Term(t) => t,
-            Top::Env => panic!("expected Top::Term, got Top::Env"),
+            other => panic!("expected Top::Term, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn build_request_status_maps_pane_and_lines() {
+        let req = build_request(parse_term(&[
+            "kiri", "term", "status", "--pane", "2", "--lines", "12",
+        ]))
+        .expect("should build status request");
+        assert_eq!(
+            req,
+            Request::AgentStatus {
+                pane: kiri_cli_proto::PaneRef::Index(2),
+                lines: 12,
+            }
+        );
+    }
+
+    #[test]
+    fn build_window_request_open_absolutizes_and_passes_new() {
+        let cli = Cli::try_parse_from(["kiri", "window", "open", "--dir", "/abs/proj", "--new"])
+            .unwrap();
+        let Top::Window(w) = cli.command else {
+            panic!("expected window");
+        };
+        assert_eq!(
+            build_window_request(w),
+            Request::OpenWindow {
+                dir: "/abs/proj".into(),
+                force_new: true,
+            }
+        );
+    }
+
+    #[test]
+    fn absolutize_keeps_absolute_paths() {
+        assert_eq!(absolutize("/already/abs"), "/already/abs");
+    }
+
+    #[test]
+    fn absolutize_joins_relative_to_cwd() {
+        let cwd = std::env::current_dir().unwrap();
+        let expected = cwd.join("sub/dir").to_string_lossy().into_owned();
+        assert_eq!(absolutize("sub/dir"), expected);
+    }
+
+    #[test]
+    fn window_matches_exact_path() {
+        assert!(window_matches("/home/me/proj", None, Some("/home/me/proj")));
+    }
+
+    #[test]
+    fn window_matches_basename() {
+        assert!(window_matches("proj", None, Some("/home/me/proj")));
+    }
+
+    #[test]
+    fn window_matches_canonical_selector() {
+        assert!(window_matches(
+            "./proj",
+            Some("/home/me/proj"),
+            Some("/home/me/proj")
+        ));
+    }
+
+    #[test]
+    fn window_matches_rejects_unrelated() {
+        assert!(!window_matches("other", None, Some("/home/me/proj")));
+    }
+
+    #[test]
+    fn window_matches_rejects_window_without_project() {
+        assert!(!window_matches("proj", None, None));
     }
 
     #[test]
