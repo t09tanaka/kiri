@@ -1,7 +1,7 @@
 ---
 name: kiri-cli
-description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close/signal`, JSON output schema, pane addressing (index/id/focused), required pane labels (`--name`/`--color`), parent↔child signal queues (`kiri term signal send/wait/list`), busy-pane detection, and known limitations.
-version: 0.4.0
+description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close/status/signal`, opening windows for a directory (`kiri window open`), targeting another window (`--window`), reading what an agent in a pane is doing (`kiri term status`), JSON output schema, pane addressing (index/id/focused), required pane labels (`--name`/`--color`), parent↔child signal queues (`kiri term signal send/wait/list`), busy-pane detection, and known limitations.
+version: 0.5.0
 ---
 
 # kiri CLI skill
@@ -30,8 +30,28 @@ Outside a kiri terminal, `kiri` is not on PATH and `KIRI_SOCKET` is unset — al
 | Flag | Effect |
 |---|---|
 | `--pretty` | Human-readable output instead of JSON |
+| `--window PROJECT` | Target a **different** window than this one (see below) |
 
 Agents should omit `--pretty`. JSON output is the default and is parseable.
+
+### `--window PROJECT` — target another window
+
+By default every `term` command acts on **this terminal's own window**
+(the window open for the current project). Pass `--window PROJECT` to
+retarget any `term` subcommand at a different window, addressed by its
+open project's **path** or that path's **basename**:
+
+```bash
+kiri term ls --window other-project
+kiri term send --window /abs/path/to/proj $'echo hi\n'
+```
+
+It matches a live window whose open project equals the value or whose
+project directory's basename equals it, overriding the normal
+current-project guard. If two windows have the same project open the
+match is ambiguous and rejected — set `KIRI_SOCKET` explicitly to one of
+them instead. `--window` has no effect on `kiri window …` (those reach
+the shared app and pick any live window automatically).
 
 ## 4. Pane addressing (`PaneRef`)
 
@@ -69,13 +89,14 @@ Response shape:
       "memory_bytes": 4096000,
       "focused": true,
       "name": "build",
-      "color": "coral"
+      "color": "coral",
+      "ai_kind": "claude"
     }
   ]
 }
 ```
 
-`running: true` means a foreground process is active (not the shell itself). `focused: true` marks the pane the user is currently viewing. `name` and `color` are **omitted entirely** when the pane was created without label flags — do not expect `null`.
+`running: true` means a foreground process is active (not the shell itself). `focused: true` marks the pane the user is currently viewing. `name` and `color` are **omitted entirely** when the pane was created without label flags — do not expect `null`. `ai_kind` is `"claude"` or `"codex"` when the pane's foreground process is a known interactive AI assistant, and is **omitted entirely** otherwise — a cheap way to spot agent panes. To see what such an agent is actually doing, use `kiri term status`.
 
 ---
 
@@ -188,6 +209,43 @@ Response shape:
 
 ---
 
+### `kiri term status [--pane X] [--lines N]`
+
+Snapshot a pane's **current on-screen text** — the most reliable way to
+see what an agent (claude / codex) running in a pane is doing right now.
+Reads the live screen from the frontend, so it works even on an idle
+pane that `read` would return nothing for (the ring buffer only captures
+output from the first `read`/`follow` onward).
+
+```bash
+kiri term status
+kiri term status --pane pane-2
+kiri term status --pane pane-2 --lines 80
+```
+
+- `--lines N` — number of trailing non-blank screen rows to return
+  (default 40, max 200).
+
+Response shape:
+
+```json
+{
+  "type": "agent_status",
+  "kind": "claude",
+  "busy": true,
+  "screen": "✶ Forging… (esc to interrupt · 12s · ↑ 3.2k tokens)\n> "
+}
+```
+
+- `kind` — `"claude"`, `"codex"`, or `"none"` (from the foreground process).
+- `busy` — best-effort: `true` while the agent shows an "esc to interrupt"
+  affordance. Treat `screen` as the source of truth and interpret it
+  yourself; `busy` is only a hint.
+- `screen` — the visible text. Read it directly to judge whether the
+  agent is thinking, awaiting input, running a tool, or done.
+
+---
+
 ### `kiri term split [--pane X] [--dir h|v] --name STR --color COLOR`
 
 Split the pane. `--dir h` (default) is horizontal; `--dir v` is vertical.
@@ -233,6 +291,49 @@ Response shape:
 
 ```json
 { "type": "close" }
+```
+
+---
+
+### `kiri window open --dir PATH [--new]`
+
+Open a kiri **window** for a directory (this is a `kiri window …` command,
+not `kiri term …`). If a window is already open for that directory it is
+focused instead of duplicated; pass `--new` to force a brand-new window.
+
+```bash
+kiri window open --dir ~/code/other-project
+kiri window open --dir ~/code/other-project --new
+```
+
+Response shape:
+
+```json
+{
+  "type": "open_window",
+  "label": "window-3",
+  "socket": "/Users/user/.kiri/instances/window-3.sock",
+  "project": "/Users/user/code/other-project",
+  "created": true,
+  "socket_ready": true
+}
+```
+
+- `created` — `true` if a new window was made, `false` if an existing one
+  was focused.
+- `socket_ready` — `true` once the new window's CLI socket accepts
+  connections. For a freshly created window it may be `false` (still
+  booting); retry against `socket` before sending commands.
+- Requires at least one kiri window already running (the request is relayed
+  through any live window to reach the app). Fails with `no_kiri_window`
+  otherwise.
+
+To act on the window you just opened, use the returned `socket`
+directly — it is unambiguous even if several windows share a project name:
+
+```bash
+SOCK=$(kiri window open --dir ~/code/other-project | jq -r .socket)
+KIRI_SOCKET="$SOCK" kiri term send $'echo hi\n'
 ```
 
 ---
@@ -446,7 +547,8 @@ Key error codes (snake_case):
       "memory_bytes": 52428800,
       "focused": false,
       "name": "agent",
-      "color": "iris"
+      "color": "iris",
+      "ai_kind": "claude"
     }
   ]
 }
@@ -498,7 +600,10 @@ Key error codes (snake_case):
 - `follow` is currently a snapshot, not true streaming. Treat it as a one-shot tail.
 - PTY output includes ANSI color/cursor escape codes. Strip them before semantic analysis.
 - Sentinel-based `run` requires a normal interactive shell. If the pane is inside `vim`, `less`, or another TUI, use `send` + `cancel` instead.
-- Cross-window addressing is not supported. Each kiri window has its own CLI socket and panes.
+- Each kiri window has its own CLI socket and panes. `term` commands act on
+  this window by default; use `--window PROJECT` to address another window,
+  or `kiri window open` to open/focus one. To act on a window precisely
+  (e.g. one just opened), set `KIRI_SOCKET` to its socket.
 - Signal routing assumes the sender pane is the focused pane. Use
   `signal send --from <ref>` to override when sending from a non-focused
   side pane.
