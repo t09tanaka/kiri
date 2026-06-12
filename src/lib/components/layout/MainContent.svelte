@@ -1,7 +1,7 @@
 <script lang="ts">
   import { terminalStore } from '@/lib/stores/terminalStore';
   import { currentProjectPath } from '@/lib/stores/projectStore';
-  import { TerminalContainer } from '@/lib/components/terminal';
+  import { TerminalContainer, MinimizedDock, FloatingPane } from '@/lib/components/terminal';
 
   const rootPane = $derived($terminalStore.rootPane);
 </script>
@@ -14,6 +14,7 @@
         cwd={$currentProjectPath}
         isOnlyPane={rootPane.type === 'terminal'}
       />
+      <FloatingPane />
     {:else}
       <div class="no-terminal">
         <div class="bg-layer bg-gradient"></div>
@@ -71,6 +72,7 @@
       </div>
     {/if}
   </div>
+  <MinimizedDock />
 </main>
 
 <style>

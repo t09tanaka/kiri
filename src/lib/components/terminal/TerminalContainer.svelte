@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import type { TerminalPane } from '@/lib/stores/terminalStore';
   import { terminalStore } from '@/lib/stores/terminalStore';
   import Terminal from './Terminal.svelte';
@@ -16,6 +17,55 @@
   let isDragging = $state(false);
   let dragIndex = $state(-1);
   let resizeThrottleTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  // The minimized set lives outside the pane tree (terminalStore notifies
+  // without changing the tree's identity), so subscribe explicitly and bump
+  // a counter the derived layout depends on to stay reactive to it.
+  let minimizedVersion = $state(0);
+  const unsubscribeMinimized = terminalStore.subscribe(() => {
+    minimizedVersion++;
+  });
+  onDestroy(unsubscribeMinimized);
+
+  /** A subtree is visible when at least one of its leaves is not minimized. */
+  function isPaneVisible(target: TerminalPane): boolean {
+    if (target.type === 'terminal') return !terminalStore.isMinimized(target.id);
+    return target.children.some(isPaneVisible);
+  }
+
+  // This leaf should not render inside the layout while it is minimized —
+  // the footer dock (and the floating peek) own it instead.
+  const selfMinimized = $derived.by(() => {
+    void minimizedVersion;
+    return pane.type === 'terminal' && terminalStore.isMinimized(pane.id);
+  });
+
+  // Offer the minimize affordance only while more than one pane is visible;
+  // minimizing the last one would leave an empty layout.
+  const canMinimize = $derived.by(() => {
+    void minimizedVersion;
+    return terminalStore.visiblePaneCount() > 1;
+  });
+
+  // Visible children of a split with sizes renormalized over just the
+  // visible subset, keeping the original index so divider drags can write
+  // back into the full `pane.sizes` array.
+  const visibleChildren = $derived.by(() => {
+    void minimizedVersion;
+    if (pane.type !== 'split') return [];
+    const items: { child: TerminalPane; size: number; originalIndex: number }[] = [];
+    let total = 0;
+    pane.children.forEach((child, originalIndex) => {
+      if (isPaneVisible(child)) {
+        items.push({ child, size: pane.sizes[originalIndex], originalIndex });
+        total += pane.sizes[originalIndex];
+      }
+    });
+    if (total > 0) {
+      for (const item of items) item.size = (item.size / total) * 100;
+    }
+    return items;
+  });
 
   function handleSplitHorizontal(paneId: string) {
     terminalStore.splitPane(paneId, 'horizontal');
@@ -41,12 +91,25 @@
     });
   }
 
+  function handleMinimize(minimizingPaneId: string) {
+    terminalStore.setMinimized(minimizingPaneId, true);
+    // The remaining visible panes grow to fill the freed space; refit them.
+    requestAnimationFrame(() => {
+      window.dispatchEvent(new Event('terminal-resize'));
+    });
+  }
+
   function handleDividerMouseDown(event: MouseEvent, index: number) {
     if (pane.type !== 'split') return;
 
     event.preventDefault();
     isDragging = true;
     dragIndex = index;
+
+    // Resize operates over the currently visible subset; minimized panes are
+    // not rendered, so the divider at visible `index` sits between visible
+    // items only. We map results back into the full `pane.sizes` array.
+    const visible = visibleChildren;
 
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging || !containerRef || pane.type !== 'split') return;
@@ -59,42 +122,42 @@
         ? ((e.clientX - rect.left) / rect.width) * 100
         : ((e.clientY - rect.top) / rect.height) * 100;
 
-      // For 2 panes, distribute sizes based on divider position
-      const totalChildren = pane.children.length;
-      const newSizes: number[] = [];
+      // Distribute sizes among the visible panes based on divider position.
+      const visibleCount = visible.length;
+      const visibleSizes = visible.map((item) => item.size);
+      const newVisibleSizes: number[] = [];
 
-      // Calculate size for each pane based on divider positions
-      // For simplicity, handle the common 2-pane case
-      if (totalChildren === 2 && dragIndex === 0) {
+      // Common 2-visible-pane case: split directly at the divider position.
+      if (visibleCount === 2 && dragIndex === 0) {
         const size1 = Math.max(10, Math.min(90, position));
-        const size2 = 100 - size1;
-        newSizes.push(size1, size2);
+        newVisibleSizes.push(size1, 100 - size1);
       } else {
-        // For more complex cases, just update the sizes proportionally
         const beforeSize = position;
         const afterSize = 100 - position;
 
-        // Distribute to panes before and after the divider
         let beforeTotal = 0;
         let afterTotal = 0;
+        for (let i = 0; i <= dragIndex; i++) beforeTotal += visibleSizes[i];
+        for (let i = dragIndex + 1; i < visibleCount; i++) afterTotal += visibleSizes[i];
 
-        for (let i = 0; i <= dragIndex; i++) {
-          beforeTotal += pane.sizes[i];
-        }
-        for (let i = dragIndex + 1; i < totalChildren; i++) {
-          afterTotal += pane.sizes[i];
-        }
-
-        for (let i = 0; i < totalChildren; i++) {
+        for (let i = 0; i < visibleCount; i++) {
           if (i <= dragIndex) {
-            newSizes.push((pane.sizes[i] / beforeTotal) * beforeSize);
+            newVisibleSizes.push((visibleSizes[i] / beforeTotal) * beforeSize);
           } else {
-            newSizes.push((pane.sizes[i] / afterTotal) * afterSize);
+            newVisibleSizes.push((visibleSizes[i] / afterTotal) * afterSize);
           }
         }
       }
 
-      terminalStore.updatePaneSizes(pane.id, newSizes);
+      // Scatter the new visible sizes back into the full sizes array; hidden
+      // (minimized) panes keep their stored size and are renormalized away on
+      // render anyway.
+      const fullSizes = [...pane.sizes];
+      visible.forEach((item, i) => {
+        fullSizes[item.originalIndex] = newVisibleSizes[i];
+      });
+
+      terminalStore.updatePaneSizes(pane.id, fullSizes);
 
       // Throttled resize event dispatch during drag
       if (!resizeThrottleTimeout) {
@@ -129,16 +192,19 @@
 
 {#key pane.type}
   {#if pane.type === 'terminal'}
-    <Terminal
-      paneId={pane.id}
-      cwd={pane.cwd || cwd}
-      name={pane.name}
-      color={pane.color}
-      showControls={true}
-      onSplitHorizontal={() => handleSplitHorizontal(pane.id)}
-      onSplitVertical={() => handleSplitVertical(pane.id)}
-      onClose={isOnlyPane ? undefined : () => handleClose(pane.id)}
-    />
+    {#if !selfMinimized}
+      <Terminal
+        paneId={pane.id}
+        cwd={pane.cwd || cwd}
+        name={pane.name}
+        color={pane.color}
+        showControls={true}
+        onSplitHorizontal={() => handleSplitHorizontal(pane.id)}
+        onSplitVertical={() => handleSplitVertical(pane.id)}
+        onMinimize={canMinimize ? () => handleMinimize(pane.id) : undefined}
+        onClose={isOnlyPane ? undefined : () => handleClose(pane.id)}
+      />
+    {/if}
   {:else}
     <div
       bind:this={containerRef}
@@ -147,11 +213,11 @@
       class:vertical={pane.direction === 'vertical'}
       class:dragging={isDragging}
     >
-      {#each pane.children as child, index (child.type === 'terminal' ? child.id : index)}
-        <div class="split-pane" style="flex: 0 0 {pane.sizes[index]}%;">
-          <TerminalContainer pane={child} {cwd} isOnlyPane={false} />
+      {#each visibleChildren as item, index (item.child.type === 'terminal' ? item.child.id : item.originalIndex)}
+        <div class="split-pane" style="flex: 0 0 {item.size}%;">
+          <TerminalContainer pane={item.child} {cwd} isOnlyPane={false} />
         </div>
-        {#if index < pane.children.length - 1}
+        {#if index < visibleChildren.length - 1}
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <div
             class="split-divider"
