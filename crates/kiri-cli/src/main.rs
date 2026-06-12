@@ -389,17 +389,9 @@ fn build_request(cmd: TermCmd) -> Result<Request> {
             },
             name: Some(a.name.clone()),
             color: Some(PaneColor::from(a.color)),
-            // New panes default to minimized; `--no-minimized` opts out.
-            minimized: !a.no_minimized,
         },
         TermCmd::Close(p) => Request::Close {
             pane: cli::parse_pane(&p),
-        },
-        TermCmd::Minimize(opt) => Request::Minimize {
-            pane: cli::parse_pane(&opt),
-        },
-        TermCmd::Restore(opt) => Request::Restore {
-            pane: cli::parse_pane(&opt),
         },
         TermCmd::SetLabel(a) => {
             if a.is_empty_update() {

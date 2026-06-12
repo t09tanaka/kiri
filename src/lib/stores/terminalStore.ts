@@ -256,31 +256,13 @@ export interface TerminalState {
   rootPane: TerminalPane | null;
 }
 
-/** Snapshot shape exposed via `terminalStore.snapshot()` — augments TerminalState with the collapsed map. */
-export interface TerminalSnapshot extends TerminalState {
-  collapsedByPaneId: Map<string, boolean>;
-}
-
 const initialState: TerminalState = {
   rootPane: null,
 };
 
-/**
- * Tracks which panes have their shortcut bar collapsed/minimized.
- * Module-level state mirroring the existing `nextPaneId` / `nextSplitId` pattern.
- * Not reactive on its own — subscribers are notified via the writable's update().
- * Only `true` entries are stored; `false` is the implicit default.
- */
-const collapsedByPaneId = new Map<string, boolean>();
-
 function createTerminalStore() {
   const store = writable<TerminalState>(initialState);
   const { subscribe, set, update } = store;
-
-  /** Force-notify subscribers without changing the tree shape. */
-  function notify() {
-    update((state) => state);
-  }
 
   return {
     subscribe,
@@ -345,17 +327,7 @@ function createTerminalStore() {
     closePane: (paneId: string) => {
       update((state) => {
         if (!state.rootPane) return state;
-        const beforeIds = new Set(getAllPaneIds(state.rootPane));
-        const newRootPane = closePaneInTree(state.rootPane, paneId);
-        const afterIds = new Set(newRootPane ? getAllPaneIds(newRootPane) : []);
-        // Drop collapsed entries for every pane that disappeared from the tree
-        // (the target plus any descendants if a split branch collapsed).
-        for (const id of beforeIds) {
-          if (!afterIds.has(id)) {
-            collapsedByPaneId.delete(id);
-          }
-        }
-        return { rootPane: newRootPane };
+        return { rootPane: closePaneInTree(state.rootPane, paneId) };
       });
     },
 
@@ -369,43 +341,14 @@ function createTerminalStore() {
     /**
      * Synchronous read of the current state. Used by the CLI bridge
      * which needs to look up pane → terminal id mappings on demand.
-     * Returns a defensive copy of `collapsedByPaneId` so callers can
-     * mutate the snapshot freely without affecting store state.
      */
-    snapshot: (): TerminalSnapshot => {
+    snapshot: (): TerminalState => {
       let state: TerminalState = initialState;
       const unsub = subscribe((s) => {
         state = s;
       });
       unsub();
-      return { ...state, collapsedByPaneId: new Map(collapsedByPaneId) };
-    },
-
-    /** Returns whether the shortcut bar for `paneId` is currently collapsed. */
-    isCollapsed: (paneId: string): boolean => collapsedByPaneId.get(paneId) ?? false,
-
-    /**
-     * Set the collapsed state for `paneId`. `true` adds an entry, `false`
-     * deletes it (keeping the map sparse). Notifies subscribers either way.
-     */
-    setCollapsed: (paneId: string, value: boolean): void => {
-      if (value) {
-        collapsedByPaneId.set(paneId, true);
-      } else {
-        collapsedByPaneId.delete(paneId);
-      }
-      notify();
-    },
-
-    /** Flip the collapsed state for `paneId`. */
-    toggleCollapsed: (paneId: string): void => {
-      const current = collapsedByPaneId.get(paneId) ?? false;
-      if (current) {
-        collapsedByPaneId.delete(paneId);
-      } else {
-        collapsedByPaneId.set(paneId, true);
-      }
-      notify();
+      return { ...state };
     },
 
     /**
@@ -435,7 +378,6 @@ function createTerminalStore() {
     },
 
     reset: () => {
-      collapsedByPaneId.clear();
       set(initialState);
     },
   };

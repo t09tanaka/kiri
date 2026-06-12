@@ -151,10 +151,6 @@ pub enum TermCmd {
     Split(SplitArgs),
     /// Close the pane.
     Close(PaneOpt),
-    /// Collapse the shortcut bar to a thin strip with only the restore + settings buttons.
-    Minimize(PaneOpt),
-    /// Expand a minimized shortcut bar back to its full layout.
-    Restore(PaneOpt),
     /// Rename and/or recolor an existing pane (including the focused one).
     SetLabel(SetLabelArgs),
     /// Exchange named messages between this pane and its parent / children.
@@ -235,12 +231,6 @@ pub struct SplitArgs {
     /// Pane color shown in the terminal header.
     #[arg(long, value_enum, required = true)]
     pub color: PaneColorArg,
-    /// Create the new pane with its shortcut bar fully expanded.
-    ///
-    /// New panes are minimized by default — pass this flag for user-facing
-    /// side panes the user is expected to interact with.
-    #[arg(long = "no-minimized")]
-    pub no_minimized: bool,
 }
 
 #[derive(Args, Debug)]
@@ -259,8 +249,8 @@ pub struct SignalSendArgs {
     /// Override the sender pane. Defaults to the focused pane.
     ///
     /// Mostly useful when the sending pane is not focused — e.g. an
-    /// agent running inside a minimized side pane that wants its
-    /// `--target parent` resolution to use the side pane as the sender.
+    /// agent running inside a side pane that wants its `--target parent`
+    /// resolution to use the side pane as the sender.
     #[arg(long, value_name = "I_OR_ID")]
     pub from: Option<String>,
     /// Signal name (1–64 chars, [a-zA-Z0-9_.-] only).
@@ -448,47 +438,6 @@ mod tests {
     fn split_rejects_missing_color() {
         let err = Cli::try_parse_from(["kiri", "term", "split", "--name", "build"]);
         assert!(err.is_err(), "should reject split missing --color");
-    }
-
-    #[test]
-    fn parse_split_default_no_minimized_is_false() {
-        // Default is minimized=true (i.e. no_minimized=false).
-        let cli = Cli::try_parse_from(split_args(&[])).unwrap();
-        match cli.command {
-            Top::Term(TermCmd::Split(args)) => assert!(!args.no_minimized),
-            _ => panic!("expected split"),
-        }
-    }
-
-    #[test]
-    fn parse_split_no_minimized_flag_present() {
-        let cli = Cli::try_parse_from(split_args(&["--no-minimized"])).unwrap();
-        match cli.command {
-            Top::Term(TermCmd::Split(args)) => assert!(args.no_minimized),
-            _ => panic!("expected split"),
-        }
-    }
-
-    #[test]
-    fn parse_minimize_subcommand() {
-        let cli = Cli::try_parse_from(["kiri", "term", "minimize"]).unwrap();
-        match cli.command {
-            Top::Term(TermCmd::Minimize(opt)) => {
-                assert_eq!(parse_pane(&opt), PaneRef::focused());
-            }
-            _ => panic!("expected minimize"),
-        }
-    }
-
-    #[test]
-    fn parse_restore_subcommand_with_pane() {
-        let cli = Cli::try_parse_from(["kiri", "term", "restore", "--pane", "pane-2"]).unwrap();
-        match cli.command {
-            Top::Term(TermCmd::Restore(opt)) => {
-                assert_eq!(parse_pane(&opt), PaneRef::Id("pane-2".into()));
-            }
-            _ => panic!("expected restore"),
-        }
     }
 
     // --- signal subcommand tests ---
