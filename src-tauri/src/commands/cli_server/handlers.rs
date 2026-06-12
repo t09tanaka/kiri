@@ -904,10 +904,7 @@ async fn open_window(ctx: &DispatchContext, dir: String, force_new: bool) -> Res
     // caller forced a new one or the window has since been closed.
     let existing_label = {
         let registry = app.state::<WindowRegistryState>();
-        let guard = match registry.lock() {
-            Ok(g) => g,
-            Err(_) => return internal("window registry poisoned"),
-        };
+        let guard = registry.lock_recover();
         guard.get_label_for_path(&project).cloned()
     };
     let focus_label = match (force_new, existing_label) {
@@ -979,7 +976,8 @@ async fn wait_for_cli_server(app: &tauri::AppHandle, label: &str, max: Duration)
     };
     let deadline = tokio::time::Instant::now() + max;
     loop {
-        if let Ok(map) = registry.handles.lock() {
+        {
+            let map = registry.handles.lock_recover();
             if map.contains_key(label) {
                 return true;
             }

@@ -96,8 +96,9 @@ fn parse_status_lines(s: &str) -> Result<usize, String> {
     if v == 0 {
         return Err("--lines must be at least 1".into());
     }
-    if v > 200 {
-        return Err("--lines must be 200 or fewer".into());
+    let max = kiri_cli_proto::MAX_STATUS_LINES;
+    if v > max {
+        return Err(format!("--lines must be {max} or fewer"));
     }
     Ok(v)
 }
