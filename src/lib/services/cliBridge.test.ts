@@ -51,6 +51,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => null,
       setPaneCollapsed: vi.fn(),
       setPaneLabel: vi.fn(),
+      snapshotPane: vi.fn(),
     });
 
     const subscribedEvents = windowListenMock.mock.calls.map(([name]) => name);
@@ -59,6 +60,7 @@ describe('cliBridge', () => {
       'cli:pane-close',
       'cli:pane-minimize',
       'cli:pane-set-label',
+      'cli:pane-snapshot',
     ]);
     // The global listen() must not be used for any cli:* event, otherwise
     // events emitted with emit_to(label, ...) would still leak to all
@@ -78,6 +80,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => 'focused-id',
       setPaneCollapsed: vi.fn(),
       setPaneLabel: vi.fn(),
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -106,6 +109,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => null,
       setPaneCollapsed: vi.fn(),
       setPaneLabel: vi.fn(),
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-close')!({
@@ -131,6 +135,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => 'fp',
       setPaneCollapsed: vi.fn(),
       setPaneLabel: vi.fn(),
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -154,6 +159,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => null,
       setPaneCollapsed: vi.fn(),
       setPaneLabel: vi.fn(),
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-close')!({
@@ -179,6 +185,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => null,
       setPaneCollapsed: vi.fn(),
       setPaneLabel: vi.fn(),
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -206,6 +213,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => 'focused-id',
       setPaneCollapsed: vi.fn(),
       setPaneLabel: vi.fn(),
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -241,6 +249,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => 'focused-id',
       setPaneCollapsed: vi.fn(),
       setPaneLabel: vi.fn(),
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -264,6 +273,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => 'pane-1',
       setPaneCollapsed,
       setPaneLabel: vi.fn(),
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-minimize')!({
@@ -288,6 +298,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => null,
       setPaneCollapsed,
       setPaneLabel: vi.fn(),
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-minimize')!({
@@ -313,6 +324,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => 'pane-1',
       setPaneCollapsed,
       setPaneLabel: vi.fn(),
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -341,6 +353,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => 'pane-1',
       setPaneCollapsed,
       setPaneLabel: vi.fn(),
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-split')!({
@@ -360,6 +373,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => 'pane-1',
       setPaneCollapsed: vi.fn(),
       setPaneLabel,
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-set-label')!({
@@ -391,6 +405,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => 'pane-1',
       setPaneCollapsed: vi.fn(),
       setPaneLabel,
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-set-label')!({
@@ -415,6 +430,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => 'pane-7',
       setPaneCollapsed: vi.fn(),
       setPaneLabel,
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-set-label')!({
@@ -438,6 +454,7 @@ describe('cliBridge', () => {
       resolveFocusedPaneId: () => null,
       setPaneCollapsed: vi.fn(),
       setPaneLabel,
+      snapshotPane: vi.fn(),
     });
 
     listeners.get('cli:pane-set-label')!({
@@ -452,6 +469,55 @@ describe('cliBridge', () => {
     expect(invokeMock).toHaveBeenCalledWith('cli_resolve_pending', {
       label: 'main',
       requestId: 'rl4',
+      payload: { error: 'no_focused_pane' },
+    });
+  });
+
+  it('on cli:pane-snapshot, replies with the pane screen text', async () => {
+    const snapshotPane = vi.fn(() => 'line a\nline b');
+    await startCliBridge({
+      label: 'main',
+      splitPane: vi.fn(),
+      closePane: vi.fn(),
+      indexOf: vi.fn(),
+      resolveFocusedPaneId: () => 'pane-1',
+      setPaneCollapsed: vi.fn(),
+      setPaneLabel: vi.fn(),
+      snapshotPane,
+    });
+
+    listeners.get('cli:pane-snapshot')!({
+      payload: { requestId: 'rs1', paneId: 'pane-1', lines: 40 },
+    });
+
+    expect(snapshotPane).toHaveBeenCalledWith('pane-1', 40);
+    expect(invokeMock).toHaveBeenCalledWith('cli_resolve_pending', {
+      label: 'main',
+      requestId: 'rs1',
+      payload: { screen: 'line a\nline b' },
+    });
+  });
+
+  it('on cli:pane-snapshot with no registered terminal, replies error', async () => {
+    const snapshotPane = vi.fn(() => null);
+    await startCliBridge({
+      label: 'main',
+      splitPane: vi.fn(),
+      closePane: vi.fn(),
+      indexOf: vi.fn(),
+      resolveFocusedPaneId: () => 'pane-1',
+      setPaneCollapsed: vi.fn(),
+      setPaneLabel: vi.fn(),
+      snapshotPane,
+    });
+
+    listeners.get('cli:pane-snapshot')!({
+      payload: { requestId: 'rs2', paneId: 'pane-1', lines: 40 },
+    });
+
+    expect(invokeMock).toHaveBeenCalledWith('cli_resolve_pending', {
+      label: 'main',
+      requestId: 'rs2',
       payload: { error: 'no_focused_pane' },
     });
   });

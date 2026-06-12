@@ -27,6 +27,15 @@ export interface CliBridgeDeps {
    * (and color) fields so the store stays self-contained.
    */
   setPaneLabel: (paneId: string, opts: { name?: string | null; color?: PaneColor | null }) => void;
+  /**
+   * Read the pane's current on-screen text from its xterm buffer.
+   *
+   * Returns the trailing `lines` non-blank rows joined by `\n`, or `null`
+   * when no terminal instance is registered for `paneId`. The CLI's
+   * `term status` uses this to report what an agent is doing without
+   * depending on ring-buffer subscription timing.
+   */
+  snapshotPane: (paneId: string, lines: number) => string | null;
 }
 
 const FOCUSED_SENTINEL = 'focused';
@@ -130,10 +139,30 @@ export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
     reply(requestId, {});
   });
 
+  const unlistenSnapshot = await eventService.listenCurrentWindow<{
+    requestId: string;
+    paneId: string;
+    lines: number;
+  }>('cli:pane-snapshot', (event) => {
+    const { requestId, paneId, lines } = event.payload;
+    const target = resolveTarget(paneId);
+    if (!target) {
+      reply(requestId, { error: 'no_focused_pane' });
+      return;
+    }
+    const screen = deps.snapshotPane(target, lines);
+    if (screen === null) {
+      reply(requestId, { error: 'no_focused_pane' });
+      return;
+    }
+    reply(requestId, { screen });
+  });
+
   return () => {
     unlistenSplit();
     unlistenClose();
     unlistenMinimize();
     unlistenSetLabel();
+    unlistenSnapshot();
   };
 }

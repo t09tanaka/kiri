@@ -119,6 +119,30 @@ pub enum Request {
     SignalList {
         pane: PaneRef,
     },
+    /// Open (or focus) a kiri window for `dir`.
+    ///
+    /// This is an app-global request rather than a per-window one: any
+    /// live window's socket can service it because the handler reaches
+    /// the shared `AppHandle`. When `force_new` is false and a window is
+    /// already open for `dir`, that window is focused instead of creating
+    /// a duplicate.
+    OpenWindow {
+        dir: String,
+        #[serde(default)]
+        force_new: bool,
+    },
+    /// Snapshot what a pane is currently showing.
+    ///
+    /// Returns the pane's live on-screen text (read from the frontend's
+    /// xterm buffer, so it reflects exactly what is displayed regardless
+    /// of ring-buffer subscription timing) plus a light `kind`/`busy`
+    /// classification. Semantic interpretation of the screen is left to
+    /// the caller.
+    AgentStatus {
+        pane: PaneRef,
+        #[serde(default = "default_status_lines")]
+        lines: usize,
+    },
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -138,6 +162,14 @@ fn default_signal_wait_timeout() -> u64 {
     60
 }
 
+fn default_status_lines() -> usize {
+    40
+}
+
+/// Upper bound on `AgentStatus::lines`. Raw-JSON clients can bypass the
+/// CLI's clamp, so the handler caps here too.
+pub const MAX_STATUS_LINES: usize = 200;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PaneInfo {
     pub index: u32,
@@ -154,6 +186,12 @@ pub struct PaneInfo {
     pub color: Option<crate::PaneColor>,
     #[serde(default)]
     pub minimized: bool,
+    /// `"claude"` / `"codex"` when the pane's foreground process is a
+    /// known interactive AI assistant, otherwise `None`. Derived cheaply
+    /// from `process_name` — no per-pane frontend round-trip — so it is
+    /// safe to populate for every pane in a list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_kind: Option<String>,
 }
 
 /// One entry from `Response::SignalList`'s `signals` array.
@@ -233,6 +271,26 @@ pub enum Response {
     },
     SignalList {
         signals: Vec<SignalEntry>,
+    },
+    /// Result of an `OpenWindow`. `socket_ready` reports whether the
+    /// window's per-window CLI socket accepted a connection before the
+    /// handler's poll timeout — for a freshly created window it may still
+    /// be booting, in which case the caller should retry against
+    /// `socket` before issuing further commands.
+    OpenWindow {
+        label: String,
+        socket: String,
+        project: String,
+        created: bool,
+        socket_ready: bool,
+    },
+    /// Result of an `AgentStatus`. `screen` is the source of truth (the
+    /// pane's current visible text); `kind` / `busy` are convenience
+    /// signals derived best-effort.
+    AgentStatus {
+        kind: String,
+        busy: bool,
+        screen: String,
     },
     Error {
         code: ErrorCode,
@@ -429,6 +487,7 @@ mod tests {
             name: Some("agent".into()),
             color: Some(crate::PaneColor::Iris),
             minimized: false,
+            ai_kind: None,
         };
         let s = serde_json::to_string(&info).unwrap();
         let back: PaneInfo = serde_json::from_str(&s).unwrap();
@@ -450,6 +509,7 @@ mod tests {
             name: None,
             color: None,
             minimized: false,
+            ai_kind: None,
         };
         let v = serde_json::to_value(&info).unwrap();
         let obj = v.as_object().unwrap();
@@ -487,6 +547,7 @@ mod tests {
             name: None,
             color: None,
             minimized: true,
+            ai_kind: None,
         };
         roundtrip(&info);
     }
@@ -786,5 +847,102 @@ mod tests {
                 },
             ],
         });
+    }
+
+    #[test]
+    fn request_open_window_roundtrip() {
+        roundtrip(&Request::OpenWindow {
+            dir: "/home/me/proj".into(),
+            force_new: true,
+        });
+    }
+
+    #[test]
+    fn request_open_window_force_new_defaults_to_false() {
+        let parsed: Request = serde_json::from_value(
+            serde_json::json!({ "type": "open_window", "dir": "/x" }),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            Request::OpenWindow {
+                dir: "/x".into(),
+                force_new: false,
+            }
+        );
+    }
+
+    #[test]
+    fn request_agent_status_uses_default_lines() {
+        let parsed: Request = serde_json::from_value(
+            serde_json::json!({ "type": "agent_status", "pane": 0 }),
+        )
+        .unwrap();
+        assert_eq!(
+            parsed,
+            Request::AgentStatus {
+                pane: PaneRef::Index(0),
+                lines: 40,
+            }
+        );
+    }
+
+    #[test]
+    fn response_open_window_roundtrip() {
+        roundtrip(&Response::OpenWindow {
+            label: "window-3".into(),
+            socket: "/home/me/.kiri/instances/window-3.sock".into(),
+            project: "/home/me/proj".into(),
+            created: true,
+            socket_ready: false,
+        });
+    }
+
+    #[test]
+    fn response_agent_status_roundtrip() {
+        roundtrip(&Response::AgentStatus {
+            kind: "claude".into(),
+            busy: true,
+            screen: "✶ Thinking…\n> ".into(),
+        });
+    }
+
+    #[test]
+    fn pane_info_ai_kind_omitted_when_none() {
+        let v = serde_json::to_value(PaneInfo {
+            index: 0,
+            id: "p".into(),
+            terminal_id: 1,
+            cwd: None,
+            process_name: "zsh".into(),
+            running: false,
+            memory_bytes: 0,
+            focused: true,
+            name: None,
+            color: None,
+            minimized: false,
+            ai_kind: None,
+        })
+        .unwrap();
+        assert!(!v.as_object().unwrap().contains_key("ai_kind"));
+    }
+
+    #[test]
+    fn pane_info_ai_kind_roundtrips() {
+        let info = PaneInfo {
+            index: 0,
+            id: "p".into(),
+            terminal_id: 1,
+            cwd: None,
+            process_name: "claude".into(),
+            running: true,
+            memory_bytes: 0,
+            focused: true,
+            name: None,
+            color: None,
+            minimized: false,
+            ai_kind: Some("claude".into()),
+        };
+        roundtrip(&info);
     }
 }
