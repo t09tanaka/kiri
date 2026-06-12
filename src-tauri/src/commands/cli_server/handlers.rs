@@ -54,6 +54,8 @@ pub async fn handle(ctx: &DispatchContext, req: Request) -> Vec<Response> {
             timeout_secs,
         } => vec![signal_wait(ctx, pane, name, timeout_secs).await],
         Request::SignalList { pane } => vec![signal_list(ctx, pane).await],
+        Request::OpenWindow { dir, force_new } => vec![open_window(ctx, dir, force_new).await],
+        Request::AgentStatus { pane, lines } => vec![agent_status(ctx, pane, lines).await],
     }
 }
 
@@ -88,6 +90,7 @@ async fn ls(ctx: &DispatchContext) -> Response {
     for e in entries {
         let (process_name, memory_bytes, running) = process_info_for(&ctx.terminals, e.terminal_id);
         let cwd = cwd_for(&ctx.terminals, e.terminal_id);
+        let ai_kind = ai_kind_from_process_name(&process_name);
         panes.push(kiri_cli_proto::PaneInfo {
             index: e.index,
             id: e.pane_id,
@@ -100,9 +103,22 @@ async fn ls(ctx: &DispatchContext) -> Response {
             name: e.name,
             color: e.color,
             minimized: e.collapsed,
+            ai_kind,
         });
     }
     Response::Ls { panes }
+}
+
+/// Classify a foreground process name as a known interactive AI
+/// assistant. Pure so it can be unit-tested and reused by `ls` /
+/// `agent_status` without a process snapshot. Kept in sync with the
+/// `is_ai_process_for_shell_pid` allow-list (claude / codex).
+fn ai_kind_from_process_name(process_name: &str) -> Option<String> {
+    match process_name.to_lowercase().as_str() {
+        "claude" => Some("claude".into()),
+        "codex" => Some("codex".into()),
+        _ => None,
+    }
 }
 
 fn process_info_for(
@@ -850,6 +866,202 @@ async fn signal_list(ctx: &DispatchContext, p: PaneRef) -> Response {
     Response::SignalList { signals }
 }
 
+/// Open (or focus) a kiri window for `dir`.
+///
+/// App-global: serviced by whichever window's socket the CLI relayed
+/// through, reaching the shared `AppHandle`. Window creation must happen
+/// on the main thread (`WebviewWindowBuilder::build`), so both the focus
+/// and create paths hop onto it via `run_on_main_thread`.
+async fn open_window(ctx: &DispatchContext, dir: String, force_new: bool) -> Response {
+    use crate::commands::window::{create_window_impl, WindowRegistryState};
+    use tauri::Manager;
+
+    let Some(app) = ctx.app.clone() else {
+        return internal("no Tauri AppHandle bound to dispatch context");
+    };
+
+    // Canonicalize and validate the target directory.
+    let canonical = match std::fs::canonicalize(&dir) {
+        Ok(p) => p,
+        Err(e) => {
+            return Response::Error {
+                code: ErrorCode::InvalidArgument,
+                message: format!("cannot open '{dir}': {e}"),
+                detail: None,
+            };
+        }
+    };
+    if !canonical.is_dir() {
+        return Response::Error {
+            code: ErrorCode::InvalidArgument,
+            message: format!("not a directory: {}", canonical.display()),
+            detail: None,
+        };
+    }
+    let project = canonical.to_string_lossy().to_string();
+
+    // A window may already be open for this path. Reuse it unless the
+    // caller forced a new one or the window has since been closed.
+    let existing_label = {
+        let registry = app.state::<WindowRegistryState>();
+        let guard = match registry.lock() {
+            Ok(g) => g,
+            Err(_) => return internal("window registry poisoned"),
+        };
+        guard.get_label_for_path(&project).cloned()
+    };
+    let focus_label = match (force_new, existing_label) {
+        (false, Some(label)) if app.get_webview_window(&label).is_some() => Some(label),
+        _ => None,
+    };
+
+    let (label, created) = if let Some(label) = focus_label {
+        let app_for_focus = app.clone();
+        let label_for_focus = label.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(win) = app_for_focus.get_webview_window(&label_for_focus) {
+                let _ = win.set_focus();
+            }
+        });
+        (label, false)
+    } else {
+        // Ferry the generated label back out of the main-thread closure.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let app_for_create = app.clone();
+        let project_for_create = project.clone();
+        if let Err(e) = app.run_on_main_thread(move || {
+            let registry = app_for_create.state::<WindowRegistryState>();
+            let res = create_window_impl(
+                &app_for_create,
+                Some(&registry),
+                None,
+                None,
+                None,
+                None,
+                Some(project_for_create),
+            );
+            let _ = tx.send(res);
+        }) {
+            return internal(&format!("failed to schedule window creation: {e}"));
+        }
+        match rx.await {
+            Ok(Ok(label)) => (label, true),
+            Ok(Err(e)) => return internal(&format!("window creation failed: {e}")),
+            Err(_) => return internal("window creation task was dropped"),
+        }
+    };
+
+    let socket = crate::commands::cli_install::socket_path_for(&label)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let socket_ready = wait_for_cli_server(&app, &label, Duration::from_secs(10)).await;
+
+    Response::OpenWindow {
+        label,
+        socket,
+        project,
+        created,
+        socket_ready,
+    }
+}
+
+/// Poll the shared CLI-server registry until `label`'s per-window server
+/// is up, or `max` elapses. A new window boots its webview, calls
+/// `register_window`, and that inserts its server into the registry —
+/// that insertion is the readiness signal. Returns immediately true for a
+/// window whose server is already running (the focus path).
+async fn wait_for_cli_server(app: &tauri::AppHandle, label: &str, max: Duration) -> bool {
+    use crate::commands::cli_server::CliServerRegistryState;
+    use tauri::Manager;
+    let Some(registry) = app.try_state::<CliServerRegistryState>() else {
+        return false;
+    };
+    let deadline = tokio::time::Instant::now() + max;
+    loop {
+        if let Ok(map) = registry.handles.lock() {
+            if map.contains_key(label) {
+                return true;
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Snapshot a pane's current on-screen text via the frontend's xterm
+/// buffer (same round-trip pattern as `split`). `kind` is the cheap
+/// foreground-process classification; `busy` is a best-effort heuristic
+/// over the returned screen text.
+async fn agent_status(ctx: &DispatchContext, p: PaneRef, lines: usize) -> Response {
+    let Some(app) = ctx.app.as_ref() else {
+        return internal("no Tauri AppHandle bound to dispatch context");
+    };
+    let Some(pane) = ctx.pane_map.resolve(&p) else {
+        return pane_not_found(p);
+    };
+
+    let (process_name, _mem, _running) = process_info_for(&ctx.terminals, pane.terminal_id);
+    let kind = ai_kind_from_process_name(&process_name).unwrap_or_else(|| "none".into());
+
+    let lines = lines.clamp(1, kiri_cli_proto::MAX_STATUS_LINES);
+
+    let request_id = format!("snapshot-{}", uuid::Uuid::new_v4());
+    let rx = ctx.pending.register(request_id.clone());
+    let payload = serde_json::json!({
+        "requestId": request_id,
+        "paneId": pane.pane_id,
+        "lines": lines,
+    });
+    if let Err(e) = app.emit_to(ctx.label.as_str(), "cli:pane-snapshot", payload) {
+        ctx.pending.cancel(&request_id);
+        return Response::Error {
+            code: ErrorCode::FrontendUnresponsive,
+            message: format!("emit failed: {e}"),
+            detail: None,
+        };
+    }
+    match timeout(Duration::from_secs(2), rx).await {
+        Ok(Ok(value)) => {
+            let err_code = value
+                .get("error")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let Some(code) = err_code {
+                return frontend_error_to_response(&code, value, "snapshot");
+            }
+            let screen = value
+                .get("screen")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let busy = screen_indicates_busy(&kind, &screen);
+            Response::AgentStatus { kind, busy, screen }
+        }
+        _ => {
+            ctx.pending.cancel(&request_id);
+            Response::Error {
+                code: ErrorCode::FrontendUnresponsive,
+                message: "frontend did not reply within 2s".into(),
+                detail: None,
+            }
+        }
+    }
+}
+
+/// Best-effort "is the agent working" signal from the visible screen.
+/// claude / codex render an "esc to interrupt" affordance while a turn is
+/// in flight; its presence is a reliable-enough busy marker. Pure for
+/// unit testing; never authoritative — callers read `screen` for truth.
+fn screen_indicates_busy(kind: &str, screen: &str) -> bool {
+    if kind == "none" {
+        return false;
+    }
+    screen.to_lowercase().contains("esc to interrupt")
+}
+
 fn pane_not_found(p: PaneRef) -> Response {
     Response::Error {
         code: ErrorCode::PaneNotFound,
@@ -933,6 +1145,28 @@ mod tests {
             Response::Ls { panes } => assert!(panes.is_empty()),
             other => panic!("expected Ls, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn ai_kind_classifies_known_agents() {
+        assert_eq!(ai_kind_from_process_name("claude").as_deref(), Some("claude"));
+        assert_eq!(ai_kind_from_process_name("codex").as_deref(), Some("codex"));
+        // Case-insensitive, mirrors is_ai_process_for_shell_pid.
+        assert_eq!(ai_kind_from_process_name("Claude").as_deref(), Some("claude"));
+        assert!(ai_kind_from_process_name("zsh").is_none());
+        assert!(ai_kind_from_process_name("node").is_none());
+    }
+
+    #[test]
+    fn busy_heuristic_requires_ai_kind_and_interrupt_marker() {
+        assert!(screen_indicates_busy(
+            "claude",
+            "✶ Thinking… (esc to interrupt)"
+        ));
+        // Marker present but pane is not an agent → not busy.
+        assert!(!screen_indicates_busy("none", "esc to interrupt"));
+        // Agent present but idle (no marker) → not busy.
+        assert!(!screen_indicates_busy("codex", "> waiting for input"));
     }
 
     #[tokio::test]
