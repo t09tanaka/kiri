@@ -295,6 +295,11 @@ function createTerminalStore() {
   const store = writable<TerminalState>(initialState);
   const { subscribe, set, update } = store;
 
+  /** Force-notify subscribers without changing the tree shape. */
+  function notify() {
+    update((state) => state);
+  }
+
   return {
     subscribe,
 

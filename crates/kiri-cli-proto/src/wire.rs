@@ -810,7 +810,6 @@ mod tests {
             focused: true,
             name: None,
             color: None,
-            minimized: false,
             ai_kind: None,
         })
         .unwrap();
@@ -830,7 +829,6 @@ mod tests {
             focused: true,
             name: None,
             color: None,
-            minimized: false,
             ai_kind: Some("claude".into()),
         };
         roundtrip(&info);
