@@ -2,6 +2,8 @@
   import { onDestroy } from 'svelte';
   import { terminalStore, type TerminalPaneLeaf } from '@/lib/stores/terminalStore';
   import { floatingPaneStore } from '@/lib/stores/floatingPaneStore';
+  import { terminalRegistry } from '@/lib/stores/terminalRegistry';
+  import { terminalService } from '@/lib/services/terminalService';
 
   // Panes parked in the dock. Kept in a local `$state` because the minimized
   // set is tracked outside the pane tree and notifies via the store's
@@ -30,10 +32,30 @@
 
   function handleChipClose(event: MouseEvent, paneId: string) {
     event.stopPropagation();
-    if (floatingId === paneId) floatingPaneStore.close();
-    terminalStore.closePane(paneId);
-    // The layout reclaims the dock's vacancy is irrelevant, but other panes
-    // may shift if this was the last dock entry; nudge a refit to be safe.
+    const wasFloating = floatingId === paneId;
+    if (wasFloating) {
+      // The floating peek keeps the Terminal mounted. Closing the float and
+      // removing the pane from the tree flips paneExistsInStore() false, so the
+      // Terminal's onDestroy takes the dispose branch and tears down the PTY.
+      floatingPaneStore.close();
+      terminalStore.closePane(paneId);
+    } else {
+      // A docked (not floating) pane has no mounted Terminal — it was unmounted
+      // when minimized and preserved in the registry — so closePane() alone
+      // would orphan the xterm instance and its PTY. Dispose them explicitly.
+      terminalStore.closePane(paneId);
+      const instance = terminalRegistry.remove(paneId);
+      if (instance) {
+        instance.unlisten();
+        try {
+          instance.terminal.dispose();
+        } catch {
+          // xterm dispose can throw if its DOM node was already detached.
+        }
+        void terminalService.closeTerminal(instance.terminalId);
+      }
+    }
+    // Other panes may shift when a dock entry leaves; nudge a refit to be safe.
     requestAnimationFrame(() => window.dispatchEvent(new Event('terminal-resize')));
   }
 </script>
