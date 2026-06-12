@@ -387,6 +387,16 @@ function createTerminalStore() {
             minimizedByPaneId.delete(id);
           }
         }
+        // Symmetric to the last-pane guard in setMinimized: if closing this
+        // pane leaves every surviving leaf minimized, the main area would go
+        // blank (only dock chips remain). Restore the survivors to the layout.
+        if (newRootPane) {
+          const survivors = getAllLeaves(newRootPane);
+          const anyVisible = survivors.some((leaf) => !minimizedByPaneId.get(leaf.id));
+          if (!anyVisible) {
+            for (const leaf of survivors) minimizedByPaneId.delete(leaf.id);
+          }
+        }
         return { rootPane: newRootPane };
       });
     },

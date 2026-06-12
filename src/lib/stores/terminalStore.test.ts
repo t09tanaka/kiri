@@ -642,6 +642,26 @@ describe('terminalStore minimized state', () => {
     expect(terminalStore.minimizedLeaves()).toEqual([]);
   });
 
+  it('closePane un-minimizes the sole survivor to avoid a blank layout', () => {
+    const [a, b] = seedPanes(2);
+    terminalStore.setMinimized(a, true);
+    // Closing the only visible pane (b) would otherwise leave minimized `a`
+    // as the root with nothing rendered — `a` must be restored to the layout.
+    terminalStore.closePane(b);
+    expect(terminalStore.isMinimized(a)).toBe(false);
+    expect(terminalStore.visiblePaneCount()).toBe(1);
+  });
+
+  it('closePane un-minimizes all survivors when every one was minimized', () => {
+    const [a, b, c] = seedPanes(3);
+    terminalStore.setMinimized(a, true);
+    terminalStore.setMinimized(b, true);
+    terminalStore.closePane(c);
+    expect(terminalStore.isMinimized(a)).toBe(false);
+    expect(terminalStore.isMinimized(b)).toBe(false);
+    expect(terminalStore.minimizedLeaves()).toEqual([]);
+  });
+
   it('setMinimized notifies subscribers when state changes', () => {
     const [, b] = seedPanes(2);
     let calls = 0;

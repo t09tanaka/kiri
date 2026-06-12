@@ -20,7 +20,12 @@
 
   const leaf = $derived.by<TerminalPaneLeaf | null>(() => {
     void treeVersion;
-    return floatingId ? terminalStore.getLeaf(floatingId) : null;
+    if (!floatingId) return null;
+    // Only a still-minimized pane may float. If it returned to the layout
+    // (e.g. closePane un-minimized the last survivors), drop the peek so the
+    // same pane is never mounted in both the layout and the float at once.
+    if (!terminalStore.isMinimized(floatingId)) return null;
+    return terminalStore.getLeaf(floatingId);
   });
 
   let windowEl = $state<HTMLDivElement | null>(null);
