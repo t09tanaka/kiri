@@ -329,9 +329,9 @@
 
   let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  function fitTerminalToContainer() {
+  function fitTerminalToContainer(options: { pinToBottom?: boolean } = {}) {
     if (!fitAddon || !terminal || !terminalContainer) return;
-    fitTerminal(terminal, fitAddon, terminalContainer);
+    fitTerminal(terminal, fitAddon, terminalContainer, options);
   }
 
   function scheduleResizeEnd() {
@@ -355,7 +355,9 @@
     // inside ensures layout has committed before we re-fit.
     resizeTimeout = setTimeout(() => {
       requestAnimationFrame(() => {
-        fitTerminalToContainer();
+        // Pin to the bottom: a pane resize reflows the buffer and would
+        // otherwise leave the viewport scrolled up, away from the prompt.
+        fitTerminalToContainer({ pinToBottom: true });
         scheduleResizeEnd();
       });
     }, RESIZE_DEBOUNCE_MS);
