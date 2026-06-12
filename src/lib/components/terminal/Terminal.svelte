@@ -57,6 +57,7 @@
     showControls?: boolean;
     onSplitHorizontal?: () => void;
     onSplitVertical?: () => void;
+    onMinimize?: () => void;
     onClose?: () => void;
   }
 
@@ -68,6 +69,7 @@
     showControls = true,
     onSplitHorizontal,
     onSplitVertical,
+    onMinimize,
     onClose,
   }: Props = $props();
 
@@ -590,6 +592,29 @@
           {#if color}<span class="pane-dot" aria-hidden="true"></span>{/if}
           {#if name}<span class="pane-name">{name}</span>{/if}
         </span>
+      {/if}
+      {#if onMinimize}
+        <button
+          class="control-btn"
+          onclick={onMinimize}
+          title="Minimize to dock"
+          aria-label="Minimize to dock"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M12 4v10" />
+            <path d="M8 11l4 4 4-4" />
+            <line x1="6" y1="20" x2="18" y2="20" />
+          </svg>
+        </button>
       {/if}
       {#if onClose}
         <button

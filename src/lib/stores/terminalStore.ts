@@ -190,6 +190,26 @@ export function getAllPaneIds(pane: TerminalPane): string[] {
   return pane.children.flatMap(getAllPaneIds);
 }
 
+/** Depth-first list of every terminal leaf in the tree. */
+export function getAllLeaves(pane: TerminalPane): TerminalPaneLeaf[] {
+  if (pane.type === 'terminal') {
+    return [pane];
+  }
+  return pane.children.flatMap(getAllLeaves);
+}
+
+/** Find the leaf with id `paneId`, or null if it is not a leaf in the tree. */
+export function findPaneLeaf(pane: TerminalPane, paneId: string): TerminalPaneLeaf | null {
+  if (pane.type === 'terminal') {
+    return pane.id === paneId ? pane : null;
+  }
+  for (const child of pane.children) {
+    const found = findPaneLeaf(child, paneId);
+    if (found) return found;
+  }
+  return null;
+}
+
 export function getAllSplitIds(pane: TerminalPane): string[] {
   if (pane.type === 'terminal') {
     return [];
@@ -273,6 +293,17 @@ const initialState: TerminalState = {
  */
 const collapsedByPaneId = new Map<string, boolean>();
 
+/**
+ * Tracks which panes are minimized out of the split layout entirely.
+ *
+ * Distinct from {@link collapsedByPaneId}: "collapsed" only hides a pane's
+ * shortcut bar (and is what the `kiri term minimize` CLI toggles), whereas
+ * a "minimized" pane is pulled out of the visible layout and parked in the
+ * footer dock while its PTY keeps running in the background. Only `true`
+ * entries are stored; `false` is the implicit default.
+ */
+const minimizedByPaneId = new Map<string, boolean>();
+
 function createTerminalStore() {
   const store = writable<TerminalState>(initialState);
   const { subscribe, set, update } = store;
@@ -353,6 +384,17 @@ function createTerminalStore() {
         for (const id of beforeIds) {
           if (!afterIds.has(id)) {
             collapsedByPaneId.delete(id);
+            minimizedByPaneId.delete(id);
+          }
+        }
+        // Symmetric to the last-pane guard in setMinimized: if closing this
+        // pane leaves every surviving leaf minimized, the main area would go
+        // blank (only dock chips remain). Restore the survivors to the layout.
+        if (newRootPane) {
+          const survivors = getAllLeaves(newRootPane);
+          const anyVisible = survivors.some((leaf) => !minimizedByPaneId.get(leaf.id));
+          if (!anyVisible) {
+            for (const leaf of survivors) minimizedByPaneId.delete(leaf.id);
           }
         }
         return { rootPane: newRootPane };
@@ -408,6 +450,65 @@ function createTerminalStore() {
       notify();
     },
 
+    /** Returns whether `paneId` is minimized out of the layout into the dock. */
+    isMinimized: (paneId: string): boolean => minimizedByPaneId.get(paneId) ?? false,
+
+    /**
+     * Set the minimized state for `paneId`. `true` parks the pane in the
+     * dock, `false` brings it back. The last visible pane cannot be
+     * minimized — doing so would leave an empty layout — so a `true`
+     * request is ignored when it would hide every remaining pane.
+     * Notifies subscribers when the state actually changes.
+     */
+    setMinimized: (paneId: string, value: boolean): void => {
+      if (value) {
+        if (minimizedByPaneId.get(paneId)) return;
+        // Guard: never minimize the last pane still showing in the layout.
+        const state = get(store);
+        const root = state.rootPane;
+        if (root) {
+          const visible = getAllLeaves(root).filter(
+            (leaf) => !(minimizedByPaneId.get(leaf.id) ?? false)
+          );
+          if (visible.length <= 1) return;
+        }
+        minimizedByPaneId.set(paneId, true);
+      } else {
+        if (!minimizedByPaneId.get(paneId)) return;
+        minimizedByPaneId.delete(paneId);
+      }
+      notify();
+    },
+
+    /**
+     * Number of panes currently visible in the layout (leaves that are
+     * not minimized). Used to decide whether the minimize affordance
+     * should be offered for a given pane.
+     */
+    visiblePaneCount: (): number => {
+      const root = get(store).rootPane;
+      if (!root) return 0;
+      return getAllLeaves(root).filter((leaf) => !(minimizedByPaneId.get(leaf.id) ?? false)).length;
+    },
+
+    /**
+     * Leaves currently minimized into the dock, in depth-first tree order.
+     * Returns live leaf objects (with `name`/`color`/`terminalId`) so the
+     * dock can render labels without a second lookup.
+     */
+    minimizedLeaves: (): TerminalPaneLeaf[] => {
+      const root = get(store).rootPane;
+      if (!root) return [];
+      return getAllLeaves(root).filter((leaf) => minimizedByPaneId.get(leaf.id) ?? false);
+    },
+
+    /** Look up a leaf by id (e.g. to feed the floating peek window). */
+    getLeaf: (paneId: string): TerminalPaneLeaf | null => {
+      const root = get(store).rootPane;
+      if (!root) return null;
+      return findPaneLeaf(root, paneId);
+    },
+
     /**
      * Index (depth-first order) of `paneId` in the current tree, or -1.
      */
@@ -436,6 +537,7 @@ function createTerminalStore() {
 
     reset: () => {
       collapsedByPaneId.clear();
+      minimizedByPaneId.clear();
       set(initialState);
     },
   };
