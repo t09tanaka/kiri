@@ -467,9 +467,11 @@
     const handleTerminalResize = () => {
       syncHandler?.setResizing(true);
       // Force immediate resize without debounce (pane size changes are
-      // discrete events, not continuous like window resize).
+      // discrete events, not continuous like window resize). Pin to the
+      // bottom for the same reason as handleResize: split/close/divider
+      // drag reflows the buffer and would otherwise scroll the viewport up.
       requestAnimationFrame(() => {
-        fitTerminalToContainer();
+        fitTerminalToContainer({ pinToBottom: true });
         scheduleResizeEnd();
       });
     };
