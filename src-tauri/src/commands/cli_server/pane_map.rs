@@ -21,8 +21,6 @@ pub struct PaneEntry {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<kiri_cli_proto::PaneColor>,
-    #[serde(default)]
-    pub collapsed: bool,
 }
 
 #[derive(Default)]
@@ -80,7 +78,6 @@ mod tests {
             focused,
             name: None,
             color: None,
-            collapsed: false,
         }
     }
 
@@ -139,7 +136,6 @@ mod tests {
             focused: true,
             name: Some("build".into()),
             color: Some(kiri_cli_proto::PaneColor::Coral),
-            collapsed: false,
         };
         let s = serde_json::to_string(&e).unwrap();
         let back: PaneEntry = serde_json::from_str(&s).unwrap();
@@ -156,30 +152,4 @@ mod tests {
         assert!(!obj.contains_key("color"));
     }
 
-    #[test]
-    fn pane_entry_collapsed_defaults_to_false_in_json() {
-        let parsed: PaneEntry = serde_json::from_value(serde_json::json!({
-            "index": 0,
-            "paneId": "p",
-            "terminalId": 1,
-            "focused": true
-        }))
-        .unwrap();
-        assert!(!parsed.collapsed);
-    }
-
-    #[test]
-    fn pane_entry_collapsed_round_trips() {
-        let e = PaneEntry {
-            index: 0,
-            pane_id: "p".into(),
-            terminal_id: 1,
-            focused: true,
-            name: None,
-            color: None,
-            collapsed: true,
-        };
-        let v = serde_json::to_value(&e).unwrap();
-        assert_eq!(v["collapsed"], serde_json::Value::Bool(true));
-    }
 }

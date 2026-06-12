@@ -7,9 +7,6 @@
  * intervals, debounce windows) stays here.
  */
 
-/** How often we sample the foreground process name to drive the AI shortcut bar. */
-export const PROCESS_POLL_INTERVAL_MS = 5000;
-
 /** Delay after the last resize event before we consider the layout stable. */
 export const RESIZE_STABILITY_DELAY_MS = 50;
 

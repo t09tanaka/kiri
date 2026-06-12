@@ -23,10 +23,6 @@ vi.mock('@/lib/services/notificationService', () => ({
 
 vi.mock('@/lib/services/persistenceService', () => ({
   DEFAULT_STARTUP_COMMAND: 'none',
-  loadShortcuts: vi.fn().mockResolvedValue([]),
-  saveShortcuts: vi.fn().mockResolvedValue(undefined),
-  loadNumberRowEnabled: vi.fn().mockResolvedValue(false),
-  saveNumberRowEnabled: vi.fn().mockResolvedValue(undefined),
   getStartupCommandString: vi.fn().mockReturnValue(''),
 }));
 
@@ -36,15 +32,14 @@ vi.mock('@/lib/services/filePathLinkProvider', () => ({
   }),
 }));
 
-// Extend the terminalService mock from browser-setup.ts so the process-info poller
-// has the methods it expects (called via setTimeout after mount).
+// Extend the terminalService mock from browser-setup.ts so the Terminal
+// component has the service methods it calls during mount.
 vi.mock('@/lib/services/terminalService', () => ({
   terminalService: {
     createTerminal: vi.fn().mockResolvedValue(1),
     writeTerminal: vi.fn().mockResolvedValue(undefined),
     resizeTerminal: vi.fn().mockResolvedValue(undefined),
     closeTerminal: vi.fn().mockResolvedValue(undefined),
-    getProcessInfo: vi.fn().mockResolvedValue({ name: '' }),
     getCwd: vi.fn().mockResolvedValue(null),
   },
 }));

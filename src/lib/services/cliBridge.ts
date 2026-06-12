@@ -17,7 +17,6 @@ export interface CliBridgeDeps {
   closePane: (paneId: string) => void;
   indexOf: (paneId: string) => number;
   resolveFocusedPaneId: () => string | null;
-  setPaneCollapsed: (paneId: string, value: boolean) => void;
   /**
    * Update an existing pane's label.
    *
@@ -41,10 +40,10 @@ export interface CliBridgeDeps {
 const FOCUSED_SENTINEL = 'focused';
 
 /**
- * Subscribe to `cli:pane-split` / `cli:pane-close` / `cli:pane-minimize`
- * / `cli:pane-set-label` events emitted by the Rust cli_server, dispatch
- * them to the local terminalStore, and reply via the `cli_resolve_pending`
- * Tauri command keyed by `requestId`.
+ * Subscribe to `cli:pane-split` / `cli:pane-close` / `cli:pane-set-label`
+ * events emitted by the Rust cli_server, dispatch them to the local
+ * terminalStore, and reply via the `cli_resolve_pending` Tauri command
+ * keyed by `requestId`.
  *
  * Each listener is scoped to the current window (via
  * `eventService.listenCurrentWindow`) so events that the Rust side targets
@@ -74,16 +73,14 @@ export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
     direction: 'horizontal' | 'vertical';
     name?: string;
     color?: PaneColor;
-    minimized?: boolean;
   }>('cli:pane-split', (event) => {
-    const { requestId, paneId, direction, name, color, minimized } = event.payload;
+    const { requestId, paneId, direction, name, color } = event.payload;
     const target = resolveTarget(paneId);
     if (!target) {
       reply(requestId, { error: 'no_focused_pane' });
       return;
     }
     const newPaneId = deps.splitPane(target, direction, { name, color });
-    if (minimized) deps.setPaneCollapsed(newPaneId, true);
     reply(requestId, { newPaneId, newPaneIndex: deps.indexOf(newPaneId) });
   });
 
@@ -98,21 +95,6 @@ export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
       return;
     }
     deps.closePane(target);
-    reply(requestId, {});
-  });
-
-  const unlistenMinimize = await eventService.listenCurrentWindow<{
-    requestId: string;
-    paneId: string;
-    minimized: boolean;
-  }>('cli:pane-minimize', (event) => {
-    const { requestId, paneId, minimized } = event.payload;
-    const target = resolveTarget(paneId);
-    if (!target) {
-      reply(requestId, { error: 'no_focused_pane' });
-      return;
-    }
-    deps.setPaneCollapsed(target, minimized);
     reply(requestId, {});
   });
 
@@ -161,7 +143,6 @@ export async function startCliBridge(deps: CliBridgeDeps): Promise<() => void> {
   return () => {
     unlistenSplit();
     unlistenClose();
-    unlistenMinimize();
     unlistenSetLabel();
     unlistenSnapshot();
   };

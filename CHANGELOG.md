@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Terminal AI shortcut bar that appeared while `claude` / `codex` ran in a
+  pane (quick-reply / command / number-pick buttons and its settings modal),
+  along with the foreground-process polling that drove it.
+- `kiri term minimize` / `kiri term restore` CLI subcommands and the
+  `kiri term split --no-minimized` flag, plus the `minimized` wire-protocol
+  fields that only controlled the shortcut bar's collapsed state.
+
 ## [0.6.0] - 2026-05-18
 
 ### Added

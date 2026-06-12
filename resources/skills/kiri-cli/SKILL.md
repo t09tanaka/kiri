@@ -1,7 +1,7 @@
 ---
 name: kiri-cli
-description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close/minimize/restore/signal`, JSON output schema, pane addressing (index/id/focused), required pane labels (`--name`/`--color`), default-minimized side panes (with `--no-minimized` opt-out), parent↔child signal queues (`kiri term signal send/wait/list`), busy-pane detection, and known limitations.
-version: 0.3.0
+description: Use this skill when you are inside a kiri terminal (shell has KIRI_TERMINAL=1 env var) and need to inspect, split, close, or run commands across the kiri app's terminal panes via the `kiri` CLI. Covers `kiri term ls/run/send/read/follow/cancel/split/close/signal`, JSON output schema, pane addressing (index/id/focused), required pane labels (`--name`/`--color`), parent↔child signal queues (`kiri term signal send/wait/list`), busy-pane detection, and known limitations.
+version: 0.4.0
 ---
 
 # kiri CLI skill
@@ -68,7 +68,6 @@ Response shape:
       "running": false,
       "memory_bytes": 4096000,
       "focused": true,
-      "minimized": false,
       "name": "build",
       "color": "coral"
     }
@@ -189,23 +188,13 @@ Response shape:
 
 ---
 
-### `kiri term split [--pane X] [--dir h|v] --name STR --color COLOR [--no-minimized]`
+### `kiri term split [--pane X] [--dir h|v] --name STR --color COLOR`
 
 Split the pane. `--dir h` (default) is horizontal; `--dir v` is vertical.
-
-**Default form for agents:**
 
 ```bash
 kiri term split --dir v --name build --color coral
 kiri term split --dir v --name agent --color iris
-```
-
-This creates a new pane that is **minimized by default** — its shortcut bar is collapsed so it doesn't push the user's primary view down. Use this form whenever the new pane is for the agent's own work (background dev server, log tail, sub-agent claude, etc.).
-
-If the new pane is for the user to watch / interact with, opt out of the default:
-
-```bash
-kiri term split --dir v --name console --color sky --no-minimized
 ```
 
 Response shape:
@@ -229,50 +218,6 @@ way to rename or recolor an existing pane):
 
 Omitting either flag causes clap to exit immediately with a usage error
 (non-zero exit code).
-
-**`--no-minimized`** (optional):
-
-- Default (flag absent): the new pane is created with its shortcut bar
-  collapsed — recommended for agent-spawned side panes.
-- With `--no-minimized`: the new pane is fully expanded — recommended
-  when the user is expected to look at this pane directly.
-
-The user (or `kiri term minimize/restore --pane <id>`) can toggle the
-state at any time.
-
----
-
-### `kiri term minimize [--pane X]`
-
-Collapse the pane's shortcut bar to a thin strip with only restore and
-settings buttons. The PTY itself is untouched — only the helper UI bar.
-
-```bash
-kiri term minimize
-kiri term minimize --pane pane-2
-```
-
-Response shape:
-
-```json
-{ "type": "minimize" }
-```
-
----
-
-### `kiri term restore [--pane X]`
-
-Expand a previously minimized shortcut bar back to its full layout.
-
-```bash
-kiri term restore --pane pane-2
-```
-
-Response shape:
-
-```json
-{ "type": "restore" }
-```
 
 ---
 
@@ -319,8 +264,9 @@ kiri term signal send --target children --name shutdown
 
 Exactly one of `--pane` and `--target` must be set. Use `--from <ref>` to
 override the sender pane (defaults to the focused pane); this matters when
-the sender pane is not the focused one — e.g. a minimized side pane
-that wants its `--target parent` resolution to use its own id.
+the sender pane is not the focused one — e.g. an agent working in a
+non-focused side pane that wants its `--target parent` resolution to use
+its own id.
 
 | Flag | Required? | Notes |
 |---|---|---|
@@ -488,8 +434,7 @@ Key error codes (snake_case):
       "process_name": "zsh",
       "running": false,
       "memory_bytes": 5242880,
-      "focused": true,
-      "minimized": false
+      "focused": true
     },
     {
       "index": 1,
@@ -500,7 +445,6 @@ Key error codes (snake_case):
       "running": true,
       "memory_bytes": 52428800,
       "focused": false,
-      "minimized": true,
       "name": "agent",
       "color": "iris"
     }
@@ -540,11 +484,10 @@ Key error codes (snake_case):
 - Use `read --since CURSOR` to incrementally collect output without re-reading what you already have.
 - On `pane_busy`: (a) `cancel` if you own the process, (b) `split` for a clean pane, (c) pick a pane from `ls` with `running: false`.
 - Surface `lines_omitted > 0` from `run` to the user — important context may be truncated. Re-run with `--full` if needed.
-- When spawning a new pane via `kiri term split`, the default is now
-  **minimized**: use `kiri term split --dir v --name <purpose> --color <color>`
-  for agent-owned side panes (the shortcut bar comes up collapsed so
-  the user's primary view isn't pushed down). Add `--no-minimized` only
-  when the user is expected to look at the new pane directly.
+- When spawning a new pane via `kiri term split`, always pass
+  `--name <purpose> --color <color>` so the pane is labeled in its header
+  — e.g. `kiri term split --dir v --name <purpose> --color <color>` for
+  agent-owned side panes.
 - For parent ↔ child coordination, prefer `kiri term signal send/wait`
   over polling files or terminal output. The wait is `Notify`-backed
   on the server side, so it wakes immediately on send and respects an
@@ -557,7 +500,7 @@ Key error codes (snake_case):
 - Sentinel-based `run` requires a normal interactive shell. If the pane is inside `vim`, `less`, or another TUI, use `send` + `cancel` instead.
 - Cross-window addressing is not supported. Each kiri window has its own CLI socket and panes.
 - Signal routing assumes the sender pane is the focused pane. Use
-  `signal send --from <ref>` to override when sending from a minimized
+  `signal send --from <ref>` to override when sending from a non-focused
   side pane.
 
 ## 10. Example workflow
@@ -577,7 +520,7 @@ kiri term run git status
 kiri term run --pane pane-2 npm test
 # => { "type": "error", "code": "pane_busy", ... }
 
-# 4. Split pane-1 to get a clean side pane (minimized by default)
+# 4. Split pane-1 to get a clean side pane
 kiri term split --pane pane-1 --dir v --name tests --color iris
 # => { "type": "split", "new_pane_id": "pane-3", "new_pane_index": 2 }
 

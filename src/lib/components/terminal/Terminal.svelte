@@ -13,15 +13,6 @@
   import { peekStore } from '@/lib/stores/peekStore';
   import { notificationService } from '@/lib/services/notificationService';
   import { createFilePathLinkProvider } from '@/lib/services/filePathLinkProvider';
-  import TerminalShortcutBar from './TerminalShortcutBar.svelte';
-  import TerminalShortcutSettings from './TerminalShortcutSettings.svelte';
-  import { shortcutState, isAiProcess } from '@/lib/stores/shortcutStore.svelte';
-  import {
-    loadShortcuts,
-    saveShortcuts,
-    loadNumberRowEnabled,
-    saveNumberRowEnabled,
-  } from '@/lib/services/persistenceService';
   import { getExistingTerminalId, paneExistsInStore } from './terminalPaneHelpers';
   import { createSyncOutputHandler, type SyncOutputHandler } from './terminalSyncOutput';
   import {
@@ -35,11 +26,7 @@
     buildTerminalOptions,
     loadDeferredAddons,
   } from './terminalSetup';
-  import {
-    PROCESS_POLL_INTERVAL_MS,
-    RESIZE_STABILITY_DELAY_MS,
-    RESIZE_DEBOUNCE_MS,
-  } from './terminalConstants';
+  import { RESIZE_STABILITY_DELAY_MS, RESIZE_DEBOUNCE_MS } from './terminalConstants';
 
   // Lazy-loaded xterm modules (loaded on first terminal creation)
   let xtermLoaded = false;
@@ -84,7 +71,6 @@
   const paneId = reactivePaneId;
 
   let terminalWrapper: HTMLDivElement;
-  let terminalPadding: HTMLDivElement;
   let terminalContainer: HTMLDivElement;
   let terminal: TerminalType | null = null;
   let fitAddon: FitAddonType | null = null;
@@ -92,15 +78,6 @@
   let unlisten: UnlistenFn | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let isFocused = $state(false);
-  let processName = $state('');
-  let showShortcutSettings = $state(false);
-  let shortcutFocusSection = $state<'reply' | 'command' | null>(null);
-  let numberRowEnabled = $state(false);
-  let collapsed = $state(false);
-  const unsubscribeCollapsed = terminalStore.subscribe(() => {
-    collapsed = terminalStore.isCollapsed(paneId);
-  });
-  const isAiRunning = $derived(isAiProcess(processName));
 
   // Drop (not buffer) output during a resize that happens after initial
   // setup: buffered content is sized for the OLD terminal, and replaying
@@ -365,78 +342,11 @@
     }, RESIZE_DEBOUNCE_MS);
   }
 
-  // Poll foreground process name to drive the AI shortcut bar
-  let processPollInterval: ReturnType<typeof setInterval> | null = null;
-
-  async function updateProcessInfo() {
-    if (terminalId === null) return;
-    try {
-      const info = await terminalService.getProcessInfo(terminalId);
-      processName = info.name;
-    } catch {
-      // Terminal may have been closed
-    }
-  }
-
-  function handleShortcutSend(text: string, withEnter: boolean) {
-    if (terminalId === null) return;
-    terminalService.writeTerminal(terminalId, withEnter ? text + '\r' : text);
-    terminal?.focus();
-  }
-
-  async function handleShortcutAdd(
-    label: string,
-    text: string,
-    type: 'reply' | 'command' = 'reply'
-  ) {
-    shortcutState.addShortcut(label, text, type);
-    await saveShortcuts(shortcutState.customShortcuts);
-  }
-
-  async function handleShortcutUpdate(id: string, label: string, text: string) {
-    shortcutState.updateShortcut(id, label, text);
-    await saveShortcuts(shortcutState.customShortcuts);
-  }
-
-  async function handleShortcutRemove(id: string) {
-    shortcutState.removeShortcut(id);
-    await saveShortcuts(shortcutState.customShortcuts);
-  }
-
-  function handleShortcutAddClick(type: 'reply' | 'command') {
-    shortcutFocusSection = type;
-    showShortcutSettings = true;
-  }
-
-  async function handleNumberRowToggle(enabled: boolean) {
-    numberRowEnabled = enabled;
-    shortcutState.numberRowEnabled = enabled;
-    await saveNumberRowEnabled(enabled);
-  }
-
-  /**
-   * Load per-pane shortcut/settings state. Runs on every mount so that
-   * panes reattached after a split get their state populated too (the
-   * registry-reuse path of initTerminal short-circuits before reaching here).
-   */
-  async function loadPaneState() {
-    const customShortcuts = await loadShortcuts();
-    shortcutState.setCustomShortcuts(customShortcuts);
-    numberRowEnabled = await loadNumberRowEnabled();
-  }
-
   onMount(() => {
     initTerminal();
-    loadPaneState();
 
     // Initialize notification service for OSC 9/777 notifications
     notificationService.init();
-
-    // Start process info polling after terminal initializes
-    setTimeout(() => {
-      updateProcessInfo();
-      processPollInterval = setInterval(updateProcessInfo, PROCESS_POLL_INTERVAL_MS);
-    }, 1500);
 
     // Subscribe to font size changes and update terminal
     const unsubscribeFontSize = fontSize.subscribe((size) => {
@@ -459,8 +369,6 @@
     });
     // Observe the wrapper element which is the direct child of the split pane
     resizeObserver.observe(terminalWrapper);
-    // Also observe the padding element to detect size changes from shortcut bar visibility
-    resizeObserver.observe(terminalPadding);
 
     // Also listen for window resize as a fallback
     window.addEventListener('resize', handleResize);
@@ -486,12 +394,6 @@
   });
 
   onDestroy(() => {
-    unsubscribeCollapsed();
-
-    if (processPollInterval) {
-      clearInterval(processPollInterval);
-    }
-
     if (resizeTimeout) {
       clearTimeout(resizeTimeout);
     }
@@ -638,36 +540,9 @@
       {/if}
     </div>
   {/if}
-  <div class="terminal-padding" bind:this={terminalPadding}>
+  <div class="terminal-padding">
     <div class="terminal-container" bind:this={terminalContainer}></div>
   </div>
-  <TerminalShortcutBar
-    visible={isAiRunning}
-    shortcuts={shortcutState.allShortcuts}
-    showNumberRow={numberRowEnabled}
-    {collapsed}
-    onSend={handleShortcutSend}
-    onSettingsClick={() => {
-      shortcutFocusSection = null;
-      showShortcutSettings = true;
-    }}
-    onAddClick={handleShortcutAddClick}
-    onToggleCollapse={() => terminalStore.toggleCollapsed(paneId)}
-  />
-  <TerminalShortcutSettings
-    open={showShortcutSettings}
-    shortcuts={shortcutState.allShortcuts}
-    focusSection={shortcutFocusSection}
-    {numberRowEnabled}
-    onClose={() => {
-      showShortcutSettings = false;
-      shortcutFocusSection = null;
-    }}
-    onAdd={handleShortcutAdd}
-    onUpdate={handleShortcutUpdate}
-    onRemove={handleShortcutRemove}
-    onNumberRowToggle={handleNumberRowToggle}
-  />
   <div class="terminal-glow"></div>
   <div class="focus-indicator"></div>
   <div class="scanlines"></div>

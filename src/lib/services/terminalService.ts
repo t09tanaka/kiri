@@ -55,12 +55,6 @@ export const terminalService = {
   getProcessName: (id: number): Promise<string> => invoke('get_foreground_process_name', { id }),
 
   /**
-   * Get process info (name + memory usage) for a terminal
-   */
-  getProcessInfo: (id: number): Promise<{ name: string; memory_bytes: number }> =>
-    invoke('get_terminal_process_info', { id }),
-
-  /**
    * Get the current working directory of a terminal
    */
   getCwd: (id: number): Promise<string | null> => invoke('get_terminal_cwd', { id }),
