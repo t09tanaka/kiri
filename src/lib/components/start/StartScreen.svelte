@@ -1,6 +1,10 @@
 <script lang="ts">
   import { dialogService } from '@/lib/services/dialogService';
-  import { STARTUP_COMMANDS, type StartupCommand } from '@/lib/services/persistenceService';
+  import {
+    saveSettings,
+    STARTUP_COMMANDS,
+    type StartupCommand,
+  } from '@/lib/services/persistenceService';
   import { projectStore, recentProjects, type RecentProject } from '@/lib/stores/projectStore';
   import { settingsStore, startupCommand } from '@/lib/stores/settingsStore';
   import { terminalStore } from '@/lib/stores/terminalStore';
@@ -31,9 +35,13 @@
   }
 
   function handleStartupCommandChange(command: StartupCommand) {
-    // enableAutoPersist() in App.svelte boot pushes the change to disk
-    // through the store subscription; no manual save needed.
     settingsStore.setStartupCommand(command);
+    // Persist immediately. enableAutoPersist() in App.svelte skips the
+    // first 500ms after boot to avoid re-saving the restored snapshot, but
+    // the startup-command selector lives on the start screen and is usually
+    // clicked within that window — relying on the subscription alone drops
+    // the selection. This deterministic save is idempotent with it.
+    void saveSettings(settingsStore.getStateForPersistence());
   }
 
   onMount(() => {
