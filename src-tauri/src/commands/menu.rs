@@ -282,7 +282,16 @@ pub fn setup_menu(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         let id = event.id().as_ref();
         match id {
             "new_window" => {
-                let _ = app_handle.emit("menu-new-window", ());
+                // Create the window directly on the Rust side instead of
+                // emitting to a frontend listener. The old approach had only
+                // the "main" window listen (to avoid duplicate creation), so
+                // closing main silently broke "New Window". create_window_impl
+                // inherits the focused window's size on its own.
+                if let Err(e) = super::window::create_window_impl(
+                    app_handle, None, None, None, None, None, None,
+                ) {
+                    log::error!("failed to create window from menu: {e}");
+                }
             }
             "open" => {
                 if let Some(window) = app_handle.get_webview_window("main") {

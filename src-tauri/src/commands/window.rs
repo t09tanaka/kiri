@@ -1,4 +1,5 @@
 use crate::commands::cli_server::{self, CliServerRegistryState};
+use crate::commands::lock_ext::LockExt;
 use crate::commands::terminal::{TerminalOutputBusState, TerminalState};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -92,16 +93,22 @@ pub fn create_window_impl(
     let id = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("window-{}", id);
 
-    // Use provided size or try to get the size of an existing window, or use default
+    // Use provided size or inherit from the window that triggered creation.
+    // Prefer the focused window (e.g. the one the user ran "New Window"
+    // from) so the new window matches it; fall back to any window, then to
+    // a default for the very first window at launch.
     let (win_width, win_height) = match (width, height) {
         (Some(w), Some(h)) => (w, h),
-        _ => app
-            .webview_windows()
-            .values()
-            .next()
-            .and_then(|w| w.inner_size().ok())
-            .map(|size| (size.width as f64, size.height as f64))
-            .unwrap_or((1200.0, 800.0)),
+        _ => {
+            let windows = app.webview_windows();
+            windows
+                .values()
+                .find(|w| w.is_focused().unwrap_or(false))
+                .or_else(|| windows.values().next())
+                .and_then(|w| w.inner_size().ok())
+                .map(|size| (size.width as f64, size.height as f64))
+                .unwrap_or((1200.0, 800.0))
+        }
     };
 
     // Build URL with optional project path
@@ -201,6 +208,26 @@ pub fn register_window(
     Ok(())
 }
 
+/// Release all backend resources tied to a window label: drop its
+/// project-path registry entry and stop its per-window CLI server (which
+/// removes the socket file).
+///
+/// Idempotent — safe to call for a label that was never registered or has
+/// already been cleaned up, so the frontend `unregister_window` command and
+/// the backend `WindowEvent::Destroyed` handler can both call it without
+/// coordinating.
+pub fn cleanup_window_resources(
+    registry: &WindowRegistryState,
+    cli_registry: &CliServerRegistryState,
+    label: &str,
+) {
+    // Recover a poisoned lock rather than silently skipping cleanup: the
+    // whole point of this function is to guarantee teardown, and the inner
+    // map is a valid value even if a previous holder panicked mid-mutation.
+    registry.lock_recover().unregister_by_label(label);
+    cli_registry.stop_and_remove(label);
+}
+
 /// Unregister a window from the registry (called when window is closed)
 #[tauri::command]
 pub fn unregister_window(
@@ -208,10 +235,7 @@ pub fn unregister_window(
     cli_registry: tauri::State<CliServerRegistryState>,
     label: String,
 ) -> Result<(), String> {
-    if let Ok(mut reg) = registry.lock() {
-        reg.unregister_by_label(&label);
-    }
-    cli_registry.stop_and_remove(&label);
+    cleanup_window_resources(&registry, &cli_registry, &label);
     Ok(())
 }
 

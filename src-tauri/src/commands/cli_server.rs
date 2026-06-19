@@ -68,6 +68,23 @@ impl CliServerRegistry {
         let mut map = self.handles.lock_recover();
         if let Some(h) = map.remove(label) {
             h.stop();
+            // Remove the socket file synchronously rather than relying on the
+            // listener task's own cleanup. On window close the task removes it
+            // anyway, but on abrupt app exit the Tokio runtime can be torn
+            // down before that task runs — deleting here guarantees no stale
+            // socket is left for the CLI to mistake for a live window.
+            let _ = std::fs::remove_file(&h.socket_path);
+        }
+    }
+
+    /// Stop every registered server and remove its socket file. Called on
+    /// application exit so that quitting does not leave behind sockets that
+    /// the `kiri` CLI would later report as ghost windows.
+    pub fn stop_all(&self) {
+        let mut map = self.handles.lock_recover();
+        for (_label, h) in map.drain() {
+            h.stop();
+            let _ = std::fs::remove_file(&h.socket_path);
         }
     }
 }
@@ -168,6 +185,55 @@ pub fn spawn_for_window(
     })
 }
 
+/// Probe whether a socket has a live listener by attempting to connect.
+/// A leftover socket file from a crashed/force-quit session refuses the
+/// connection; a socket served by a running kiri instance accepts it.
+async fn socket_alive(path: &std::path::Path) -> bool {
+    let Ok(name) = path.as_os_str().to_fs_name::<GenericFilePath>() else {
+        return false;
+    };
+    interprocess::local_socket::tokio::Stream::connect(name)
+        .await
+        .is_ok()
+}
+
+/// On startup, delete socket files in `~/.kiri/instances` whose listener is
+/// gone — leftovers from a previous session that crashed or was force-quit
+/// before its own cleanup (the `RunEvent::Exit` handler) could run.
+///
+/// Only **dead** sockets are removed: a socket still served by another
+/// running kiri instance answers the probe and is left untouched, so this
+/// is safe to call unconditionally at launch. Best-effort — every error is
+/// ignored so a sweep failure can never block startup.
+pub async fn sweep_dead_sockets() {
+    let Some(dir) = cli_install::socket_dir() else {
+        return;
+    };
+    sweep_dead_sockets_in(&dir).await;
+}
+
+/// Directory-scoped core of [`sweep_dead_sockets`], split out so it can be
+/// tested against a temp dir instead of the real `~/.kiri/instances`.
+async fn sweep_dead_sockets_in(dir: &std::path::Path) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(it) => it,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) != Some("sock") {
+            continue;
+        }
+        if !socket_alive(&path).await {
+            if let Err(e) = std::fs::remove_file(&path) {
+                log::warn!("failed to remove stale socket {}: {e}", path.display());
+            } else {
+                log::info!("removed stale socket {}", path.display());
+            }
+        }
+    }
+}
+
 async fn handle_connection(
     stream: interprocess::local_socket::tokio::Stream,
     ctx: dispatch::DispatchContext,
@@ -250,5 +316,122 @@ mod tests {
         let r = CliServerRegistry::new();
         r.stop_and_remove("missing");
         assert!(r.handles.lock().unwrap().is_empty());
+    }
+
+    /// Build a handle backed by a placeholder file at `socket_path`. The
+    /// listener task is a no-op that just waits for the stop signal, which is
+    /// enough to exercise registry teardown without a Tauri runtime.
+    fn fake_handle(label: &str, socket_path: PathBuf) -> CliServerHandle {
+        let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
+        let join = tokio::spawn(async move {
+            let _ = (&mut stop_rx).await;
+        });
+        CliServerHandle {
+            socket_path,
+            label: label.to_string(),
+            join,
+            stop: Mutex::new(Some(stop_tx)),
+            pending: Arc::new(frontend_bridge::PendingReplies::new()),
+            pane_map: Arc::new(pane_map::PaneMap::new()),
+            buffers: Arc::new(dispatch::TerminalBuffers::new()),
+            signals: Arc::new(signals::SignalRegistry::new()),
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_and_remove_deletes_socket_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "kiri-cli-test-stop-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket_path = dir.join("window-test.sock");
+        std::fs::File::create(&socket_path).unwrap();
+        assert!(socket_path.exists());
+
+        let registry = CliServerRegistry::new();
+        registry.insert(
+            "window-test".to_string(),
+            Arc::new(fake_handle("window-test", socket_path.clone())),
+        );
+
+        registry.stop_and_remove("window-test");
+
+        assert!(
+            !socket_path.exists(),
+            "stop_and_remove must delete the socket file"
+        );
+        assert!(registry.handles.lock().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn stop_all_clears_registry_and_removes_all_sockets() {
+        let dir = std::env::temp_dir().join(format!(
+            "kiri-cli-test-stopall-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock_a = dir.join("window-a.sock");
+        let sock_b = dir.join("window-b.sock");
+        std::fs::File::create(&sock_a).unwrap();
+        std::fs::File::create(&sock_b).unwrap();
+
+        let registry = CliServerRegistry::new();
+        registry.insert(
+            "window-a".to_string(),
+            Arc::new(fake_handle("window-a", sock_a.clone())),
+        );
+        registry.insert(
+            "window-b".to_string(),
+            Arc::new(fake_handle("window-b", sock_b.clone())),
+        );
+
+        registry.stop_all();
+
+        assert!(!sock_a.exists(), "stop_all must delete every socket file");
+        assert!(!sock_b.exists(), "stop_all must delete every socket file");
+        assert!(registry.handles.lock().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn sweep_removes_dead_but_keeps_live_sockets() {
+        let dir = std::env::temp_dir().join(format!(
+            "kiri-cli-test-sweep-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // A leftover socket file with no listener — must be removed.
+        let dead = dir.join("window-dead.sock");
+        std::fs::File::create(&dead).unwrap();
+
+        // A non-.sock file — must be ignored entirely.
+        let other = dir.join("notes.txt");
+        std::fs::File::create(&other).unwrap();
+
+        // A socket with a real listener bound — must be preserved.
+        let live = dir.join("window-live.sock");
+        let name = live
+            .as_os_str()
+            .to_fs_name::<GenericFilePath>()
+            .expect("fs name");
+        let _listener = ListenerOptions::new()
+            .name(name)
+            .create_tokio()
+            .expect("bind live listener");
+
+        sweep_dead_sockets_in(&dir).await;
+
+        assert!(!dead.exists(), "dead socket must be removed");
+        assert!(live.exists(), "live socket must be preserved");
+        assert!(other.exists(), "non-.sock files must be ignored");
+
+        drop(_listener);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
