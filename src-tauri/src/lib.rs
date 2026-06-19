@@ -1,7 +1,7 @@
 pub mod commands;
 
 use commands::{
-    clear_performance_timings, cli_resolve_pending, cli_update_pane_map,
+    cleanup_window_resources, clear_performance_timings, cli_resolve_pending, cli_update_pane_map,
     close_terminal,
     get_foreground_process_name, get_terminal_cwd, get_terminal_process_info,
     copy_paths_to_directory, create_directory, create_file, move_path, move_to_trash,
@@ -19,6 +19,7 @@ use commands::{
     WatcherState, WindowRegistry, WindowRegistryState,
 };
 use std::sync::{Arc, Mutex};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -55,6 +56,21 @@ pub fn run() {
             }
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // Authoritative cleanup keyed on the real window lifecycle. The
+            // frontend's onCloseRequested also unregisters, but it can be
+            // skipped or interrupted (crash, forced close, app quit). Doing
+            // it here too guarantees a destroyed window never leaves its CLI
+            // server (and socket) running as a ghost the `kiri` CLI would
+            // still list. Idempotent, so the double-call is harmless.
+            if let tauri::WindowEvent::Destroyed = event {
+                let app = window.app_handle();
+                let label = window.label().to_string();
+                let registry = app.state::<WindowRegistryState>();
+                let cli_registry = app.state::<CliServerRegistryState>();
+                cleanup_window_resources(&registry, &cli_registry, &label);
+            }
         })
         .invoke_handler(tauri::generate_handler![
             read_directory,
@@ -115,7 +131,7 @@ pub fn run() {
             kiri_skill_status,
             install_kiri_skill,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .unwrap_or_else(|err| {
             // Print to stderr (so it lands in stderr-capture logs) AND log
             // via the configured logger before exiting non-zero. Panicking
@@ -123,5 +139,15 @@ pub fn run() {
             eprintln!("fatal: kiri tauri runtime failed: {err}");
             log::error!("fatal: kiri tauri runtime failed: {err}");
             std::process::exit(1);
+        })
+        .run(|app_handle, event| {
+            // On app exit the Tokio runtime is torn down, so the per-window
+            // listener tasks may never run their own socket cleanup. Stop and
+            // remove every CLI server here so quitting leaves no stale sockets
+            // behind for the next launch to mistake for live windows.
+            if let tauri::RunEvent::Exit = event {
+                let cli_registry = app_handle.state::<CliServerRegistryState>();
+                cli_registry.stop_all();
+            }
         });
 }

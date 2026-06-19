@@ -201,6 +201,25 @@ pub fn register_window(
     Ok(())
 }
 
+/// Release all backend resources tied to a window label: drop its
+/// project-path registry entry and stop its per-window CLI server (which
+/// removes the socket file).
+///
+/// Idempotent — safe to call for a label that was never registered or has
+/// already been cleaned up, so the frontend `unregister_window` command and
+/// the backend `WindowEvent::Destroyed` handler can both call it without
+/// coordinating.
+pub fn cleanup_window_resources(
+    registry: &WindowRegistryState,
+    cli_registry: &CliServerRegistryState,
+    label: &str,
+) {
+    if let Ok(mut reg) = registry.lock() {
+        reg.unregister_by_label(label);
+    }
+    cli_registry.stop_and_remove(label);
+}
+
 /// Unregister a window from the registry (called when window is closed)
 #[tauri::command]
 pub fn unregister_window(
@@ -208,10 +227,7 @@ pub fn unregister_window(
     cli_registry: tauri::State<CliServerRegistryState>,
     label: String,
 ) -> Result<(), String> {
-    if let Ok(mut reg) = registry.lock() {
-        reg.unregister_by_label(&label);
-    }
-    cli_registry.stop_and_remove(&label);
+    cleanup_window_resources(&registry, &cli_registry, &label);
     Ok(())
 }
 

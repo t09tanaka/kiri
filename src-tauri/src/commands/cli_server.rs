@@ -68,6 +68,23 @@ impl CliServerRegistry {
         let mut map = self.handles.lock_recover();
         if let Some(h) = map.remove(label) {
             h.stop();
+            // Remove the socket file synchronously rather than relying on the
+            // listener task's own cleanup. On window close the task removes it
+            // anyway, but on abrupt app exit the Tokio runtime can be torn
+            // down before that task runs — deleting here guarantees no stale
+            // socket is left for the CLI to mistake for a live window.
+            let _ = std::fs::remove_file(&h.socket_path);
+        }
+    }
+
+    /// Stop every registered server and remove its socket file. Called on
+    /// application exit so that quitting does not leave behind sockets that
+    /// the `kiri` CLI would later report as ghost windows.
+    pub fn stop_all(&self) {
+        let mut map = self.handles.lock_recover();
+        for (_label, h) in map.drain() {
+            h.stop();
+            let _ = std::fs::remove_file(&h.socket_path);
         }
     }
 }
@@ -250,5 +267,84 @@ mod tests {
         let r = CliServerRegistry::new();
         r.stop_and_remove("missing");
         assert!(r.handles.lock().unwrap().is_empty());
+    }
+
+    /// Build a handle backed by a placeholder file at `socket_path`. The
+    /// listener task is a no-op that just waits for the stop signal, which is
+    /// enough to exercise registry teardown without a Tauri runtime.
+    fn fake_handle(label: &str, socket_path: PathBuf) -> CliServerHandle {
+        let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
+        let join = tokio::spawn(async move {
+            let _ = (&mut stop_rx).await;
+        });
+        CliServerHandle {
+            socket_path,
+            label: label.to_string(),
+            join,
+            stop: Mutex::new(Some(stop_tx)),
+            pending: Arc::new(frontend_bridge::PendingReplies::new()),
+            pane_map: Arc::new(pane_map::PaneMap::new()),
+            buffers: Arc::new(dispatch::TerminalBuffers::new()),
+            signals: Arc::new(signals::SignalRegistry::new()),
+        }
+    }
+
+    #[tokio::test]
+    async fn stop_and_remove_deletes_socket_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "kiri-cli-test-stop-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let socket_path = dir.join("window-test.sock");
+        std::fs::File::create(&socket_path).unwrap();
+        assert!(socket_path.exists());
+
+        let registry = CliServerRegistry::new();
+        registry.insert(
+            "window-test".to_string(),
+            Arc::new(fake_handle("window-test", socket_path.clone())),
+        );
+
+        registry.stop_and_remove("window-test");
+
+        assert!(
+            !socket_path.exists(),
+            "stop_and_remove must delete the socket file"
+        );
+        assert!(registry.handles.lock().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn stop_all_clears_registry_and_removes_all_sockets() {
+        let dir = std::env::temp_dir().join(format!(
+            "kiri-cli-test-stopall-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock_a = dir.join("window-a.sock");
+        let sock_b = dir.join("window-b.sock");
+        std::fs::File::create(&sock_a).unwrap();
+        std::fs::File::create(&sock_b).unwrap();
+
+        let registry = CliServerRegistry::new();
+        registry.insert(
+            "window-a".to_string(),
+            Arc::new(fake_handle("window-a", sock_a.clone())),
+        );
+        registry.insert(
+            "window-b".to_string(),
+            Arc::new(fake_handle("window-b", sock_b.clone())),
+        );
+
+        registry.stop_all();
+
+        assert!(!sock_a.exists(), "stop_all must delete every socket file");
+        assert!(!sock_b.exists(), "stop_all must delete every socket file");
+        assert!(registry.handles.lock().unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
