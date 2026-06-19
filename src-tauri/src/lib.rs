@@ -34,6 +34,12 @@ pub fn run() {
         .manage(Arc::new(Mutex::new(commands::WatcherManager::new())) as WatcherState)
         .manage(Arc::new(Mutex::new(WindowRegistry::new())) as WindowRegistryState)
         .setup(|app| {
+            // Sweep socket files left behind by a previous session that
+            // crashed or was force-quit before its exit cleanup ran. Only
+            // dead sockets are removed, so a concurrently running kiri
+            // instance is unaffected. Done before any window registers.
+            tauri::async_runtime::block_on(commands::cli_server::sweep_dead_sockets());
+
             // Setup menu bar
             setup_menu(app)?;
 
