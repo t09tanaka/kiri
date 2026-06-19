@@ -93,16 +93,22 @@ pub fn create_window_impl(
     let id = WINDOW_COUNTER.fetch_add(1, Ordering::SeqCst);
     let label = format!("window-{}", id);
 
-    // Use provided size or try to get the size of an existing window, or use default
+    // Use provided size or inherit from the window that triggered creation.
+    // Prefer the focused window (e.g. the one the user ran "New Window"
+    // from) so the new window matches it; fall back to any window, then to
+    // a default for the very first window at launch.
     let (win_width, win_height) = match (width, height) {
         (Some(w), Some(h)) => (w, h),
-        _ => app
-            .webview_windows()
-            .values()
-            .next()
-            .and_then(|w| w.inner_size().ok())
-            .map(|size| (size.width as f64, size.height as f64))
-            .unwrap_or((1200.0, 800.0)),
+        _ => {
+            let windows = app.webview_windows();
+            windows
+                .values()
+                .find(|w| w.is_focused().unwrap_or(false))
+                .or_else(|| windows.values().next())
+                .and_then(|w| w.inner_size().ok())
+                .map(|size| (size.width as f64, size.height as f64))
+                .unwrap_or((1200.0, 800.0))
+        }
     };
 
     // Build URL with optional project path

@@ -329,16 +329,13 @@
       return;
     }
 
-    // Cmd+Shift+N: New window
+    // Cmd+Shift+N: New window. The backend creates the window (inheriting
+    // the focused window's size), so every window can trigger this directly
+    // — no "main window only" delegation.
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'n') {
       e.preventDefault();
       try {
-        if (windowLabel === 'main') {
-          await invoke('create_window', {});
-        } else {
-          // Delegate to main window to avoid duplicate handling
-          await emit('menu-new-window', {});
-        }
+        await invoke('create_window', {});
       } catch (error) {
         console.error('Failed to create window:', error);
       }
@@ -421,15 +418,9 @@
       terminalStore.init();
     }
 
-    // Resize to start screen size when no project is open
-    const currentPath = projectStore.getCurrentPath();
-    if (!currentPath && isMainWindow) {
-      try {
-        await windowService.setSizeAndCenter(800, 600);
-      } catch (error) {
-        console.error('Failed to resize to start screen size:', error);
-      }
-    }
+    // A new window's size is decided at creation time on the backend
+    // (inherited from the window that triggered "New Window"), so the
+    // start screen no longer force-resizes itself to a fixed size here.
 
     // Check and prompt for kiri skill install/upgrade (main window only)
     if (isMainWindow) {
@@ -463,13 +454,12 @@
       }
     });
 
-    // Auto-save settings when they change (main window only). The
-    // store owns the subscription and the post-restore delay so
-    // adding a new field to SettingsState persists automatically.
-    let unsubscribeSettingsStore: (() => void) | null = null;
-    if (isMainWindow) {
-      unsubscribeSettingsStore = settingsStore.enableAutoPersist(saveSettings);
-    }
+    // Auto-save settings when they change, in every window — settings are
+    // global, so a change made in any window (not just main, which can be
+    // closed) must persist. The store owns the subscription and the
+    // post-restore delay so adding a new field to SettingsState persists
+    // automatically.
+    const unsubscribeSettingsStore = settingsStore.enableAutoPersist(saveSettings);
 
     // Handle window close
     const unlistenCloseRequested = await currentWindow.onCloseRequested(async (event) => {
@@ -509,19 +499,6 @@
       handleOpenDirectory();
     });
 
-    // Listen for menu-new-window event from Rust menu handler
-    // Only the main window handles this to avoid creating duplicate windows
-    let unlistenMenuNewWindow: (() => void) | null = null;
-    if (isMainWindow) {
-      unlistenMenuNewWindow = await listen('menu-new-window', async () => {
-        try {
-          await invoke('create_window', {});
-        } catch (error) {
-          console.error('Failed to create window from menu:', error);
-        }
-      });
-    }
-
     // Listen for menu-open-recent event from Rust menu handler.
     // Bump the recent timestamp before delegating to focus_or_create_window
     // because that command only focuses an existing window without calling
@@ -556,11 +533,10 @@
 
     return () => {
       unsubscribeProjectStore();
-      unsubscribeSettingsStore?.();
+      unsubscribeSettingsStore();
       window.removeEventListener('keydown', handleKeyDown);
       unlistenCloseRequested();
       unlistenMenu();
-      unlistenMenuNewWindow?.();
       unlistenOpenRecent();
       unlistenClearRecent();
       unlistenMenuStartupCmd();
