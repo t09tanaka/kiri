@@ -1,4 +1,5 @@
 use crate::commands::cli_server::{self, CliServerRegistryState};
+use crate::commands::lock_ext::LockExt;
 use crate::commands::terminal::{TerminalOutputBusState, TerminalState};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -214,9 +215,10 @@ pub fn cleanup_window_resources(
     cli_registry: &CliServerRegistryState,
     label: &str,
 ) {
-    if let Ok(mut reg) = registry.lock() {
-        reg.unregister_by_label(label);
-    }
+    // Recover a poisoned lock rather than silently skipping cleanup: the
+    // whole point of this function is to guarantee teardown, and the inner
+    // map is a valid value even if a previous holder panicked mid-mutation.
+    registry.lock_recover().unregister_by_label(label);
     cli_registry.stop_and_remove(label);
 }
 
