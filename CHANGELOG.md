@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-20
+
+### Added
+
+#### CLI
+- `kiri window open <dir>` opens (or focuses) a kiri window for a directory,
+  and a global `--window` selector targets a specific window for any
+  `term` subcommand. Closes #142.
+- `kiri term status` reports what each pane is running, including the
+  detected AI tool (`ai_kind`) surfaced in `kiri term ls`.
+- `OpenWindow` / `AgentStatus` wire-protocol requests and a `PaneInfo.ai_kind`
+  field, with the CLI server now serving `cli:pane-snapshot` straight from the
+  xterm buffer.
+
+#### Terminal
+- Panes can be minimized into a footer dock with a floating peek view, so a
+  pane can be tucked away without disposing its session. Closes #143.
+
+### Fixed
+- New Window and the settings window are decoupled from the main window, so
+  closing the main window no longer tears down their CLI server or state.
+  Closes #147.
+- CLI server sweeps dead sockets on startup and cleans up the CLI server on
+  window destroy and app exit; `cleanup_window_resources` now recovers a
+  poisoned lock instead of panicking.
+- The startup command selection is persisted immediately instead of only on
+  modal close. Closes #146.
+- The terminal viewport pins to the bottom on pane split, close, and divider
+  resize (not just on output). Closes #141.
+- Closing the last visible pane no longer leaves a blank layout, and closing
+  a docked pane disposes its PTY.
+
 ### Removed
 - Terminal AI shortcut bar that appeared while `claude` / `codex` ran in a
   pane (quick-reply / command / number-pick buttons and its settings modal),
