@@ -214,7 +214,7 @@
       class:dragging={isDragging}
     >
       {#each visibleChildren as item, index (item.child.type === 'terminal' ? item.child.id : item.originalIndex)}
-        <div class="split-pane" style="flex: 0 0 {item.size}%;">
+        <div class="split-pane" style="flex: 0 1 {item.size}%;">
           <TerminalContainer pane={item.child} {cwd} isOnlyPane={false} />
         </div>
         {#if index < visibleChildren.length - 1}
@@ -253,10 +253,15 @@
     cursor: inherit;
   }
 
+  /* Panes are sized purely by their percentage basis. A min size here would
+     let the children outgrow the container once the split count makes each
+     share smaller than that floor, pushing the trailing pane (and its close
+     button) past the visible edge. Shrinking is allowed so the dividers'
+     fixed width comes out of the panes rather than overflowing. */
   .split-pane {
     overflow: hidden;
-    min-width: 100px;
-    min-height: 100px;
+    min-width: 0;
+    min-height: 0;
   }
 
   .split-divider {

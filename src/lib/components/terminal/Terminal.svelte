@@ -450,7 +450,7 @@
   {#if showControls}
     <div class="terminal-controls">
       <button
-        class="control-btn"
+        class="control-btn split-btn"
         onclick={onSplitVertical}
         title="Split Vertically"
         aria-label="Split Vertically"
@@ -468,7 +468,7 @@
         </svg>
       </button>
       <button
-        class="control-btn"
+        class="control-btn split-btn"
         onclick={onSplitHorizontal}
         title="Split Horizontally"
         aria-label="Split Horizontally"
@@ -581,6 +581,10 @@
     border-bottom: 1px solid rgba(125, 211, 252, 0.1);
     z-index: 10;
     flex-shrink: 0;
+    /* Query context for the narrow-pane rules below: a pane split many ways
+       gets a header far narrower than its natural content width, and without
+       these the trailing close button is pushed outside the pane. */
+    container-type: inline-size;
   }
 
   .control-btn {
@@ -596,6 +600,27 @@
     color: var(--text-muted);
     cursor: pointer;
     transition: all var(--transition-fast);
+    flex-shrink: 0;
+  }
+
+  /* Shed the optional header content as the pane narrows, in order of
+     importance, so close (and minimize) always stay inside the pane. */
+  @container (max-width: 200px) {
+    .pane-name {
+      display: none;
+    }
+  }
+
+  @container (max-width: 170px) {
+    .split-btn {
+      display: none;
+    }
+  }
+
+  @container (max-width: 120px) {
+    .pane-label {
+      display: none;
+    }
   }
 
   .control-btn:hover {
@@ -624,6 +649,10 @@
     font-size: 11px;
     color: var(--text-secondary);
     letter-spacing: 0.04em;
+    /* Absorb the shrinking before the buttons do: the name ellipsizes while
+       the dot and the controls keep their size. */
+    min-width: 0;
+    overflow: hidden;
   }
 
   .pane-dot {
@@ -637,6 +666,7 @@
 
   .pane-name {
     white-space: nowrap;
+    min-width: 0;
     max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;

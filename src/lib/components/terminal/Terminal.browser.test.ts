@@ -84,6 +84,52 @@ describe('Terminal pane-label header', () => {
   });
 });
 
+describe('Terminal controls in narrow panes (regression: close button overflows the pane)', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  // Splitting a row of terminals more than ~4 ways makes each pane narrower
+  // than the header's natural content width. The header must shed its optional
+  // content instead of pushing the close button past the pane's right edge,
+  // where `overflow: hidden` on the wrapper clips it away.
+  async function renderAtWidth(width: number) {
+    const { container } = render(Terminal, {
+      props: {
+        paneId: 'p1',
+        name: 'a-rather-long-pane-name',
+        color: 'jade',
+        showControls: true,
+        onSplitVertical: () => {},
+        onSplitHorizontal: () => {},
+        onMinimize: () => {},
+        onClose: () => {},
+      },
+    });
+    container.style.width = `${width}px`;
+    container.style.height = '240px';
+    await tick();
+    return container;
+  }
+
+  test.each([320, 200, 170, 150, 120, 100])(
+    'close button stays inside the pane at %ipx wide',
+    async (width) => {
+      const container = await renderAtWidth(width);
+      const wrapper = container.querySelector('.terminal-wrapper') as HTMLElement;
+      const closeBtn = container.querySelector('.close-btn') as HTMLElement;
+
+      const wrapperRect = wrapper.getBoundingClientRect();
+      const closeRect = closeBtn.getBoundingClientRect();
+
+      expect(closeRect.width).toBeGreaterThan(0);
+      // Sub-pixel tolerance: layout rounding, not overflow.
+      expect(closeRect.right).toBeLessThanOrEqual(wrapperRect.right + 0.5);
+      expect(closeRect.left).toBeGreaterThanOrEqual(wrapperRect.left - 0.5);
+    }
+  );
+});
+
 describe('Terminal paneId stability (regression: split kills original pane)', () => {
   afterEach(() => {
     cleanup();
