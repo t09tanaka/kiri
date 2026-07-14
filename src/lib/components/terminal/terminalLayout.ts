@@ -1,5 +1,53 @@
 import type { Terminal as TerminalType } from '@xterm/xterm';
 import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
+import { MIN_PANE_SIZE_PX } from './terminalConstants';
+
+/**
+ * Re-distribute the visible panes of a split around a divider dragged to
+ * `position` (a percentage of the container along the split axis).
+ *
+ * Panes are sized purely by percentage, so nothing in the layout stops a drag
+ * from collapsing one to zero. The floor is MIN_PANE_SIZE_PX, converted into
+ * this container's percentage terms: past it the divider stops following the
+ * cursor (signalled by a `null` return) instead of squeezing a pane out of
+ * existence. Once a split holds so many panes that the floor cannot be met at
+ * all, it is dropped — enforcing it there would freeze the divider outright.
+ */
+export function distributeDividerDrag(
+  sizes: number[],
+  dragIndex: number,
+  position: number,
+  containerSize: number
+): number[] | null {
+  const count = sizes.length;
+  const minSize = containerSize > 0 ? (MIN_PANE_SIZE_PX / containerSize) * 100 : 0;
+  const enforceMinSize = minSize * count <= 100;
+
+  const next: number[] = [];
+
+  // Common 2-pane case: split directly at the divider position.
+  if (count === 2 && dragIndex === 0) {
+    const lower = enforceMinSize ? minSize : 0;
+    const first = Math.max(lower, Math.min(100 - lower, position));
+    next.push(first, 100 - first);
+  } else {
+    let beforeTotal = 0;
+    let afterTotal = 0;
+    for (let i = 0; i <= dragIndex; i++) beforeTotal += sizes[i];
+    for (let i = dragIndex + 1; i < count; i++) afterTotal += sizes[i];
+
+    for (let i = 0; i < count; i++) {
+      next.push(
+        i <= dragIndex
+          ? (sizes[i] / beforeTotal) * position
+          : (sizes[i] / afterTotal) * (100 - position)
+      );
+    }
+  }
+
+  if (enforceMinSize && next.some((size) => size < minSize)) return null;
+  return next;
+}
 
 /**
  * Reserve 1 row for the PTY to prevent Ink full-height flickering.

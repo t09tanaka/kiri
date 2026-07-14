@@ -450,7 +450,7 @@
   {#if showControls}
     <div class="terminal-controls">
       <button
-        class="control-btn"
+        class="control-btn split-btn"
         onclick={onSplitVertical}
         title="Split Vertically"
         aria-label="Split Vertically"
@@ -468,7 +468,7 @@
         </svg>
       </button>
       <button
-        class="control-btn"
+        class="control-btn split-btn"
         onclick={onSplitHorizontal}
         title="Split Horizontally"
         aria-label="Split Horizontally"
@@ -497,7 +497,7 @@
       {/if}
       {#if onMinimize}
         <button
-          class="control-btn"
+          class="control-btn minimize-btn"
           onclick={onMinimize}
           title="Minimize to dock"
           aria-label="Minimize to dock"
@@ -581,6 +581,10 @@
     border-bottom: 1px solid rgba(125, 211, 252, 0.1);
     z-index: 10;
     flex-shrink: 0;
+    /* Query context for the narrow-pane rules below: a pane split many ways
+       gets a header far narrower than its natural content width, and without
+       these the trailing close button is pushed outside the pane. */
+    container-type: inline-size;
   }
 
   .control-btn {
@@ -596,6 +600,7 @@
     color: var(--text-muted);
     cursor: pointer;
     transition: all var(--transition-fast);
+    flex-shrink: 0;
   }
 
   .control-btn:hover {
@@ -624,6 +629,10 @@
     font-size: 11px;
     color: var(--text-secondary);
     letter-spacing: 0.04em;
+    /* Absorb the shrinking before the buttons do: the name ellipsizes while
+       the dot and the controls keep their size. */
+    min-width: 0;
+    overflow: hidden;
   }
 
   .pane-dot {
@@ -637,9 +646,46 @@
 
   .pane-name {
     white-space: nowrap;
+    min-width: 0;
     max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* Shed the optional header content as the pane narrows, in order of
+     importance, so close (and minimize) always stay inside the pane.
+
+     Two things to keep in mind when touching these:
+     - A size query measures the container's content box, so the widths below
+       are the pane width minus the header's 16px of horizontal padding.
+     - They must stay after the rules they override — same specificity, so the
+       last one wins. */
+  @container (max-width: 200px) {
+    .pane-name {
+      display: none;
+    }
+  }
+
+  /* Both split buttons, the label and the two trailing controls need ~146px. */
+  @container (max-width: 150px) {
+    .split-btn {
+      display: none;
+    }
+  }
+
+  @container (max-width: 120px) {
+    .pane-label {
+      display: none;
+    }
+  }
+
+  /* Last resort, only reachable by splitting far past what a pane can show:
+     close is the one control that must survive, since it is how the pane gets
+     out of this state. MIN_PANE_SIZE_PX keeps divider drags above this. */
+  @container (max-width: 72px) {
+    .minimize-btn {
+      display: none;
+    }
   }
 
   /* Ambient corner glow */

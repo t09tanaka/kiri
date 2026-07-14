@@ -1,7 +1,13 @@
 import { describe, expect, test, vi } from 'vitest';
 import type { Terminal as TerminalType } from '@xterm/xterm';
 import type { FitAddon as FitAddonType } from '@xterm/addon-fit';
-import { applyPtyRowMargin, fitTerminalToContainer, PTY_ROW_MARGIN } from './terminalLayout';
+import {
+  applyPtyRowMargin,
+  distributeDividerDrag,
+  fitTerminalToContainer,
+  PTY_ROW_MARGIN,
+} from './terminalLayout';
+import { MIN_PANE_SIZE_PX } from './terminalConstants';
 
 function createContainer(width: number, height: number): HTMLElement {
   return {
@@ -133,5 +139,54 @@ describe('fitTerminalToContainer', () => {
 
     expect(terminal.resize).toHaveBeenCalledWith(100, 40);
     expect(terminal.scrollToBottom).not.toHaveBeenCalled();
+  });
+});
+
+describe('distributeDividerDrag', () => {
+  const CONTAINER = 1000; // px — MIN_PANE_SIZE_PX is 7.2% of this
+
+  test('splits two panes at the divider position', () => {
+    expect(distributeDividerDrag([50, 50], 0, 30, CONTAINER)).toEqual([30, 70]);
+  });
+
+  test('re-distributes three panes proportionally around the dragged divider', () => {
+    const result = distributeDividerDrag([20, 40, 40], 1, 75, CONTAINER);
+    expect(result).not.toBeNull();
+    expect(result![0] + result![1]).toBeCloseTo(75);
+    expect(result![2]).toBeCloseTo(25);
+    // The two panes before the divider keep their 1:2 ratio.
+    expect(result![1] / result![0]).toBeCloseTo(2);
+  });
+
+  test('clamps a two-pane drag to the minimum pane size', () => {
+    const minPercent = (MIN_PANE_SIZE_PX / CONTAINER) * 100;
+
+    const draggedLeft = distributeDividerDrag([50, 50], 0, 1, CONTAINER);
+    expect(draggedLeft![0]).toBeCloseTo(minPercent);
+    expect(draggedLeft![1]).toBeCloseTo(100 - minPercent);
+
+    const draggedRight = distributeDividerDrag([50, 50], 0, 99, CONTAINER);
+    expect(draggedRight![0]).toBeCloseTo(100 - minPercent);
+    expect(draggedRight![1]).toBeCloseTo(minPercent);
+  });
+
+  test('rejects a drag that would push any pane below the minimum size', () => {
+    // Dragging the first divider to 1% would collapse the leading pane.
+    expect(distributeDividerDrag([33, 33, 34], 0, 1, CONTAINER)).toBeNull();
+    // ...and to 99% would collapse the trailing one.
+    expect(distributeDividerDrag([33, 33, 34], 0, 99, CONTAINER)).toBeNull();
+  });
+
+  test('drops the minimum once a split holds more panes than it can fit', () => {
+    // 20 panes in a 1000px container: the 72px floor cannot be met, so the
+    // divider must stay draggable rather than freeze.
+    const sizes = Array.from({ length: 20 }, () => 5);
+    const result = distributeDividerDrag(sizes, 0, 1, CONTAINER);
+    expect(result).not.toBeNull();
+    expect(result![0]).toBeCloseTo(1);
+  });
+
+  test('treats a zero-size container as having no minimum', () => {
+    expect(distributeDividerDrag([50, 50], 0, 2, 0)).toEqual([2, 98]);
   });
 });

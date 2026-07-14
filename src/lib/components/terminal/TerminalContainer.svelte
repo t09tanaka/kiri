@@ -4,6 +4,7 @@
   import { terminalStore } from '@/lib/stores/terminalStore';
   import Terminal from './Terminal.svelte';
   import TerminalContainer from './TerminalContainer.svelte';
+  import { distributeDividerDrag } from './terminalLayout';
 
   interface Props {
     pane: TerminalPane;
@@ -123,31 +124,14 @@
         : ((e.clientY - rect.top) / rect.height) * 100;
 
       // Distribute sizes among the visible panes based on divider position.
-      const visibleCount = visible.length;
-      const visibleSizes = visible.map((item) => item.size);
-      const newVisibleSizes: number[] = [];
-
-      // Common 2-visible-pane case: split directly at the divider position.
-      if (visibleCount === 2 && dragIndex === 0) {
-        const size1 = Math.max(10, Math.min(90, position));
-        newVisibleSizes.push(size1, 100 - size1);
-      } else {
-        const beforeSize = position;
-        const afterSize = 100 - position;
-
-        let beforeTotal = 0;
-        let afterTotal = 0;
-        for (let i = 0; i <= dragIndex; i++) beforeTotal += visibleSizes[i];
-        for (let i = dragIndex + 1; i < visibleCount; i++) afterTotal += visibleSizes[i];
-
-        for (let i = 0; i < visibleCount; i++) {
-          if (i <= dragIndex) {
-            newVisibleSizes.push((visibleSizes[i] / beforeTotal) * beforeSize);
-          } else {
-            newVisibleSizes.push((visibleSizes[i] / afterTotal) * afterSize);
-          }
-        }
-      }
+      const newVisibleSizes = distributeDividerDrag(
+        visible.map((item) => item.size),
+        dragIndex,
+        position,
+        isVertical ? rect.width : rect.height
+      );
+      // The drag hit the minimum pane size; leave the layout where it was.
+      if (!newVisibleSizes) return;
 
       // Scatter the new visible sizes back into the full sizes array; hidden
       // (minimized) panes keep their stored size and are renormalized away on
@@ -214,7 +198,7 @@
       class:dragging={isDragging}
     >
       {#each visibleChildren as item, index (item.child.type === 'terminal' ? item.child.id : item.originalIndex)}
-        <div class="split-pane" style="flex: 0 0 {item.size}%;">
+        <div class="split-pane" style="flex: 0 1 {item.size}%;">
           <TerminalContainer pane={item.child} {cwd} isOnlyPane={false} />
         </div>
         {#if index < visibleChildren.length - 1}
@@ -253,10 +237,15 @@
     cursor: inherit;
   }
 
+  /* Panes are sized purely by their percentage basis. A min size here would
+     let the children outgrow the container once the split count makes each
+     share smaller than that floor, pushing the trailing pane (and its close
+     button) past the visible edge. Shrinking is allowed so the dividers'
+     fixed width comes out of the panes rather than overflowing. */
   .split-pane {
     overflow: hidden;
-    min-width: 100px;
-    min-height: 100px;
+    min-width: 0;
+    min-height: 0;
   }
 
   .split-divider {
