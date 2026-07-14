@@ -497,7 +497,7 @@
       {/if}
       {#if onMinimize}
         <button
-          class="control-btn"
+          class="control-btn minimize-btn"
           onclick={onMinimize}
           title="Minimize to dock"
           aria-label="Minimize to dock"
@@ -603,26 +603,6 @@
     flex-shrink: 0;
   }
 
-  /* Shed the optional header content as the pane narrows, in order of
-     importance, so close (and minimize) always stay inside the pane. */
-  @container (max-width: 200px) {
-    .pane-name {
-      display: none;
-    }
-  }
-
-  @container (max-width: 170px) {
-    .split-btn {
-      display: none;
-    }
-  }
-
-  @container (max-width: 120px) {
-    .pane-label {
-      display: none;
-    }
-  }
-
   .control-btn:hover {
     background: rgba(125, 211, 252, 0.1);
     color: var(--accent-color);
@@ -670,6 +650,42 @@
     max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  /* Shed the optional header content as the pane narrows, in order of
+     importance, so close (and minimize) always stay inside the pane.
+
+     Two things to keep in mind when touching these:
+     - A size query measures the container's content box, so the widths below
+       are the pane width minus the header's 16px of horizontal padding.
+     - They must stay after the rules they override — same specificity, so the
+       last one wins. */
+  @container (max-width: 200px) {
+    .pane-name {
+      display: none;
+    }
+  }
+
+  /* Both split buttons, the label and the two trailing controls need ~146px. */
+  @container (max-width: 150px) {
+    .split-btn {
+      display: none;
+    }
+  }
+
+  @container (max-width: 120px) {
+    .pane-label {
+      display: none;
+    }
+  }
+
+  /* Last resort, only reachable by splitting far past what a pane can show:
+     close is the one control that must survive, since it is how the pane gets
+     out of this state. MIN_PANE_SIZE_PX keeps divider drags above this. */
+  @container (max-width: 72px) {
+    .minimize-btn {
+      display: none;
+    }
   }
 
   /* Ambient corner glow */

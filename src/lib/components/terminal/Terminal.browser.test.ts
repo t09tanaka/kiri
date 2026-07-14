@@ -112,7 +112,7 @@ describe('Terminal controls in narrow panes (regression: close button overflows 
     return container;
   }
 
-  test.each([320, 200, 170, 150, 120, 100])(
+  test.each([320, 200, 170, 150, 120, 100, 72, 60, 44])(
     'close button stays inside the pane at %ipx wide',
     async (width) => {
       const container = await renderAtWidth(width);
@@ -126,6 +126,31 @@ describe('Terminal controls in narrow panes (regression: close button overflows 
       // Sub-pixel tolerance: layout rounding, not overflow.
       expect(closeRect.right).toBeLessThanOrEqual(wrapperRect.right + 0.5);
       expect(closeRect.left).toBeGreaterThanOrEqual(wrapperRect.left - 0.5);
+    }
+  );
+
+  // A container size query measures the content box, so each breakpoint bites
+  // 16px (the header's horizontal padding) later than its declared width. These
+  // pin the widths where controls actually drop out, in pane terms.
+  test.each([
+    { width: 320, name: true, split: true, minimize: true },
+    { width: 210, name: false, split: true, minimize: true },
+    { width: 160, name: false, split: false, minimize: true },
+    { width: 80, name: false, split: false, minimize: false },
+  ])(
+    'at $widthpx: name=$name split=$split minimize=$minimize',
+    async ({ width, name, split, minimize }) => {
+      const container = await renderAtWidth(width);
+      const shown = (selector: string) => {
+        const el = container.querySelector(selector) as HTMLElement;
+        return getComputedStyle(el).display !== 'none';
+      };
+
+      expect(shown('.pane-name')).toBe(name);
+      expect(shown('.split-btn')).toBe(split);
+      expect(shown('.minimize-btn')).toBe(minimize);
+      // Close is the one control that must never drop out.
+      expect(shown('.close-btn')).toBe(true);
     }
   );
 });
