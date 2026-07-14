@@ -20,10 +20,7 @@ fn find_repo_root(path: &Path) -> Option<String> {
         if current.join(".git").exists() {
             return Some(current.to_string_lossy().to_string());
         }
-        match current.parent() {
-            Some(parent) => current = parent,
-            None => return None,
-        }
+        current = current.parent()?;
     }
 }
 
